@@ -2681,3 +2681,49 @@ were fence panels, which are rarely the last dark thing in a zone.
 **A restart is not a control.** The first "after" shot looked fixed, but the app had just relaunched
 and rebuilt the zone from scratch — which on its own clears a stale bake. The only reading worth
 anything was stashing the change, rebuilding, and photographing the same zone from the same camera.
+
+## Qud's light byte is an ENUM, not a brightness
+
+`(lv - 1) / 199` treats `GetLight()` as a sample along a 0..200 scale. It is not. The values are
+sentinels — Blackout=0, None=1, **Darkvision=10, Safelight=30**, Light=200 — so the two SENSE
+levels came out at 0.045 and 0.146, i.e. "almost no light", on cells the player can see perfectly
+well. Everything that multiplies by `_light_frac` went with them: the floor's darkness tone, a
+creature's modulate, a voxel prop's albedo.
+
+Measured at dusk with Night Vision on, two cells one step apart, through `screenpos` (below):
+
+```
+visible=True light=10    ->  (1, 4, 4)        visible=True light=200  ->  (6, 26, 24)
+```
+
+**Qud has no middle here at all.** `Cell.Render` — quoted in `mod/ZoneSnapshot.cs` since the field
+was added — is `!Visible || Lit <= None` → the K/k ghost, and everything else → full colour. Its
+own screen on that same turn holds **zero** black pixels, and its commonest colour is (15,59,58),
+which is `k`. `_cell_seen` already implements exactly that test, so by the time `_light_frac` is
+asked anything, "can the player perceive this cell" is settled.
+
+The rule now: **a cell you can perceive is never drawn darker than one you merely remember**, with
+`MEMORY_GROUND` as the floor — where the surrounding fog already sits. It cannot darken anything;
+it can only stop a perceived cell going darker than the memory beside it. Going all the way to
+Qud's own answer (perceived == full colour) is a bigger call: it would remove every trace of light
+from the 3D view, and the cavern falloff the ramp was tuned for is a design decision, not a bug.
+An unlit cavern still goes dark either way, because an unlit cell is `Lit=None` and never reaches
+the ramp.
+
+## `screenpos` only works when Raves runs FROM SOURCE
+
+`Main.gd`'s `screenpos CX CY` prints a cell's screen pixel — the instrument that makes "what colour
+did THIS cell actually render" answerable instead of guessed off a crop. It `print`s, and the
+EXPORTED app writes no stdout, which is why it had never once been used. Run
+`Godot --path godot/ > log` and read the log; the window is non-HiDPI so its pixels are the
+unprojected ones 1:1, and script errors show up in the same log.
+
+Two traps, both paid for:
+
+- **A frame-wide black-pixel count is not a measurement.** 523,757 of them sounded damning and was
+  mostly SKY plus the void past the zone rectangle. Per-cell sampling through `screenpos` found the
+  actual defect in one pass, and the same count barely moved when it was fixed.
+- **Cells outside the frustum project to garbage.** A camera facing east puts every cell of a
+  north–south row at the same screen x and blows the y up to five figures for anything near its own
+  depth. Filter to the frame before believing a coordinate — the boundary probes in `zones.txt`
+  have been printing exactly this kind of nonsense for rows the camera was not looking at.

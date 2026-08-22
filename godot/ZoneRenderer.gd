@@ -68,6 +68,10 @@ const DARK_MAX := 0.94          # deepest per-cell darkening (never pure black �
 ## stuck in 1:1 mode, where _build_darkness returns before doing anything — so every reading that
 ## drove it, including the request to go darker, described a render this constant never touched.
 const MEMORY_GROUND := 0.84
+## Qud's LightLevel.None. At or below it a cell is not perceived at all and renders as the K/k
+## ghost; ABOVE it Qud draws full colour, with nothing in between (Cell.Render). The number was
+## spelled `1` in three places that each had to re-explain what it meant.
+const LIGHT_NONE := 1
 
 ## How bright NEVER-SEEN ground stays — the fog of war. Qud's own answer is "no darkening at all":
 ## a histogram of its playfield contains 0.00% near-black pixels (max channel < 12), because Qud
@@ -1262,7 +1266,7 @@ func _rebuild_dynamics(cells: Array) -> void:
 		# nothing to go stale when liquids slosh or objects change.
 		if _one_to_one and not bool(cell.get("explored", true)):
 			continue
-		var full_1to1: bool = _one_to_one and bool(cell.get("visible", true)) and int(cell.get("light", 200)) > 1
+		var full_1to1: bool = _one_to_one and bool(cell.get("visible", true)) and int(cell.get("light", 200)) > LIGHT_NONE
 		if _one_to_one:
 			lf = 1.0   # no modulate dim in 1:1 — the ghost recolour is the whole memory look
 		# On the world map the player's card must always read as "you are here" — drawn over
@@ -1619,11 +1623,35 @@ func _reset_static_light() -> void:
 				wmi.mesh = live_m
 
 ## Qud LightLevel byte (per cell) -> 0..1 brightness. None(1)/Blackout(0) -> 0 (dark);
-## Light(200)+ -> 1 (full). The low senses (darkvision 10 .. safelight 30) map to a dim
-## sliver, so an unlit cavern falls toward black — sources are the only real light.
+## Light(200)+ -> 1 (full).
+##
+## IT IS AN ENUM, NOT A BRIGHTNESS — Blackout=0, None=1, Darkvision=10, Safelight=30, Light=200 are
+## SENTINELS, not samples along a scale, and `(lv - 1) / 199` read the two SENSE levels as very
+## nearly no light: darkvision landed on 0.045. Everything that multiplies by this went black on
+## cells the player can see perfectly well. Measured at dusk with Night Vision on, one step apart:
+## a light=10 cell rendered (1,4,4) where its light=200 neighbour rendered (6,26,24). Daniel: "much
+## of the floor is also dark, instead of in the fog-of-war", and the same 0.045 was on the albedo
+## of the canvas beside him, which is the "canvas corner is still dark" in the same breath.
+##
+## QUD ITSELF HAS NO MIDDLE HERE. Cell.Render (quoted in mod/ZoneSnapshot.cs) is
+## `!Visible || Lit <= None` -> the K/k ghost, and EVERYTHING ELSE -> full colour. Its own screen
+## at that same dusk turn contains zero black pixels; its commonest colour is (15,59,58), which is
+## `k`. `_cell_seen` already implements exactly that test, so a perceived cell is settled before
+## this function is asked anything.
+##
+## So: a cell you can PERCEIVE is never drawn darker than one you merely REMEMBER. The floor is
+## MEMORY_GROUND, which is where the surrounding fog already sits, and that is the whole of the
+## claim — it cannot darken a cell, only stop one going darker than the memory beside it.
+##
+## Deliberately NOT going all the way to Qud's answer (perceived == full colour) without asking:
+## that would delete every trace of light from the 3D view, night included, and the cavern falloff
+## this ramp was tuned for is somebody's aesthetic decision, not a bug. Qud's binary would still
+## darken an unlit cavern, because an unlit cell is Lit=None and never reaches this line at all.
 func _light_frac(cell: Dictionary) -> float:
 	var lv := int(cell.get("light", 200))   # default full: surface, or an older mod w/o the field
-	return clampf(float(lv - 1) / 199.0, 0.0, 1.0)
+	if lv <= LIGHT_NONE:
+		return 0.0                          # Blackout / None — not perceived at all
+	return maxf(clampf(float(lv - 1) / 199.0, 0.0, 1.0), MEMORY_GROUND)
 
 ## FOG OF WAR, in USER mode. Qud shows an unexplored cell as black and an explored-but-unseen
 ## one as a grey memory ghost; Raves drew both at full colour, which is why more of the zone was
@@ -1655,7 +1683,7 @@ func cell_seen(cell: Dictionary) -> bool:
 
 func _cell_seen(cell: Dictionary) -> bool:
 	# the mod omits `visible` when it is TRUE, so an absent key means seen — never read it as false
-	return bool(cell.get("visible", true)) and int(cell.get("light", 200)) > 1
+	return bool(cell.get("visible", true)) and int(cell.get("light", 200)) > LIGHT_NONE
 
 ## The same decision as a COLOUR, for anything that takes a modulate: out of sight leans teal.
 func _view_tint(cell: Dictionary) -> Color:
