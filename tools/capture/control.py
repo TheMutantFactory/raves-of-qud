@@ -219,6 +219,9 @@ def main(argv):
     elif cmd == "lookreport":
         godot("lookreport")
         print("godot: lookreport -> selection.txt")
+    elif cmd == "camrot":
+        godot("camrot " + argv[1])
+        print("godot: camrot", argv[1])
     elif cmd == "zonereport":
         godot("zonereport")
         print("godot: zonereport -> zones.txt")

@@ -101,6 +101,16 @@ func last_report() -> String:
 ## not by array position. Qud sends objects in cell-stack order, which is not
 ## render order: taking the last entry here picked the water under a water wheel.
 func last_objects() -> Array:
+	# A FOREIGN CELL'S OBJECTS COME FROM THE STORE. _by_cell is the live zone's, so a report filed
+	# on another zone's tile reached the form with an empty subject list and therefore no TILE —
+	# which is what made Daniel's rusted-wall report arrive keyed "tile:" with nothing after it,
+	# grouping with every other tile-less report instead of with that wall's art.
+	if _look_on and look_resolve.is_valid():
+		var found: Dictionary = look_resolve.call(_look_cell)
+		if String(found.get("zone", "")) != "" and String(found.get("zone", "")) != zone_id():
+			var fo: Array = (found.get("cell", {}) as Dictionary).get("objs", []).duplicate()
+			fo.sort_custom(func(a, b): return int(a.get("layer", 0)) > int(b.get("layer", 0)))
+			return fo
 	if _selected == null or not _by_cell.has(_selected):
 		return []
 	var objs: Array = _by_cell[_selected].get("objs", []).duplicate()

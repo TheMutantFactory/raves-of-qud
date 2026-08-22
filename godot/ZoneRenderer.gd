@@ -1916,8 +1916,15 @@ func _build_darkness(cells: Array, parent: Node, frozen_off := NOT_FROZEN) -> vo
 		var cy := float(k.y)
 		if walls.has(k):
 			var a := float(dark[k]) * amax
+			# BOTH AT ROOF HEIGHT. The opaque branch used DARK_SOLID_Y, which is FLOOR height (it
+			# is DARK_FLOOR_Y — see the note there about the surround being clean at floor level).
+			# On a wall that puts the cap UNDER the wall, covering nothing, so a wall dark enough
+			# to be opaque was the one case whose roof stayed lit. Daniel, filing from a zone away:
+			# "rusted metal wall in Joppa is visibly red (lit?) from another zone" — that red is
+			# the top of the wall, which only an elevated camera sees, which is why it survived
+			# every check made from ground level.
 			if a >= DARK_SOLID_A:
-				_dark_quad(sto, cx, cy, DARK_SOLID_Y, 1.0); any_solid = true
+				_dark_quad(sto, cx, cy, DARK_ROOF_Y, 1.0); any_solid = true
 			elif a >= 0.02:
 				_dark_quad(st, cx, cy, DARK_ROOF_Y, a); any = true
 			for d in sides:

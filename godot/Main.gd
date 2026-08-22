@@ -635,6 +635,14 @@ func _exec_godot_cmd(cmd: String) -> void:
 				look_toggle()
 		"lookreport":
 			look_report()
+		"camrot":
+			# `camrot <deg>` — turn the full-screen camera. Raves has had no control-channel way to
+			# do this: Q/E are the in-app keys, and a synthetic Q sent from outside reaches QUD and
+			# opens its journal. That left a whole class of appearance question unanswerable from
+			# outside — "does the thing behind me look right" needs the camera pointed at it.
+			if parts.size() >= 2 and _cam_rig != null:
+				_cam_rig._compass_yaw = fposmod(_cam_rig._compass_yaw
+					+ deg_to_rad(float(parts[1])), TAU)
 		"zonereport":
 			# `zonereport` — write zones.txt: which zones the store holds, where each lands in the
 			# 3x3 slot grid, and what the SURROUND BAND actually built this turn.
