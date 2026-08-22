@@ -265,6 +265,7 @@ func _ready() -> void:
 	inspector = CellInspector.new()
 	add_child(inspector)
 	inspector.setup(renderer, _cam_rig._cam)
+	inspector.look_resolve = cell_at_look   # the cursor may leave the live zone; Main owns the store
 	_cam_rig.set_inspector(inspector)
 
 	reporter = TileReport.new()
@@ -733,6 +734,47 @@ func _move_relative(intent: Vector2) -> void:
 		_report_look_cell(c)
 		return
 	client.send_command("move", {"dir": d})
+
+## The cell at a LOOK-SPACE coordinate, which may lie outside the live zone.
+##
+## Look space is the live zone's cell grid EXTENDED: (-1,-1) is the last cell of the zone up and
+## left, (80,0) the first of the zone east. That is the same space the darkness offsets and the
+## surround band already work in, so a cursor can walk out of the zone the way the renderer already
+## draws out of it. Daniel: "I need the look tool to be able to move into other zones so I can
+## comment on transzone this-and-that."
+##
+## Returns {"zone": id, "cell": Dictionary, "local": Vector2i} — `cell` empty when nothing is
+## there, which is a real answer (an empty tile) and not a failure.
+func cell_at_look(c: Vector2i) -> Dictionary:
+	var live := store.live_record()
+	if live.is_empty():
+		return {}
+	var w := int(renderer._live_w)
+	var h := int(renderer._live_h)
+	if w <= 0 or h <= 0:
+		return {}
+	# Which zone owns it, by the same slot arithmetic the renderer uses for neighbour offsets.
+	var sx := int(floor(float(c.x) / float(w)))
+	var sy := int(floor(float(c.y) / float(h)))
+	var local := Vector2i(c.x - sx * w, c.y - sy * h)
+	var lo: Vector3i = live.get("origin", Vector3i.ZERO)
+	var want := Vector3i(lo.x + sx * w, lo.y + sy * h, lo.z)
+	var zid := store.live_id()
+	if sx != 0 or sy != 0:
+		zid = ""
+		for id in store.ids():
+			var rec: Dictionary = store.record(id)
+			var o: Vector3i = rec.get("origin", Vector3i.ZERO)
+			if o == want:
+				zid = id
+				break
+		if zid == "":
+			return {"zone": "", "cell": {}, "local": local}   # never visited: nothing to say
+	var snap: Dictionary = store.record(zid).get("snapshot", {})
+	for cd in snap.get("cells", []):
+		if int(cd.get("x", -1)) == local.x and int(cd.get("y", -1)) == local.y:
+			return {"zone": zid, "cell": cd, "local": local}
+	return {"zone": zid, "cell": {}, "local": local}
 
 ## Announce the look cursor's cell so the message log can show it.
 func _report_look_cell(c: Vector2i) -> void:

@@ -158,6 +158,9 @@ func inspect_at(cam: Camera3D, mp: Vector2, zscale := 1.0) -> void:
 # to send a raw Escape to undo itself. This is the same affordance without the trap.
 var _look_on := false
 var _look_cell := Vector2i.ZERO
+## Resolves a look-space cell to its zone and contents, INCLUDING cells outside the live zone.
+## Supplied by Main, which owns the world store; unset it falls back to the live snapshot alone.
+var look_resolve: Callable = Callable()
 
 func look_on() -> bool:
 	return _look_on
@@ -185,7 +188,13 @@ func look_move(d: Vector2i) -> Vector2i:
 	if _renderer != null:
 		w = maxi(1, int(_renderer._live_w))
 		h = maxi(1, int(_renderer._live_h))
-	_look_cell = Vector2i(clampi(_look_cell.x + d.x, 0, w - 1), clampi(_look_cell.y + d.y, 0, h - 1))
+	# OUT OF THE ZONE, ONE ZONE IN EVERY DIRECTION. The bound was the live zone, which made the
+	# cursor useless for the thing it is most needed for — saying something about a boundary needs
+	# standing on both sides of it. Daniel: "I need the look tool to be able to move into other
+	# zones so I can comment on transzone this-and-that." The 3x3 is the right bound because it is
+	# what the renderer DRAWS: past that a zone is culled, so there would be nothing to point at.
+	_look_cell = Vector2i(clampi(_look_cell.x + d.x, -w, 2 * w - 1),
+		clampi(_look_cell.y + d.y, -h, 2 * h - 1))
 	_look_mark()
 	return _look_cell
 
@@ -196,17 +205,57 @@ func _look_mark() -> void:
 	_mark_box.visible = true
 	_mark_pin.visible = true
 
+## A report for a cell in ANOTHER zone. Deliberately shorter than build_report: the renderer's
+## placement notes, the tile art export and the neighbour scan are all about the LIVE zone, and
+## claiming them for a neighbour's tile would be inventing detail. What it can say honestly is
+## which zone, which cell, and what Qud has recorded as being there.
+func _foreign_report(found: Dictionary) -> String:
+	var c: Dictionary = found.get("cell", {})
+	var loc: Vector2i = found.get("local", Vector2i.ZERO)
+	var L: Array = []
+	L.append("=== Raves of Qud — cell %d,%d (ANOTHER ZONE) ===" % [loc.x, loc.y])
+	L.append("zone %s   look-space (%d,%d)" % [String(found.get("zone", "?")),
+		_look_cell.x, _look_cell.y])
+	L.append("")
+	L.append("Reported from the look cursor, which had left the live zone. This is what the world")
+	L.append("store holds for that cell -- the renderer's own placement notes are not available")
+	L.append("for a zone it is not building.")
+	L.append("")
+	var objs: Array = c.get("objs", [])
+	if objs.is_empty():
+		L.append("EMPTY -- nothing recorded here.")
+	else:
+		L.append("%d object(s), bottom -> top:" % objs.size())
+		for i in objs.size():
+			var o: Dictionary = objs[i]
+			L.append("")
+			L.append(" [%d] %s" % [i, _q(String(o.get("display", o.get("name", "?"))))])
+			L.append("     layer=%s  glyph=%s" % [str(o.get("layer", "?")), _q(String(o.get("glyph", "")))])
+			L.append("     tile     %s" % _q(String(o.get("tile", ""))))
+			L.append("     colour   color=%s tilecolor=%s detail=%s" % [
+				_q(String(o.get("color", ""))), _q(String(o.get("tilecolor", ""))),
+				_q(String(o.get("detail", "")))])
+	return "\n".join(PackedStringArray(L))
+
 ## ONE LINE for the message log: what is on this cell, in Qud's own display names and markup.
 ## Deliberately not the report — the report is a screenful, and this has to sit in a log beside the
 ## game's own messages without drowning them.
 func look_line(cx: int, cy: int) -> String:
-	var c: Dictionary = _by_cell.get(Vector2i(cx, cy), {})
+	var found: Dictionary = look_resolve.call(Vector2i(cx, cy)) if look_resolve.is_valid() else {}
+	var c: Dictionary = found.get("cell", _by_cell.get(Vector2i(cx, cy), {}))
 	var names: Array = []
 	for o in c.get("objs", []):
 		var n := String(o.get("display", o.get("name", "")))
 		if n != "" and not names.has(n):
 			names.append(n)
 	var where := "{{K|(%d,%d)}}" % [cx, cy]
+	# NAME THE ZONE when the cursor has left this one, because "(83,4) shale" is a different
+	# statement in the zone east than it is here, and a report filed from it has to say which.
+	var zid := String(found.get("zone", ""))
+	if zid != "" and zid != zone_id():
+		where += " {{c|%s}}" % zid
+	elif zid == "" and found.has("zone"):
+		return "%s {{K|never visited}}" % where
 	if names.is_empty():
 		return "%s {{K|nothing here}}" % where
 	return "%s %s" % [where, ", ".join(PackedStringArray(names))]
@@ -215,6 +264,16 @@ func look_line(cx: int, cy: int) -> String:
 ## Ctrl+click would. Asked for, never volunteered.
 func report_look() -> void:
 	if not _look_on:
+		return
+	# OUTSIDE THE LIVE ZONE, build_report has nothing to read — _by_cell is this zone's cells, which
+	# is why inspecting a neighbour's tile used to answer "EMPTY — nothing here" for something
+	# plainly on screen. Resolve it first and report what is actually there, naming its zone.
+	var found: Dictionary = look_resolve.call(_look_cell) if look_resolve.is_valid() else {}
+	var zid := String(found.get("zone", ""))
+	if zid != "" and zid != zone_id():
+		_show(_foreign_report(found), _look_cell.x, _look_cell.y)
+		DisplayServer.clipboard_set(_last_report)
+		_write(_last_report)
 		return
 	var report := build_report(_look_cell.x, _look_cell.y,
 		Vector3(_look_cell.x, 0.0, _look_cell.y))

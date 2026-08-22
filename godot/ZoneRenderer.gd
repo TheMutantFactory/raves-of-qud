@@ -887,8 +887,22 @@ func _gate_new_meshes(first: int, cx: int, cy: int) -> void:
 	var parent := _spawn_parent()
 	for i in range(first, parent.get_child_count()):
 		var ch := parent.get_child(i)
-		if ch is MeshInstance3D and not ch.has_meta("vis_owned"):
+		# THE NODE ADDED IS NOT ALWAYS THE MESH. A waterwheel builds its rim, buckets and axle into
+		# a Node3D and adds THAT — so a check for `ch is MeshInstance3D` walks straight past the
+		# whole assembly, which is exactly how a waterwheel stayed lit in unexplored ground after
+		# every other prop was gated. Ask whether the subtree CONTAINS geometry, and gate the
+		# container: hiding it takes everything under it, which is what a hole in the fog needs.
+		if not ch.has_meta("vis_owned") and _holds_mesh(ch):
 			_known_meshes.append({"n": ch, "cell": Vector2i(cx, cy)})
+
+## Is this node, or anything under it, drawn geometry?
+func _holds_mesh(n: Node) -> bool:
+	if n is MeshInstance3D:
+		return true
+	for c in n.get_children():
+		if _holds_mesh(c):
+			return true
+	return false
 
 ## Pass 1 — group wall cells by TYPE (family + colours + background). Cheap: dict-building only,
 ## no geometry/GPU, so the incremental live build runs this whole pass up front.
@@ -1649,6 +1663,14 @@ func _view_tint(cell: Dictionary) -> Color:
 ## to nothing on its own. Stash-then-scale is idempotent; scale-in-place is not.
 func _dim_frozen_node(n: Node, f: float) -> void:
 	var k: float = clampf(f, FROZEN_OBJ_MIN, 1.0)
+	# RECURSE, for the same reason the fog gate has to: the node a builder ADDS is often a
+	# container. The waterwheel adds a Node3D holding its rim and axle, which is neither a sprite
+	# nor a mesh, so a dim that only inspected the node itself did nothing at all to it — and
+	# Daniel saw it lit from a zone away. Daniel: "the waterwheel is visible from an external zone."
+	if not (n is SpriteBase3D) and not (n is MeshInstance3D):
+		for c in n.get_children():
+			_dim_frozen_node(c, f)
+		return
 	if n is SpriteBase3D:
 		var sp := n as SpriteBase3D
 		if not sp.has_meta("zmod"):
@@ -1659,8 +1681,17 @@ func _dim_frozen_node(n: Node, f: float) -> void:
 	if n is MeshInstance3D:
 		var mi := n as MeshInstance3D
 		var mat := mi.material_override
+		if mat == null:
+			# No override means it draws with the MESH's own material, which is shared with every
+			# other instance of that mesh — dimming it in place would dim them all. Take a private
+			# copy ONCE (the zalb meta below makes this idempotent) rather than leave the thing
+			# undimmed, which is the failure being fixed here.
+			var act := mi.get_active_material(0)
+			if act is StandardMaterial3D:
+				mat = (act as StandardMaterial3D).duplicate()
+				mi.material_override = mat
 		if mat == null or not (mat is StandardMaterial3D):
-			return          # shares a cached material; leave it rather than duplicate per instance
+			return          # not a standard material (shader/vertex-only): nothing safe to scale
 		if not mi.has_meta("zalb"):
 			# duplicate ONCE, or every zone sharing this material would dim together
 			mi.material_override = (mat as StandardMaterial3D).duplicate()
