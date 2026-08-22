@@ -1658,6 +1658,19 @@ func _view_tint(cell: Dictionary) -> Color:
 	var f := _light_frac(cell)
 	return Color(f, f, f)
 
+## The cell a node sits over, from its own geometry — for things placed outside the per-cell loop.
+## Returns (-9999, -9999) when it draws nothing and so sits nowhere.
+func _node_cell(n: Node) -> Vector2i:
+	if n is VisualInstance3D:
+		var ab: AABB = (n as VisualInstance3D).get_aabb()
+		var c: Vector3 = (n as Node3D).transform * (ab.position + ab.size * 0.5)
+		return Vector2i(int(round(c.x)), int(round(c.z)))
+	for ch in n.get_children():
+		var r := _node_cell(ch)
+		if r.x != -9999:
+			return r
+	return Vector2i(-9999, -9999)
+
 ## Dim one node of a departed zone to light fraction `f`, so what STANDS in a cell fades with the
 ## ground under it instead of glowing out of it.
 ##
@@ -1900,9 +1913,25 @@ func _build_darkness(cells: Array, parent: Node, frozen_off := NOT_FROZEN) -> vo
 	# the same staleness the offset guard exists to prevent.
 	if frozen and parent != null:
 		for ch in parent.get_children():
-			if not ch.has_meta("zcell"):
-				continue
-			var zk: Vector2i = ch.get_meta("zcell")
+			var zk: Vector2i
+			if ch.has_meta("zcell"):
+				zk = ch.get_meta("zcell")
+			else:
+				# NO TAG MEANS IT WAS NOT PLACED PER CELL, and the walls are exactly that: greedy
+				# meshed ACROSS cells and added after the per-cell loop, so no single cell owns one
+				# and the tagging pass never saw them. They were left to the darkness quads alone —
+				# which cover a wall's roof and its exposed faces and nothing else, so a metal wall
+				# in a departed zone stayed lit wherever a quad did not reach. Daniel, filing from
+				# a zone away: "this wall is still bright. It looks like it's not in the fog-of-war."
+				#
+				# Take the cell from where the geometry actually IS. For a mesh spanning many cells
+				# that is its middle, which is approximate — but a departed zone's tone is flat
+				# almost everywhere (full dark past the ramp), so the approximation only matters
+				# inside the fringe, and being roughly right there beats being absent everywhere.
+				var c := _node_cell(ch)
+				if c.x == -9999:
+					continue
+				zk = c
 			_dim_frozen_node(ch, 1.0 - _frozen_tone(zk, frozen_off))
 	# 1:1: Qud's model needs no overlay — the K/k ghost recolour at place time is the
 	# whole memory look (see _ghost_obj); unexplored cells draw nothing at all.
