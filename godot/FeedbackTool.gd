@@ -700,7 +700,21 @@ func file_report(kind: String, label: String, key: String, text: String,
 	rec["kind"] = kind
 	rec["element"] = label
 	rec["element_key"] = key
-	rec["text"] = text
+	# NEVER WRITE AN ENVELOPE THE CONTRACT FORBIDS. `text` is required and non-empty
+	# (feedback-service schema/envelope.v1.md); the server answers 400, and a 4xx is permanent, so
+	# the outbox parks the line in .rejected and stops retrying it -- correct behaviour that is
+	# also completely silent. The tile form produced exactly that for a verdict with no note.
+	#
+	# Falling back to the LABEL rather than refusing to write: refusing loses the report, and the
+	# label ("tile Creatures/sw_shroom1.bmp") is at least true and enough to find the subject. A
+	# warning fires because arriving here means the caller has something better to say and did not.
+	var body := text.strip_edges()
+	if body == "":
+		body = label.strip_edges()
+		push_warning("feedback: %s report had no text; sending the label instead" % kind)
+	if body == "":
+		body = "(no description)"
+	rec["text"] = body
 	rec.merge(extra, true)
 	_write_record(rec)
 

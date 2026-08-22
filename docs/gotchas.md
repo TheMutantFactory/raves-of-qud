@@ -2646,3 +2646,38 @@ Two rules from it:
 `foreign` (anything else that moved it). A sine has a hard maximum step — `amp * TAU / period * dt`
 — so `step` above that is a hitch, and `foreign` above zero is a second writer. They are different
 faults and they looked identical on screen.
+
+## The light a prop was BUILT in is not the prop's colour
+
+A voxel prop that multiplies `light_frac` into its vertex colours and then wears the shared
+`_vox_skin_material()` is pinned to whatever its cell happened to be lit like at build time — for
+the life of the zone. The tent, the signpost and the waterwheel all did this. A tent built at night
+stayed night-black through dawn, through the player walking up to it with a torch, through
+everything, while Qud went on reporting the cell as lit and in sight. Daniel, on a canvas one step
+from his character: "Canvas is dark. Like it's in fog or darkness." The inspector agreed with him
+and disagreed with the screen — it printed `IN SIGHT (full colour)` over a black slab.
+
+`_fence_half_vox` had the answer already and it is now `_vox_prop_mesh`:
+
+- vertex colours carry the ART and the face shade, and **nothing else**;
+- a **duplicated** skin material carries the light in `albedo_color` (which multiplies vertex
+  colour). Duplicated because `_reset_static_light` writes `albedo_color` straight onto
+  `material_override`, so one shared material hands every prop in the zone the last one's light;
+- the instance goes in `_lit_meshes`, which is the only thing that moves any of it afterwards.
+
+**Registration is also how a prop earns the memory ghost.** `_lit_meshes` swaps a vertex-coloured
+mesh for its K/k variant when the cell is out of sight. Unregistered, the tents were drawn at FULL
+COLOUR in cells the player could not see — a second bug, opposite in sign to the first and living
+in the same missing line. A controlled pair on one zone, same camera, same fog state: old build, 4
+tents in sight and 9 unseen ones all bright, plus one pure-black slab where a cell's light was
+genuinely 0; new build, the same 4 lit and the same 9 as teal ghosts, and no black anywhere.
+
+Corollary found on the way: `_reset_static_light` restored `albedo_color` for `_lit_meshes` but
+never put a ghosted mesh back to its live art — only the wall loop below it did. A mesh that had
+been ghosted and then found itself in a wholly-lit, wholly-seen zone came back as a BRIGHT TEAL
+tent, which is neither look. It went unseen while the only vertex-coloured things registered there
+were fence panels, which are rarely the last dark thing in a zone.
+
+**A restart is not a control.** The first "after" shot looked fixed, but the app had just relaunched
+and rebuilt the zone from scratch — which on its own clears a stale bake. The only reading worth
+anything was stashing the change, rebuilding, and photographing the same zone from the same camera.

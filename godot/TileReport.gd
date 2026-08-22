@@ -147,8 +147,23 @@ func _submit() -> void:
 	# a finding. Keyed by TILE FAMILY, not by cell: every note about the same art groups together,
 	# the way element_key groups every note about one button.
 	var fam := _renderer.tile_family(_tile) if (_renderer != null and _tile != "") else ""
+	# THE VERDICT IS THE REPORT when nobody typed a note. The form accepts "pick a verdict OR write
+	# a note", so a verdict-only submit is a legitimate, complete report locally -- but it went out
+	# with an empty `text`, and `text` is REQUIRED and non-empty in the envelope contract
+	# (feedback-service schema/envelope.v1.md). The server answered 400, the outbox correctly filed
+	# it under .rejected as never-to-be-retried, and nothing said so: two art verdicts Daniel filed
+	# this way ("should be an UPRIGHT BILLBOARD sprite", on sw_shroom1 and sw_marsh_worldmap_2) sat
+	# parked on disk looking, from the game, exactly like reports that had been sent.
+	#
+	# Saying it in words rather than sending the bare verdict string: `text` is the human sentence
+	# a reader sees first in triage, and "shape: should be an UPRIGHT BILLBOARD sprite" reads as a
+	# report where "should be an UPRIGHT BILLBOARD sprite" reads as a fragment. The verdict still
+	# rides in its own field for anything that wants to group on it.
+	var note := text
+	if note == "" and verdict != "":
+		note = "%s: %s" % ["rule" if slot == "" else slot, verdict]
 	FeedbackTool.file_report("tile", "tile %s" % (_tile if _tile != "" else "(none)"),
-		"tile:" + fam, text, {
+		"tile:" + fam, note, {
 			"verdict": verdict,
 			"zone": _zone,
 			"cell": [_cx, _cy],

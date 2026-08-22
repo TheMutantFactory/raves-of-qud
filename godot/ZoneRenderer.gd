@@ -1595,6 +1595,15 @@ func _reset_static_light() -> void:
 	for e in _lit_meshes:
 		if is_instance_valid(e["mi"]) and e["mi"].material_override != null:
 			e["mi"].material_override.albedo_color = Color.WHITE
+			# ...AND BACK TO THE LIVE ART, exactly as the wall loop below does. Resetting only the
+			# albedo left a mesh that had been ghosted wearing its K/k variant at full brightness:
+			# a bright TEAL tent, which is neither the memory look nor the lit one. It went unseen
+			# while nothing vertex-coloured was registered here except fence panels, which are
+			# rarely the last dark thing in a zone.
+			if e["mi"].has_meta("live_mesh"):
+				var lm0: Mesh = e["mi"].get_meta("live_mesh")
+				if e["mi"].mesh != lm0:
+					e["mi"].mesh = lm0
 	# Walls back to live art and shown. Safe to do unconditionally: this runs only when EVERY
 	# cell is lit, explored and in sight (see the any_dark scan), which is exactly the state in
 	# which no wall should be hidden or ghosted.
@@ -5857,6 +5866,12 @@ func _place_waterwheel(obj: Dictionary, tile: String, cx: int, cy: int, light_fr
 	_wheel_spill(obj, tile, mask, img, top, bot, r, thick, cx, cy)
 	if _live_build:
 		_anim_sprites.append({"spin": root, "base": Basis(), "period": WHEEL_REV_SEC})
+		# The wheel already wears its own material with the light on it, but nothing MOVED that
+		# light afterwards -- same freeze the tent and the signpost had, one step less severe
+		# because the vertex colours were clean. Registering the MESH (not `root`: the relight
+		# writes material_override and swaps in a ghost mesh, and root is a bare Node3D that owns
+		# neither) also earns it the memory ghost when the mill goes out of sight.
+		_lit_meshes.append({"mi": mi, "cell": Vector2i(cx, cy)})
 	_track(root)
 	return true
 
@@ -6671,7 +6686,7 @@ func _place_tentwall(obj: Dictionary, tile: String, cx: int, cy: int, light_frac
 	var pole_x1: int = canon["px1"]
 	var panels: Dictionary = canon["panels"]
 	var ps := PIXEL_SIZE
-	var lfc := Color(light_frac, light_frac, light_frac)
+	var lf := clampf(light_frac, 0.0, 1.0)
 	var base := Vector3(cx, 0.0, cy)
 	# As tall as the wall blocks around them: the POLE tops out at WALL_H, everything
 	# else keeps its art-derived proportion through vscale.
@@ -6728,15 +6743,11 @@ func _place_tentwall(obj: Dictionary, tile: String, cx: int, cy: int, light_frac
 			for vz in pn:
 				_vox_block(pst,
 					base + Vector3((vx - pn * 0.5) * ps, vy * vh, (vz - pn * 0.5) * ps),
-					Vector3(ps, vh, ps), vc * lfc,
+					Vector3(ps, vh, ps), vc,
 					[vx == 0, vx == pn - 1, vy == 0, vy == 23, vz == 0, vz == pn - 1])
 	var pmesh := ArrayMesh.new()
 	pst.commit(pmesh)
-	var cmi := MeshInstance3D.new()
-	cmi.mesh = pmesh
-	cmi.material_override = _vox_skin_material()
-	_spawn_parent().add_child(cmi)
-	_track(cmi)
+	_vox_prop_mesh(pmesh, cx, cy, lf)
 	# FABRIC: hung (art bbox through vscale = the ground gap), off the pole (one art
 	# px gap), spanning to the cell edge.
 	var gapw := 0.5 / 8.0
@@ -6747,7 +6758,6 @@ func _place_tentwall(obj: Dictionary, tile: String, cx: int, cy: int, light_frac
 		fab_y0 = (bottom + 1 - (fref.position.y + fref.size.y)) * vscale
 		fab_h = fref.size.y * vscale
 	var fab_len: float = 0.5 - pole_w * 0.5 - gapw
-	var skin_mat := _color_material(skin_c * lfc)
 	for d in dirs:
 		var horiz: bool = d == "e" or d == "w"
 		var fmid: float = pole_w * 0.5 + gapw + fab_len * 0.5
@@ -6761,15 +6771,21 @@ func _place_tentwall(obj: Dictionary, tile: String, cx: int, cy: int, light_frac
 		# for w AND n; see _fence_half) — runs compose and corners join cleanly.
 		var ad: String = "e" if (d == "e" or d == "s") else "w"
 		if not panels.has(ad):
-			# canon without that panel (family has no _ew art at all): plain slab
-			var slab := BoxMesh.new()
-			slab.size = Vector3(fab_len, fab_h, 1.5 * ps) if horiz else Vector3(1.5 * ps, fab_h, fab_len)
-			var smi := MeshInstance3D.new()
-			smi.mesh = slab
-			smi.material_override = skin_mat
-			smi.position = base + off + Vector3(0.0, fab_y0 + fab_h * 0.5, 0.0)
-			_spawn_parent().add_child(smi)
-			_track(smi)
+			# Canon without that panel (family has no _ew art at all): a plain slab -- but built
+			# as ONE VOXEL BLOCK, not a BoxMesh wearing _color_material. A cached colour material
+			# is shared with every other object of that colour AND carries the skin colour in the
+			# one channel the per-turn relight overwrites, so it can be neither dimmed nor ghosted
+			# without wrecking something else. Vertex colour holds the skin; the material holds
+			# the light; the rule is the same one the fabric follows two branches down.
+			var sz := Vector3(fab_len, fab_h, 1.5 * ps) if horiz else Vector3(1.5 * ps, fab_h, fab_len)
+			var ctr := base + off + Vector3(0.0, fab_y0 + fab_h * 0.5, 0.0)
+			var sst := SurfaceTool.new()
+			sst.begin(Mesh.PRIMITIVE_TRIANGLES)
+			_vox_block(sst, ctr - sz * 0.5, sz, skin_c,
+				[true, true, true, true, true, true])
+			var smesh := ArrayMesh.new()
+			sst.commit(smesh)
+			_vox_prop_mesh(smesh, cx, cy, lf)
 			continue
 		# VOXEL FABRIC (Daniel: "would it be easier to construct these as
 		# 'minecraft' blocks ... trying to construct geometric areas to cover the
@@ -6820,7 +6836,7 @@ func _place_tentwall(obj: Dictionary, tile: String, cx: int, cy: int, light_frac
 					faces.append([0.50, [[a0, y0f, -hd], [a1, y0f, -hd], [a1, y0f, hd], [a0, y0f, hd]]])
 				for fdef in faces:
 					var shade: float = fdef[0]
-					var wc := Color(c.r * shade, c.g * shade, c.b * shade) * lfc
+					var wc := Color(c.r * shade, c.g * shade, c.b * shade)
 					var q4: Array = fdef[1]
 					for k in [0, 1, 2, 0, 2, 3]:
 						var v: Array = q4[k]
@@ -6834,11 +6850,7 @@ func _place_tentwall(obj: Dictionary, tile: String, cx: int, cy: int, light_frac
 						stw.add_vertex(p3)
 		var fmesh := ArrayMesh.new()
 		stw.commit(fmesh)
-		var fmi := MeshInstance3D.new()
-		fmi.mesh = fmesh
-		fmi.material_override = _vox_skin_material()
-		_spawn_parent().add_child(fmi)
-		_track(fmi)
+		_vox_prop_mesh(fmesh, cx, cy, lf)
 	return true
 
 ## Is the art pixel at panel-grid (i, j) opaque? Out of bounds = transparent
@@ -6959,7 +6971,7 @@ func _place_signpost(obj: Dictionary, tile: String, cx: int, cy: int, light_frac
 	# a stretched corner window of the art (measured: red slats + letter strokes).
 	var sx := ctex.get_width() / float(w)
 	var sy := ctex.get_height() / float(h)
-	var lfc := Color(light_frac, light_frac, light_frac)
+	var lf := clampf(light_frac, 0.0, 1.0)
 	var ps := PIXEL_SIZE
 	var base := Vector3(cx, 0.0, cy)
 	# Board rect + the board's own frame colour (sampled from the first raw-opaque
@@ -7026,17 +7038,13 @@ func _place_signpost(obj: Dictionary, tile: String, cx: int, cy: int, light_frac
 		# world +Y is the PREVIOUS art row, so the up/down neighbours are y-1 / y+1
 		_vox_block(st,
 			base + Vector3((v.x - w * 0.5) * ps, (bottom - v.y) * ps, (v.z - 0.5) * ps),
-			Vector3(ps, ps, ps), solid[key] * lfc,
+			Vector3(ps, ps, ps), solid[key],
 			[not solid.has(v + Vector3i(-1, 0, 0)), not solid.has(v + Vector3i(1, 0, 0)),
 			 not solid.has(v + Vector3i(0, 1, 0)), not solid.has(v + Vector3i(0, -1, 0)),
 			 not solid.has(v + Vector3i(0, 0, -1)), not solid.has(v + Vector3i(0, 0, 1))])
 	var smesh := ArrayMesh.new()
 	st.commit(smesh)
-	var smi := MeshInstance3D.new()
-	smi.mesh = smesh
-	smi.material_override = _vox_skin_material()
-	_spawn_parent().add_child(smi)
-	_track(smi)
+	_vox_prop_mesh(smesh, cx, cy, lf)
 	return true
 
 # ── WINNER PER CELL (Daniel, 2026-08-12): "stop fighting and just do what Qud does.
@@ -9628,6 +9636,38 @@ func _vox_block(st: SurfaceTool, o: Vector3, s: Vector3, col: Color, open: Array
 ## too, so a tent looked the same whichever way it ran; per-cell light still lands via
 ## the light_frac the vertex colours are multiplied by.
 var _vox_skin_mat: StandardMaterial3D
+
+## A voxel prop's mesh, wearing its OWN skin material so the cell's light can move.
+##
+## THE LIGHT OF THE MOMENT A PROP WAS BUILT IS NOT ITS COLOUR. The tent, the signpost and the
+## waterwheel each multiplied `light_frac` straight into their vertex colours and then wore the
+## SHARED skin material, which pinned every one of them to whatever the cell happened to be lit
+## like at build time -- for good. A tent built while its cell was dark stayed black through dawn,
+## through the player walking up to it with a torch, through everything, and Qud went on reporting
+## the cell as lit and in sight the whole time. Daniel, on a canvas one step away from his
+## character: "Canvas is dark. Like it's in fog or darkness."
+##
+## So light rides where _fence_half_vox already puts it: vertex colours carry the ART and the face
+## shade, a per-instance material's albedo_color carries the light (it multiplies vertex colour),
+## and the instance goes in _lit_meshes so the per-turn pass can move it. DUPLICATE, never the
+## cached material -- _reset_static_light writes albedo_color straight onto material_override, so
+## one shared material would hand every voxel prop in the zone the last one's light.
+##
+## Registration buys the MEMORY GHOST too: _lit_meshes swaps a vertex-coloured mesh for its K/k
+## variant when the cell is out of sight, which is the treatment walls and sprites already get and
+## the one Daniel asked for on the tents ("we should see the tents, just dark").
+func _vox_prop_mesh(mesh: ArrayMesh, cx: int, cy: int, light_frac: float) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	var m: StandardMaterial3D = _vox_skin_material().duplicate()
+	m.albedo_color = Color(light_frac, light_frac, light_frac)
+	mi.material_override = m
+	_spawn_parent().add_child(mi)
+	if _live_build:
+		_lit_meshes.append({"mi": mi, "cell": Vector2i(cx, cy)})
+	_track(mi)
+	return mi
+
 
 func _vox_skin_material() -> StandardMaterial3D:
 	if _vox_skin_mat != null:

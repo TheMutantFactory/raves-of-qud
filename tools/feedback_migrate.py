@@ -38,6 +38,23 @@ def install_id():
     return "unknown"
 
 
+# Which overrides slot a verdict belongs in. MIRRORS godot/TileReport.gd `_rule_slot` -- the two
+# have to agree or a migrated report and a freshly filed one would describe the same verdict
+# differently, and grouping on the sentence would split.
+def rule_slot(verdict):
+    v = verdict.lower()
+    if "effect:" in v or "glow" in v:
+        return "effect"
+    if "pos:" in v:
+        return "position"
+    if "fill" in v:
+        return "fill"
+    for k in ("wall", "panel", "n\u2013s", "e\u2013w", "billboard", "flat", "not be drawn"):
+        if k in v:
+            return "shape"
+    return ""
+
+
 def upgrade(rec, iid, base):
     out = dict(rec)
     out.setdefault("v", 1)
@@ -54,6 +71,17 @@ def upgrade(rec, iid, base):
     # The file on disk is the only thing that settles it, so ask the file. Same rule as
     # FeedbackSubmitter._resolve_shot, including demoting a claim with nothing behind it: a
     # zero-byte PNG is a failed save, and a promise nobody can check is worse than a plain no.
+    # A VERDICT-ONLY REPORT IS NOT AN EMPTY ONE. The tile form accepts "pick a verdict or write a
+    # note", so a submit with only a verdict is complete locally -- but it went out with `text: ""`,
+    # which the contract forbids, so the server refused it and the outbox parked it here. The
+    # verdict is what the reporter actually said, so it becomes the note, WORD FOR WORD the way
+    # TileReport._submit now composes it, or the two halves would disagree about what a migrated
+    # report says versus a freshly filed one.
+    if not str(out.get("text", "")).strip():
+        verdict = str(out.get("verdict", "")).strip()
+        if verdict:
+            out["text"] = "%s: %s" % (rule_slot(verdict) or "rule", verdict)
+
     rel = str(out.get("shot", "") or "")
     path = os.path.join(base, rel) if rel else ""
     have = bool(path) and os.path.isfile(path) and os.path.getsize(path) > 0
@@ -99,7 +127,17 @@ def main():
         print("  %d unparseable line(s) left alone" % bad)
     if empty:
         print("  %d with an empty note -- the server requires one; left in place" % len(empty))
-    print("  %d ready to re-queue as app_version='pre-0.8'" % len(ready))
+    # Say the version they will ACTUALLY carry. This line was hardcoded to "pre-0.8" from when the
+    # only thing parked here was pre-envelope, and it now also catches records that are merely
+    # missing a note -- which keep their own real version, so the old text was simply untrue about
+    # them. `setdefault` never overwrote it; only the message claimed otherwise.
+    vers = sorted({str(r.get("app_version", "?")) for r in ready})
+    print("  %d ready to re-queue (app_version %s)" % (len(ready), ", ".join(vers) or "-"))
+    repaired = sum(1 for before, after in zip(recs, up)
+                   if not str(before.get("text", "")).strip()
+                   and str(after.get("text", "")).strip())
+    if repaired:
+        print("    %d had no note and take their VERDICT as the note" % repaired)
     shots = sum(1 for r in ready if r.get("shot_attached"))
     # Counted against the ORIGINALS: `upgrade` drops the dangling key, so by then the record no
     # longer remembers it ever named a file.
