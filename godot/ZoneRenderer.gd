@@ -892,15 +892,22 @@ func _gate_new_meshes(first: int, cx: int, cy: int) -> void:
 		# whole assembly, which is exactly how a waterwheel stayed lit in unexplored ground after
 		# every other prop was gated. Ask whether the subtree CONTAINS geometry, and gate the
 		# container: hiding it takes everything under it, which is what a hole in the fog needs.
-		if not ch.has_meta("vis_owned") and _holds_mesh(ch):
+		if not ch.has_meta("vis_owned") and _holds_gated_visual(ch):
 			_known_meshes.append({"n": ch, "cell": Vector2i(cx, cy)})
 
-## Is this node, or anything under it, drawn geometry?
-func _holds_mesh(n: Node) -> bool:
-	if n is MeshInstance3D:
+## Is this node, or anything under it, something this gate should hide?
+##
+## MESHES AND PARTICLES, and NOT sprites. A waterwheel's spill and splash are GPUParticles3D added
+## straight to the spawn parent, so a mesh-only test missed them and water went on falling in the
+## fog — Daniel: "the water from the waterwheel is both animating in an out-zone and visible."
+## Sprites stay out because _relight_static_sprites already gates them by ALPHA, and it does that
+## precisely because the dynamic pass toggles a static winner's `visible`: two writers of one flag
+## fight, which this file has paid for twice.
+func _holds_gated_visual(n: Node) -> bool:
+	if (n is MeshInstance3D or n is GPUParticles3D) and not (n is SpriteBase3D):
 		return true
 	for c in n.get_children():
-		if _holds_mesh(c):
+		if _holds_gated_visual(c):
 			return true
 	return false
 
@@ -1667,6 +1674,15 @@ func _dim_frozen_node(n: Node, f: float) -> void:
 	# container. The waterwheel adds a Node3D holding its rim and axle, which is neither a sprite
 	# nor a mesh, so a dim that only inspected the node itself did nothing at all to it — and
 	# Daniel saw it lit from a zone away. Daniel: "the waterwheel is visible from an external zone."
+	# A DEPARTED ZONE IS A MEMORY, AND A MEMORY DOES NOT RUN. Particles there kept emitting: the
+	# mill's water went on pouring and splashing in a zone the player left, which is both alive
+	# when it should be still and lit when it should be fogged. Stopping the emitter is the honest
+	# form of "you remember water being here" — and it costs nothing, where a live particle system
+	# per departed zone costs every frame.
+	if n is GPUParticles3D:
+		(n as GPUParticles3D).emitting = false
+		(n as GPUParticles3D).visible = false
+		return
 	if not (n is SpriteBase3D) and not (n is MeshInstance3D):
 		for c in n.get_children():
 			_dim_frozen_node(c, f)

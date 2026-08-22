@@ -1846,6 +1846,24 @@ func _write_zone_report() -> void:
 			e["max_step"] = 0.0
 			e["max_foreign"] = 0.0
 	lines.append("FLOATING: %d sprites  [%s]" % [fl.size(), "  ".join(PackedStringArray(fl2))])
+	# PARTICLES IN DEPARTED ZONES. A memory should not run, and "is it still emitting?" cannot be
+	# answered from a screenshot — an emitter that has been switched off still has particles aloft
+	# for a second or two, so a still shows water either way.
+	var pt_total := 0
+	var pt_live := 0
+	for zid in renderer._static_zones:
+		if zid == store.live_id():
+			continue
+		var st: Array = [renderer._static_zones[zid]]
+		while not st.is_empty():
+			var n: Node = st.pop_back()
+			for ch in n.get_children():
+				st.append(ch)
+			if n is GPUParticles3D:
+				pt_total += 1
+				if (n as GPUParticles3D).emitting:
+					pt_live += 1
+	lines.append("DEPARTED-ZONE PARTICLES: %d found, %d still emitting" % [pt_total, pt_live])
 	lines.append("DOOR .vox per design:")
 	lines.append("DOOR art probe: %s" % renderer._door_art_probe("Tiles/sw_door_basic.bmp", "&y", "y"))
 	lines.append("DOORS (cell -> screen pixel, so a door can be photographed without hunting for it)")
