@@ -8819,15 +8819,18 @@ func _wall_vox_mesh(mv: Dictionary, nb: Dictionary) -> ArrayMesh:
 	var occ := {}
 	for e in m["vox"]:
 		var c: Color = pal[int(e[1])]
-		# A FIELD-COLOURED VOXEL IS ABSENCE, not paint — the same rule the doors needed. The editor
-		# wants something to build in, and Qud's k is what "background" means everywhere else here.
-		if _vox_is_field(c):
-			continue
-		# ...AND SO IS A NEAR-TRANSPARENT ONE. vengi keeps palette slots whose alpha is 1..89 —
-		# stray brush picks and material slots — and renders them invisible, which is why the model
-		# "loads correctly" there. This mesher used to keep the RGB and drop the alpha, so 119
-		# voxels on (255,0,0,1)-style slots drew as solid RED stripes up the wall face. Alpha is
-		# transparency in the file's own terms; below half, the voxel does not draw.
+		# THE FIELD COLOUR IS PAINT HERE, NOT ABSENCE. The doors' k-means-absence rule is the
+		# DOORS' contract — their files fill the cell around the frame with k because MagicaVoxel
+		# needs some colour to build a shape in. It was copied onto walls unexamined, and it ate a
+		# third of Daniel's model: "I had a third color. Dark green. It's the core of the voxel
+		# group." His dark green IS Qud's k (#0f3b3a), 3,312 voxels of it, and the "relief" the
+		# rule opened up was holes where his core belongs. A vengi wall needs no stand-in colour —
+		# absence is real empty space (this model carries 872 cells of it) — so every colour is
+		# just a colour.
+		#
+		# A NEAR-TRANSPARENT PALETTE SLOT is still absence: vengi keeps slots with alpha 1..89
+		# (stray brush picks, material slots) and renders them invisible. Keeping the RGB drew 119
+		# voxels of solid RED stripes up the wall face. Below half alpha, a voxel does not draw.
 		if c.a < 0.5:
 			continue
 		occ[e[0] as Vector3i] = c

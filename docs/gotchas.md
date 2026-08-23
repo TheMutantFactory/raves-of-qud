@@ -3130,5 +3130,11 @@ convention is reported per file in zonereport's VOXEL WALLS section.
 material slots — and renders them invisible, which is the other half of "loads correctly in
 vengi". The mesher kept the RGB and dropped the alpha, so 119 voxels on `(255,0,0,1)`-style slots
 drew as solid red stripes up the wall. Alpha is transparency in the file's own terms: below half,
-the voxel does not draw. That rule also carved the model's real relief open — the field voxels
-plus the sub-alpha ones are absence, and the ground now shows through the slats.
+the voxel does not draw. **The field-as-absence half of that fix was WRONG, and lasted one report.** The doors' k-means-
+absence rule was copied onto walls unexamined, and Daniel's wall uses that exact colour as paint:
+"I had a third color. Dark green. It's the core of the voxel group." His dark green IS Qud's k —
+3,312 voxels of it — and the "relief finally carved open" was holes where his core belongs. A
+vengi wall needs no stand-in colour; absence is real empty space (his model carries 872 cells of
+it). So on walls every opaque colour is just a colour, and only sub-half-alpha means absence. The
+doors keep their rule: their files genuinely scaffold with k, and their author said so at the
+time. **A convention earned by one asset class is not a law of the format.**
