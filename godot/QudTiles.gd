@@ -91,6 +91,23 @@ func texture(tile: String, main: Color, detail: Color) -> Texture2D:
 	var key := "%s|%s|%s" % [fname, main.to_html(), detail.to_html()]
 	if _tex_cache.has(key):
 		return _tex_cache[key]
+	# CUSTOM ART RENDERS AS-AUTHORED, here too. This loader feeds the Nearby-objects icons, the
+	# message-log pictographs and every other side-panel tile, and it never knew tiles_custom
+	# existed — so the playfield showed Daniel's edit while the panels showed stock, which reads as
+	# "my change reverted" from one glance at the panel. Same contract as ZoneRenderer's
+	# _colored_tex_rgb: finished pixels, no recolour lerp, mtime in the key so edits invalidate.
+	var custom := _custom_path(fname)
+	if custom != "":
+		var ckey := "%s|custom|%d" % [fname, FileAccess.get_modified_time(custom)]
+		if _tex_cache.has(ckey):
+			return _tex_cache[ckey]
+		var cimg := _load_image(custom)
+		if cimg != null:
+			var ctex := ImageTexture.create_from_image(cimg)
+			if _tex_cache.size() > 96:
+				_tex_cache.clear()
+			_tex_cache[ckey] = ctex
+			return ctex
 	var mask := _mask(fname)
 	if mask == null:
 		return null
@@ -112,14 +129,14 @@ func texture(tile: String, main: Color, detail: Color) -> Texture2D:
 	_tex_cache[key] = tex
 	return tex
 
-func _mask(fname: String) -> Image:
-	if _mask_cache.has(fname):
-		return _mask_cache[fname]
+## The tiles_custom counterpart of an exported tile name, or "" when none exists.
+func _custom_path(fname: String) -> String:
 	if tiles_dir == "":
-		return null
-	var path := tiles_dir.path_join(fname)
-	if not FileAccess.file_exists(path):
-		return null
+		return ""
+	var p := tiles_dir.get_base_dir().path_join("tiles_custom").path_join(fname)
+	return p if FileAccess.file_exists(p) else ""
+
+func _load_image(path: String) -> Image:
 	var bytes := FileAccess.get_file_as_bytes(path)
 	if bytes.is_empty():
 		return null
@@ -128,6 +145,16 @@ func _mask(fname: String) -> Image:
 		return null
 	if img.get_format() != Image.FORMAT_RGBA8:
 		img.convert(Image.FORMAT_RGBA8)
+	return img
+
+func _mask(fname: String) -> Image:
+	if _mask_cache.has(fname):
+		return _mask_cache[fname]
+	if tiles_dir == "":
+		return null
+	var img := _load_image(tiles_dir.path_join(fname))
+	if img == null:
+		return null
 	_mask_cache[fname] = img
 	return img
 

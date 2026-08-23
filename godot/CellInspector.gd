@@ -501,8 +501,40 @@ func _export_art(tile: String) -> String:
 	out.store_buffer(bytes)
 	out.close()
 	DirAccess.make_dir_recursive_absolute(dir.path_join("tiles_custom"))
-	return "exported -> tile_out.png · replacement goes to tiles_custom/%s%s" % [
-		fname, "  (CUSTOM ART ACTIVE)" if FileAccess.file_exists(custom) else ""]
+	# FAMILY COVERAGE, because "my art reverted" turned out to mean "Qud dealt this creature a
+	# VARIANT I never painted". The watervine farmer ships SEVEN tiles (sw_farmer, sw_farmer1..6)
+	# and Qud assigns one per individual — Daniel painted four over two weeks, and every farmer
+	# wearing 5 or 6 looked like a revert of work that was sitting on disk the whole time. One line
+	# turns the whack-a-mole into a checklist.
+	var cover := ""
+	var fam := _renderer.tile_family(tile) if _renderer != null else ""
+	if fam != "":
+		var have: Array[String] = []
+		var missing: Array[String] = []
+		var td := DirAccess.open(dir.path_join("tiles"))
+		if td != null:
+			for f2 in td.get_files():
+				# Exported names come in two shapes: the long flat asset name (which tile_family's
+				# prefix list handles) and a short "Creatures_sw_farmer4.bmp" form it does not —
+				# turning the first underscore back into a slash makes the short form parse as the
+				# path it was flattened from. Without this the coverage line never matched anything
+				# and silently printed nothing, which is this feature's own disease.
+				var alt := f2.replace("_", "/") if f2.find("_") < 0 else \
+					f2.substr(0, f2.find("_")) + "/" + f2.substr(f2.find("_") + 1)
+				if _renderer.tile_family(f2) == fam or _renderer.tile_family(alt) == fam:
+					if FileAccess.file_exists(dir.path_join("tiles_custom").path_join(f2)):
+						have.append(f2)
+					else:
+						missing.append(f2)
+		if not missing.is_empty() and not have.is_empty():
+			missing.sort()
+			cover = "\n     family   %s custom %d/%d — STOCK still shown by: %s" % [
+				fam, have.size(), have.size() + missing.size(), ", ".join(missing)]
+		elif missing.is_empty() and have.size() > 1:
+			cover = "\n     family   %s custom %d/%d — every variant covered" % [
+				fam, have.size(), have.size()]
+	return "exported -> tile_out.png · replacement goes to tiles_custom/%s%s%s" % [
+		fname, "  (CUSTOM ART ACTIVE)" if FileAccess.file_exists(custom) else "", cover]
 
 # --- output sinks -----------------------------------------------------------
 
