@@ -386,6 +386,26 @@ func _track(n: Node) -> void:
 func _wall_parent() -> Node:
 	return _bank if _bank != null else _wall_root
 var _glow_tex: Texture2D
+## The warm of a torch. Named because the tiled pool below has to match the smooth one exactly.
+const POOL_TINT := Color(1.0, 0.62, 0.25)
+## THE POOL IS BUILT OUT OF CELLS, not a smooth disc. Daniel: "it would look better if it was
+## integer tiled, rather than a circular gradient." Everything else in this view is made of whole
+## cells and whole voxels, and a soft airbrushed ellipse on the floor was the one thing that was
+## not -- it read as lighting borrowed from another game.
+##
+## The trick is that _make_radial ALREADY draws exactly the right picture; it was only ever asked
+## for it at 64x64. Ask for it at ONE TEXEL PER CELL and turn filtering off, and each texel IS a
+## cell. No second falloff function to keep in step with the first, and the smooth pool stays
+## available (\_glow_tex) if the look is ever wanted back.
+##
+## ALIGNMENT IS THE WHOLE JOB, and it comes down to one parity rule. A quad of D units centred on
+## cell (cx, cy) puts texel i's centre at cx - D/2 + i + 0.5. With D an ODD integer that is
+## cx - (D-1)/2 + i: an integer offset from the cell centre, so texel centres land on cell centres
+## and the seams land on cell boundaries. With D even every texel straddles two cells and the pool
+## is a half-cell out in both axes -- which looks like a bug and is very hard to see as one.
+## Z-STRETCH does not disturb it: the renderer node scales Z, and cells are scaled with it, so the
+## alignment holds in the local space where cells are unit squares.
+var _pool_tex := {}     # odd cell-diameter -> its tiled texture
 var _flame_tex: Texture2D
 var _fire_tex: Texture2D          # a drawn flame SHAPE (alpha-blended) for on-fire objects (campfires) — reads by day
 var _smoke_pm: ParticleProcessMaterial   # shared across every sconce's smoke emitter
@@ -623,7 +643,7 @@ func _ready() -> void:
 	add_child(_remembered_root)
 	_dynamic_root = Node3D.new()
 	add_child(_dynamic_root)
-	_glow_tex = _make_radial(64, Color(1.0, 0.62, 0.25), 1.0)   # warm pool of light
+	_glow_tex = _make_radial(64, POOL_TINT, 1.0)   # warm pool of light (the smooth one; see _pool_texture)
 	_flame_tex = _make_radial(32, Color(1.0, 0.80, 0.35), 1.6)  # tighter, brighter core (additive torch flame)
 	_fire_tex = _make_flame_tex(64)                             # a drawn flame SHAPE for daytime campfires (alpha)
 	_mote_tex = _make_radial(16, Color(0.65, 1.0, 0.85), 1.5)   # glowfish bioluminescent mote (cyan-green)
@@ -642,6 +662,21 @@ func _make_radial(n: int, tint: Color, power: float) -> Texture2D:
 			a2 = pow(a2, power)
 			img.set_pixel(x, y, Color(tint.r, tint.g, tint.b, a2))
 	return ImageTexture.create_from_image(img)
+
+## The tiled ground pool at a given diameter IN CELLS. Cached: a zone has many torches and most of
+## them share a radius, and the image is a few dozen texels either way.
+func _pool_texture(cells: int) -> Texture2D:
+	if not _pool_tex.has(cells):
+		_pool_tex[cells] = _make_radial(cells, POOL_TINT, 1.0)
+	return _pool_tex[cells]
+
+## A pool diameter in whole cells: the world-unit size rounded to the nearest ODD integer, never
+## below 3. Odd because of the parity rule above; 3 because a 1-cell pool is not a pool.
+func _pool_cells(d: float) -> int:
+	var n := int(round(d))
+	if n % 2 == 0:
+		n += 1
+	return maxi(3, n)
 
 ## A drawn flame SHAPE: a teardrop, pointed at the top, bulbous at the base — white-yellow core to orange
 ## edge, softer at the tip. Alpha-blended (NOT additive) so it reads as an actual flame on a bright
@@ -3362,10 +3397,15 @@ func _place_light(cx: int, cy: int, radius: float, smokes := true, on_fire := fa
 	# A fire's ground-pool is kept TIGHT (a halo at the flame's foot) so it reads as one campfire, not a
 	# separate flat disc under a standing flame; a torch/sconce pools wider. Both fade out by day anyway.
 	var d: float = maxf(1.6, radius * 0.7) if on_fire else maxf(2.0, radius * 1.6)
-	gm.size = Vector2(d, d)
+	# ...snapped to a whole ODD number of cells, so the pool is tiled with the floor instead of
+	# floating over it. The quad grows or shrinks by up to half a cell doing this; that is the
+	# point, and it is why the size and the texture are derived from the SAME `n` rather than one
+	# being rounded and the other not.
+	var n := _pool_cells(d)
+	gm.size = Vector2(n, n)
 	glow.mesh = gm
 	glow.position = Vector3(cx, FLOOR_Y + 0.01, cy)
-	glow.material_override = _fx_material(_glow_tex)
+	glow.material_override = _fx_material(_pool_texture(n), true)
 	lp.add_child(glow)
 
 	# THE FLAME. Live zone: PARTICLE FIRE (Daniel: the drawn flame was "not
@@ -3417,13 +3457,17 @@ func _place_light(cx: int, cy: int, radius: float, smokes := true, on_fire := fa
 		(flame as Sprite3D).transparency = 0.0 if on_fire else clampf(1.0 - _flame_mul(), 0.0, 1.0)
 
 ## Unshaded + additive: brightens whatever is behind it, no scene lighting needed.
-func _fx_material(tex: Texture2D) -> StandardMaterial3D:
+## `nearest` — one texel per CELL, so the sampler must not blend them back into a gradient. Linear
+## filtering would undo the tiling completely and leave a picture almost identical to the old one,
+## which is exactly the kind of "fix" that gets reported as not working.
+func _fx_material(tex: Texture2D, nearest := false) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
 	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	m.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
 	m.cull_mode = BaseMaterial3D.CULL_DISABLED
-	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR
+	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST if nearest \
+		else BaseMaterial3D.TEXTURE_FILTER_LINEAR
 	if tex != null:
 		m.albedo_texture = tex
 	return m

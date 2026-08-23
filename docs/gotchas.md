@@ -2789,3 +2789,30 @@ same table — warm-orange **3645 → 0**, the sconce pool and flame gone.
 Same shape as the frame-wide black count that turned out to be sky: a number that is easy to
 compute is not therefore a measurement of the thing you care about. State what the metric would do
 if the change worked BEFORE running it, and if the answer is "I'm not sure", it is the wrong metric.
+
+## A tiled light pool is a parity problem, not a texture problem
+
+The torch pool is a quad wearing a radial texture. Making it "integer tiled rather than a circular
+gradient" needs no new falloff function at all — `_make_radial` already draws the right picture and
+was only ever asked for it at 64×64. Ask for it at ONE TEXEL PER CELL, turn filtering off, and each
+texel *is* a cell.
+
+**The whole job is parity.** A quad of D units centred on cell (cx, cy) puts texel `i`'s centre at
+`cx - D/2 + i + 0.5`. With D an ODD integer that is `cx - (D-1)/2 + i` — an integer offset, so
+texel centres land on cell centres and seams land on cell boundaries. With D even, every texel
+straddles two cells and the pool sits half a cell out in both axes, which looks like a rendering
+bug and is very hard to recognise as an off-by-one. Hence `_pool_cells` rounds to the nearest odd
+integer, and the quad size and the texture are derived from the *same* `n` — round one without the
+other and the tiling is off by a scale factor instead.
+
+Two things that would silently undo it, both now covered by `tools/regression/pool_tiling_audit.py`:
+
+- **`TEXTURE_FILTER_LINEAR`** blends the texels straight back into a gradient. The result looks
+  almost exactly like the old picture, which is the worst kind of failure — it reads as "the change
+  didn't land" rather than as a bug.
+- **Z-stretch** does *not* disturb it, and it is worth knowing why so nobody "fixes" it: the
+  renderer node scales Z and cells are scaled with it, so alignment holds in the local space where
+  cells are unit squares.
+
+Measured on a 5-cell pool, top-down: centre (121,85,53), edge-adjacent (89,64,43), corner
+(69,52,39) — three flat steps, boundaries exactly on the ground grid, light in the centre cell.
