@@ -8751,25 +8751,55 @@ func _wall_vox_path(variant_tile: String) -> String:
 		"%s-%s.vox" % [pre.substr(fam), stem.substr(dash + 1)])
 
 ## The hand-authored model for this variant, or {} when there is none (or it is an export).
+##
+## THE EXACT NAME, THEN ITS CARDINAL PROJECTION — the same two-step custom_art and _cap_variant
+## use, because Qud reports DIAGONAL-flavoured signatures (00100110, 01100010) that no one will
+## ever author a model for: the diagonal bits change nothing a wall cell renders. Measured in
+## Joppa's zone: 162 brinestalk wall cells across 58 distinct signatures, five of them wearing the
+## one authored name. "Missing sig = silent STOCK fallback" was the metal family's hardest-won
+## lesson, and skipping the projection re-created it on the vox path verbatim.
 func _wall_vox_model(variant_tile: String) -> Dictionary:
 	var path := _wall_vox_path(variant_tile)
 	if path == "":
 		return {}
 	if not _wall_vox_cache.has(path):
-		var got := {}
-		if FileAccess.file_exists(path):
-			var v: Dictionary = VoxFileScript.read(path)
-			var ms: Array = v.get("models", [])
-			if not ms.is_empty():
-				var m: Dictionary = ms[0]
-				var d: Vector3i = m["dims"]
-				# the height IS the opt-in — see WALL_VOX_LAYERS
-				if d.z == WALL_VOX_LAYERS:
-					got = {"model": m, "palette": v.get("palette", PackedColorArray())}
-				_wall_vox_files[path.get_file()] = "%dx%dx%d %s" % [d.x, d.y, d.z,
-					"USED" if d.z == WALL_VOX_LAYERS else "ignored (not %d layers)" % WALL_VOX_LAYERS]
+		var got := _read_wall_vox(path)
+		if got.is_empty():
+			# 00100110 -> 00100010: zero the diagonal bits, keep the cardinals.
+			var stem := path.get_file().get_basename()
+			var dash := stem.rfind("-")
+			var bits := stem.substr(dash + 1)
+			var card := ""
+			if dash >= 0 and bits.length() == 8:
+				for i in 8:
+					card += bits[i] if i % 2 == 0 else "0"
+				if card != bits:
+					got = _read_wall_vox(path.get_base_dir().path_join(
+						"%s-%s.vox" % [stem.substr(0, dash), card]))
+			# STILL NOTHING IS A FACT WORTH A LINE: this signature falls back to stock art, and
+			# that fallback being invisible is how it cost the metal family a session. One entry
+			# per signature, not per cell.
+			if got.is_empty():
+				_wall_vox_files[path.get_file()] = "no model -> STOCK art (cardinal %s)" \
+					% (card if card != "" else "?")
 		_wall_vox_cache[path] = got
 	return _wall_vox_cache[path]
+
+## Read one wall .vox, honouring the layer-count opt-in. {} when absent or not a wall model.
+func _read_wall_vox(path: String) -> Dictionary:
+	var got := {}
+	if FileAccess.file_exists(path):
+		var v: Dictionary = VoxFileScript.read(path)
+		var ms: Array = v.get("models", [])
+		if not ms.is_empty():
+			var m: Dictionary = ms[0]
+			var d: Vector3i = m["dims"]
+			# the height IS the opt-in — see WALL_VOX_LAYERS
+			if d.z == WALL_VOX_LAYERS:
+				got = {"model": m, "palette": v.get("palette", PackedColorArray())}
+			_wall_vox_files[path.get_file()] = "%dx%dx%d %s" % [d.x, d.y, d.z,
+				"USED" if d.z == WALL_VOX_LAYERS else "ignored (not %d layers)" % WALL_VOX_LAYERS]
+	return got
 
 ## Mesh one cell from a hand-authored model. `nb` says which lateral directions have a wall
 ## neighbour; faces on those boundary planes are dropped.
