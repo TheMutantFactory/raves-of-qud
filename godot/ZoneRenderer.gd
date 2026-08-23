@@ -8480,6 +8480,21 @@ func _rebuild_walls(wall_types: Dictionary) -> void:
 				"n": "" if wn else _face_variant(v, ww, we),
 				"w": "" if ww else _face_variant(v, ws, wn),
 			}
+			# A HAND-AUTHORED MODEL REPLACES THE WHOLE CELL, art and all. It also skips the seam
+			# and closure passes below: those exist to close cap-row gaps the band grammar's carve
+			# rules open, and a drawn model has no carve rules to open them.
+			var mv := _wall_vox_model(v)
+			if not mv.is_empty():
+				var vmesh := _wall_vox_mesh(mv, {"n": wn, "s": ws, "e": we, "w": ww})
+				if vmesh != null:
+					var vmi := MeshInstance3D.new()
+					vmi.mesh = vmesh
+					vmi.material_override = _wall_skin_material()
+					vmi.position = Vector3(k.x, 0.0, k.y)
+					_wall_parent().add_child(vmi)
+					_track_wall(k, vmi)
+					_wall_vox_placed += 1
+					continue
 			var entry := _wall_cell_mesh(v, fv)
 			if not entry.is_empty():
 				var mi := MeshInstance3D.new()
@@ -8686,6 +8701,137 @@ var _last_faces_planes: Array[float] = []
 ## wall neighbour sits. The volume/emission lives in _wall_cell_faces (shared
 ## with the voxel editor's preview); this wrapper meshes it, cached per
 ## (variant, faces, colours) so cells sharing a neighbourhood share the mesh.
+# --- hand-authored voxel walls (.vox at runtime) -----------------------------
+#
+# Daniel: "16x16x24 is the correct size for voxel walls." It was not, and the gap was written down
+# rather than closed -- vox_template.py says so out loud: the band grammar's volume is 16x16x11
+# (one cap layer plus one layer per face-art row) and the 24-high canvas "does NOT bake through
+# vox2wall's band grammar." A 24-layer drawing cannot round-trip through 10 rows of face art; the
+# art is simply not that tall. So a wall that wants to be 24 stops going through the art.
+#
+# This is the door's road, one width wider. A door already skips the tile entirely and is meshed
+# from its .vox at runtime, for the same reason: "a 16x24 sprite has no depth, and the whole point
+# of a hand-authored door is the frame's thickness."
+#
+# GATED ON THE MODEL'S OWN HEIGHT, which matters more than it looks. wall_metal ALREADY has .vox
+# files in that directory -- they are wall2vox exports of the band grammar, 11 layers tall -- and a
+# path that took any .vox it found would silently move the one family that works today off the art
+# and onto a round-tripped copy of itself. A 24-layer model is a hand-authored wall; an 11-layer
+# one is an export. The number is the declaration.
+const WALL_VOX_LAYERS := 24
+var _wall_vox_cache := {}
+## How many cells the last build meshed from a hand-authored model, and how many .vox files it
+## found. Reported by zonereport: "did my model get used" is otherwise a question you can only
+## answer by walking to a wall and squinting at it in the dark.
+var _wall_vox_placed := 0
+var _wall_vox_files := {}
+
+## `<support>/vox/<family>-<bits>.vox` for a wall variant tile, or "" if the name does not parse.
+func _wall_vox_path(variant_tile: String) -> String:
+	if _tiles_dir == "":
+		return ""
+	var stem := variant_tile.get_file().get_basename()
+	var dash := stem.rfind("-")
+	if dash < 0:
+		return ""
+	var pre := stem.substr(0, dash)
+	var fam := pre.rfind("wall_")
+	if fam < 0:
+		return ""
+	return _tiles_dir.get_base_dir().path_join("vox").path_join(
+		"%s-%s.vox" % [pre.substr(fam), stem.substr(dash + 1)])
+
+## The hand-authored model for this variant, or {} when there is none (or it is an export).
+func _wall_vox_model(variant_tile: String) -> Dictionary:
+	var path := _wall_vox_path(variant_tile)
+	if path == "":
+		return {}
+	if not _wall_vox_cache.has(path):
+		var got := {}
+		if FileAccess.file_exists(path):
+			var v: Dictionary = VoxFileScript.read(path)
+			var ms: Array = v.get("models", [])
+			if not ms.is_empty():
+				var m: Dictionary = ms[0]
+				var d: Vector3i = m["dims"]
+				# the height IS the opt-in — see WALL_VOX_LAYERS
+				if d.z == WALL_VOX_LAYERS:
+					got = {"model": m, "palette": v.get("palette", PackedColorArray())}
+				_wall_vox_files[path.get_file()] = "%dx%dx%d %s" % [d.x, d.y, d.z,
+					"USED" if d.z == WALL_VOX_LAYERS else "ignored (not %d layers)" % WALL_VOX_LAYERS]
+		_wall_vox_cache[path] = got
+	return _wall_vox_cache[path]
+
+## Mesh one cell from a hand-authored model. `nb` says which lateral directions have a wall
+## neighbour; faces on those boundary planes are dropped.
+##
+## THE FLUSH RULE IS THE ONE THING THE ART PATH GAVE US FOR FREE. There, wall-to-wall boundaries
+## below the cap never carve, so neighbouring cells tile solid by construction and no face is ever
+## emitted between them. A hand-drawn model carries no such guarantee -- it can be hollow or
+## recessed at its own edge -- so the best this can do is not DRAW the boundary plane where a wall
+## abuts. Two cells still meet as two surfaces rather than one volume; if a model is recessed at
+## the edge you will see the gap, and that is the model's to fix, not this function's.
+func _wall_vox_mesh(mv: Dictionary, nb: Dictionary) -> ArrayMesh:
+	var m: Dictionary = mv["model"]
+	var pal: PackedColorArray = mv["palette"]
+	var d: Vector3i = m["dims"]
+	# occupancy first, so a face can ask whether its neighbour voxel exists
+	var occ := {}
+	for e in m["vox"]:
+		var c: Color = pal[int(e[1])]
+		# A FIELD-COLOURED VOXEL IS ABSENCE, not paint — the same rule the doors needed. The editor
+		# wants something to build in, and Qud's k is what "background" means everywhere else here.
+		if _vox_is_field(c):
+			continue
+		occ[e[0] as Vector3i] = c
+	if occ.is_empty():
+		return null
+	var sx: float = 1.0 / float(d.x)
+	var sz: float = 1.0 / float(d.y)
+	var sy: float = WALL_H / float(d.z)
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	# world -z is NORTH and +z SOUTH (cells run cy downward), so the model's y maps to depth with
+	# y=0 at the north edge. A model that comes out mirrored in depth is one `vox_mirror --axis y`.
+	for q in occ:
+		var col: Color = occ[q]
+		var x0: float = -0.5 + float(q.x) * sx
+		var x1: float = x0 + sx
+		var z0: float = -0.5 + float(q.y) * sz
+		var z1: float = z0 + sz
+		var y0: float = float(q.z) * sy
+		var y1: float = y0 + sy
+		# [neighbour offset, on a boundary?, which neighbour dir, shade, the quad]
+		var faces := [
+			[Vector3i(-1, 0, 0), q.x == 0, "w", 0.72,
+				[Vector3(x0, y0, z0), Vector3(x0, y0, z1), Vector3(x0, y1, z1), Vector3(x0, y1, z0)]],
+			[Vector3i(1, 0, 0), q.x == d.x - 1, "e", 0.72,
+				[Vector3(x1, y0, z1), Vector3(x1, y0, z0), Vector3(x1, y1, z0), Vector3(x1, y1, z1)]],
+			[Vector3i(0, -1, 0), q.y == 0, "n", 1.00,
+				[Vector3(x1, y0, z0), Vector3(x0, y0, z0), Vector3(x0, y1, z0), Vector3(x1, y1, z0)]],
+			[Vector3i(0, 1, 0), q.y == d.y - 1, "s", 1.00,
+				[Vector3(x0, y0, z1), Vector3(x1, y0, z1), Vector3(x1, y1, z1), Vector3(x0, y1, z1)]],
+			[Vector3i(0, 0, -1), false, "", 0.50,
+				[Vector3(x0, y0, z0), Vector3(x1, y0, z0), Vector3(x1, y0, z1), Vector3(x0, y0, z1)]],
+			[Vector3i(0, 0, 1), false, "", 0.92,
+				[Vector3(x0, y1, z1), Vector3(x1, y1, z1), Vector3(x1, y1, z0), Vector3(x0, y1, z0)]],
+		]
+		for f in faces:
+			if occ.has(q + (f[0] as Vector3i)):
+				continue                       # buried
+			if bool(f[1]) and bool(nb.get(String(f[2]), false)):
+				continue                       # a wall abuts this plane — see the flush rule above
+			var shade: float = f[3]
+			var wc := Color(col.r * shade, col.g * shade, col.b * shade)
+			var quad: Array = f[4]
+			for i in [0, 1, 2, 0, 2, 3]:
+				st.set_color(wc)
+				st.set_normal(Vector3.UP)
+				st.add_vertex(quad[i])
+	var mesh := ArrayMesh.new()
+	st.commit(mesh)
+	return mesh
+
 func _wall_cell_mesh(variant_tile: String, fv: Dictionary) -> Dictionary:
 	var key := "cell|%s|%s|%s|%s|%s|%s|%s|%s" % [variant_tile, fv["s"], fv["e"],
 		fv["n"], fv["w"], _wall_main, _wall_detail, _wall_bg]

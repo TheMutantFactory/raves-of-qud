@@ -3041,3 +3041,41 @@ an order containing an `@` name rather than writing one that silently drops a pa
 
 Also: `Settings.set_value` is memory-only. `save()` writes the file. The order looked perfectly
 correct in memory for a whole session and came back wrong after every restart.
+
+## Walls can come from a .vox at runtime, and the LAYER COUNT is the opt-in
+
+The band grammar's wall volume is 16x16x**11** — one cap layer plus one layer per face-art row,
+and the face band is 10 rows. `vox_template.py` wrote that gap down rather than closing it: the
+24-high canvas "does NOT bake through vox2wall's band grammar", because a 24-layer drawing cannot
+round-trip through 10 rows of face art. The art is simply not that tall.
+
+So a wall that wants to be 24 stops going through the art, exactly as a door already does. The
+gate is the model's own height: **wall_metal already has .vox files in that directory** — they are
+`wall2vox` exports of the band grammar, 11 layers — and a path that took any .vox it found would
+silently move the one family that works today off the art and onto a round-tripped copy of itself.
+24 layers is a hand-authored wall; 11 is an export. The number IS the declaration.
+
+What the art path gave for free and this does not: **flush boundaries**. There, wall-to-wall
+boundaries below the cap never carve, so neighbouring cells tile solid by construction. A drawn
+model carries no such guarantee, so the best available is to not DRAW the boundary plane where a
+wall abuts. Two cells meet as two surfaces rather than one volume; a model recessed at its own edge
+will show a gap, and that is the model's to fix.
+
+`zonereport` grew a VOXEL WALLS section listing every wall .vox looked up, its dims, and whether it
+was USED or ignored — because "did my model get used" is otherwise only answerable by walking to a
+wall and squinting at it in the dark. Which is exactly what went wrong below.
+
+## A wall you cannot see is not a wall that is missing
+
+The magenta probe reported **0 pixels** and I nearly concluded the meshes were never drawn. They
+were: instrumenting the placement showed 19 cells, `live=true`, one surface each, AABB spanning the
+full cell. Two separate things were eating them, and both are normal:
+
+- the **camera cutaway** fades walls between the camera and the player, so a wall two cells away is
+  routinely invisible from one heading and solid from another;
+- the **ghost swap** remaps an out-of-sight wall's vertex colours onto Qud's `K`, which eats a
+  probe colour along with everything else.
+
+Sweeping four headings found 50,043 / 37,000 / 0 / 89,988 magenta pixels. **One sample of a
+camera-dependent effect is not a measurement** — the same lesson as the frame-wide black count, in
+a new costume. Sweep the heading, or move the player, before believing an absence.

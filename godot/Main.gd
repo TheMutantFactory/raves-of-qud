@@ -1889,6 +1889,13 @@ func _write_zone_report() -> void:
 	# cannot show: a viewport holds a handful of lights, and the ones standing against buildings
 	# are rarely among them (two probe runs found 192 lit cells on screen and five unlit ones).
 	# So the renderer reports its own masks and the check stops depending on where you are stood.
+	lines.append("VOXEL WALLS (.vox meshed at runtime; %d layers is the opt-in)"
+		% renderer.WALL_VOX_LAYERS)
+	if renderer._wall_vox_files.is_empty():
+		lines.append("  no wall .vox looked up yet (no wall cell asked for one)")
+	for f in renderer._wall_vox_files:
+		lines.append("  %-34s %s" % [f, renderer._wall_vox_files[f]])
+	lines.append("  cells meshed from a model this build: %d" % renderer._wall_vox_placed)
 	lines.append("LIGHT POOLS (mask = cells Qud calls lit; clipped = the pool stopping at walls)")
 	var pool_lit := 0
 	var pool_all := 0
