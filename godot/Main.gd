@@ -1878,6 +1878,30 @@ func _write_zone_report() -> void:
 				if (n as GPUParticles3D).emitting:
 					pt_live += 1
 	lines.append("DEPARTED-ZONE PARTICLES: %d found, %d still emitting" % [pt_total, pt_live])
+	# LIGHT POOLS — what shape each ground pool actually ended up, and how much of it Qud's light
+	# map clipped away. A pool that stops at a wall is a claim about cells the CAMERA usually
+	# cannot show: a viewport holds a handful of lights, and the ones standing against buildings
+	# are rarely among them (two probe runs found 192 lit cells on screen and five unlit ones).
+	# So the renderer reports its own masks and the check stops depending on where you are stood.
+	lines.append("LIGHT POOLS (mask = cells Qud calls lit; clipped = the pool stopping at walls)")
+	var pool_lit := 0
+	var pool_all := 0
+	for L in renderer._lights:
+		if not L.has("pool_mask"):
+			continue
+		var pm := String(L["pool_mask"])
+		var ones := pm.count("1")
+		pool_lit += ones
+		pool_all += pm.length()
+		var pcell: Vector2i = L["cell"]
+		lines.append("  (%2d,%2d) %2d cells  %3d lit / %3d  clipped %3d%s"
+			% [pcell.x, pcell.y, int(L["pool_n"]), ones, pm.length(), pm.length() - ones,
+			   "   <-- stops at a wall" if ones < pm.length() else ""])
+	if pool_all > 0:
+		lines.append("  TOTAL %d of %d pool cells lit; %d clipped (%.1f%%)"
+			% [pool_lit, pool_all, pool_all - pool_lit, 100.0 * (pool_all - pool_lit) / pool_all])
+	else:
+		lines.append("  (no live pools — daylight, or a zone with no light sources)")
 	lines.append("DOOR .vox per design:")
 	lines.append("DOOR art probe: %s" % renderer._door_art_probe("Tiles/sw_door_basic.bmp", "&y", "y"))
 	lines.append("DOORS (cell -> screen pixel, so a door can be photographed without hunting for it)")

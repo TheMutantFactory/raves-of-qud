@@ -2816,3 +2816,44 @@ Two things that would silently undo it, both now covered by `tools/regression/po
 
 Measured on a 5-cell pool, top-down: centre (121,85,53), edge-adjacent (89,64,43), corner
 (69,52,39) — three flat steps, boundaries exactly on the ground grid, light in the centre cell.
+
+## A ground pool is the intersection of a radius and Qud's light map
+
+A disc goes through walls. Qud has already solved the occlusion — the same per-cell `light` map the
+fog and the darkness overlay read — so the pool is the disc AND that map, and no shadowcasting of
+our own has to be kept in step with Qud's.
+
+Two details that are easy to get wrong:
+
+- **Mask on `LIGHT_LIT` (200), not on `> LIGHT_NONE`.** With night vision on, half the zone clears
+  the lower bar (Darkvision is 10) and the pool would fill the screen. `LIGHT_LIT` is a light
+  SOURCE reaching the cell; the lower levels are a SENSE reaching it.
+- **Refresh per turn.** The mask is baked when the zone is built and a zone is built once on entry,
+  so a zone entered at noon bakes an all-lit mask and would still be spilling through walls at
+  midnight — the exact hour anyone would look. Same shape as the voxel props that wore the light
+  they were built in: a value that moves cannot be baked. `_shape_pools` runs unconditionally, not
+  under the `any_dark` gate the sprite relight uses, because the turn a zone stops being dark is
+  precisely the turn its pools need their day shape.
+
+The mask is a STRING of 0/1, which makes both hot paths cheap: an unchanged mask compares equal in
+one operation, and it doubles as the texture cache key, so two torches in open ground share a
+texture and a light's day and night shapes are two entries rather than two hundred.
+
+## A viewport is not a sample
+
+"Pools stop at walls" is a claim about cells the camera usually cannot show. Two probe runs found
+**192 lit cells on screen and five unlit ones** — the lights standing against buildings were simply
+not in frame, and the on-screen diff between masked and unmasked builds came out at 1,672 pixels,
+almost all of it drifting smoke. From that I nearly concluded the change did nothing.
+
+Counting over the whole zone instead: **23.5% of all pool cells are cells Qud calls unlit**, and
+`zonereport`'s LIGHT POOLS section — the renderer reporting its own masks — shows 11 of 21 pools
+clipped. When the thing you are measuring is spread across a zone, ask the renderer, not the frame.
+
+## Qud calls a lit torch `onFire`
+
+All 21 of Joppa's Torchposts report `onFire: true`, so they take `_place_light`'s FIRE branch and
+get the deliberately TIGHT campfire halo (`radius * 0.7` -> 5 cells) rather than the wider torch
+pool (`radius * 1.6` -> 11 cells) the code was written to give them. The wide branch may never run
+for a real torch. Nobody had seen it either way, because until the filename gate came off, torches
+got no rig at all.

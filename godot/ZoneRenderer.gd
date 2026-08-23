@@ -72,6 +72,10 @@ const MEMORY_GROUND := 0.84
 ## ghost; ABOVE it Qud draws full colour, with nothing in between (Cell.Render). The number was
 ## spelled `1` in three places that each had to re-explain what it meant.
 const LIGHT_NONE := 1
+## Qud's LightLevel.Light — a cell a light SOURCE reaches, as opposed to one a SENSE reaches
+## (Darkvision 10, Safelight 30). A ground pool is drawn from this and not from `> LIGHT_NONE`:
+## with night vision on, half the zone clears that lower bar and the pool would fill the screen.
+const LIGHT_LIT := 200
 
 ## How bright NEVER-SEEN ground stays — the fog of war. Qud's own answer is "no darkening at all":
 ## a histogram of its playfield contains 0.00% near-black pixels (max channel < 12), because Qud
@@ -405,7 +409,16 @@ const POOL_TINT := Color(1.0, 0.62, 0.25)
 ## is a half-cell out in both axes -- which looks like a bug and is very hard to see as one.
 ## Z-STRETCH does not disturb it: the renderer node scales Z, and cells are scaled with it, so the
 ## alignment holds in the local space where cells are unit squares.
-var _pool_tex := {}     # odd cell-diameter -> its tiled texture
+var _pool_tex := {}     # "<n>|<mask>" -> its tiled texture
+## WHICH CELLS QUD SAYS ARE LIT, for the zone currently being built. A pool is the intersection of
+## its own radius with this, so it STOPS AT WALLS instead of spilling through them — Qud has
+## already done the occlusion, and it is the same map the renderer fogs and darkens by, so the
+## light on the floor and the light in the fog cannot disagree.
+##
+## Keyed in PLACED coordinates (cell + offset), the same ones _place_light is handed, because a
+## neighbour zone is built at an offset and a lit set keyed in local coords would silently mask
+## every one of its pools against the wrong cells.
+var _build_lit := {}
 var _flame_tex: Texture2D
 var _fire_tex: Texture2D          # a drawn flame SHAPE (alpha-blended) for on-fire objects (campfires) — reads by day
 var _smoke_pm: ParticleProcessMaterial   # shared across every sconce's smoke emitter
@@ -663,12 +676,48 @@ func _make_radial(n: int, tint: Color, power: float) -> Texture2D:
 			img.set_pixel(x, y, Color(tint.r, tint.g, tint.b, a2))
 	return ImageTexture.create_from_image(img)
 
-## The tiled ground pool at a given diameter IN CELLS. Cached: a zone has many torches and most of
-## them share a radius, and the image is a few dozen texels either way.
-func _pool_texture(cells: int) -> Texture2D:
-	if not _pool_tex.has(cells):
-		_pool_tex[cells] = _make_radial(cells, POOL_TINT, 1.0)
-	return _pool_tex[cells]
+## The lit cells within an n-cell pool centred on (cx, cy), as a compact string of 0/1 in row order.
+## Doubles as the texture cache key, which is the reason it is a string: two torches in the middle
+## of open ground have identical masks and share one texture, and a mask that has not changed since
+## last turn compares equal in one operation instead of n*n.
+##
+## `lit` is a Dictionary of Vector2i -> true. An ABSENT entry means unlit, so a cell the wire never
+## sent (outside the zone) is dark, which is the right answer for a pool at the zone edge.
+func _pool_mask(lit: Dictionary, cx: int, cy: int, n: int) -> String:
+	var half := (n - 1) / 2
+	var out := ""
+	for j in n:
+		for i in n:
+			out += "1" if lit.has(Vector2i(cx - half + i, cy - half + j)) else "0"
+	return out
+
+## The tiled ground pool: the radial falloff, MULTIPLIED BY WHAT QUD SAYS IS LIT.
+##
+## The falloff alone is a disc, and a disc goes through walls. Qud has already solved the occlusion
+## for us -- the same per-cell light map the fog and the darkness overlay read -- so the pool is
+## simply the disc AND that map. A torch in a doorway lights the doorway and the room it faces, and
+## stops at the jamb, with no shadowcasting of our own to keep in step with Qud's.
+##
+## Cached on (n, mask): a zone has many torches, most share a radius, and any two standing in open
+## ground share a mask as well.
+func _pool_texture(cells: int, mask := "") -> Texture2D:
+	var key := "%d|%s" % [cells, mask]
+	if _pool_tex.has(key):
+		return _pool_tex[key]
+	var img := Image.create(cells, cells, false, Image.FORMAT_RGBA8)
+	var c := (cells - 1) * 0.5
+	for y in cells:
+		for x in cells:
+			var a: float = clampf(1.0 - Vector2(x - c, y - c).length() / c, 0.0, 1.0)
+			# An empty mask means "no light map to consult" -- a plain disc, which is what a
+			# daylight build wants (every cell is lit, so the mask would be all ones anyway) and
+			# what a caller with no cells to hand gets.
+			if mask != "" and mask[y * cells + x] == "0":
+				a = 0.0
+			img.set_pixel(x, y, Color(POOL_TINT.r, POOL_TINT.g, POOL_TINT.b, a))
+	var tex := ImageTexture.create_from_image(img)
+	_pool_tex[key] = tex
+	return tex
 
 ## A pool diameter in whole cells: the world-unit size rounded to the nearest ODD integer, never
 ## below 3. Odd because of the parity rule above; 3 because a 1-cell pool is not a pool.
@@ -879,6 +928,11 @@ func render_snapshot(data: Dictionary, neighbors: Array = []) -> void:
 ## always true here; creatures render separately in _rebuild_dynamics. Inspector
 ## notes are gated by the `_noting` flag (true only for the live static build).
 func _build_zone(cells: Array, offset: Vector2i, skip_creatures: bool, wall_types: Dictionary) -> void:
+	# The lit set FIRST, before anything places a light: _place_light masks its pool against it.
+	_build_lit.clear()
+	for lc in cells:
+		if int(lc.get("light", LIGHT_LIT)) >= LIGHT_LIT:
+			_build_lit[Vector2i(int(lc.get("x", 0)) + offset.x, int(lc.get("y", 0)) + offset.y)] = true
 	var wall_cells := {}
 	_group_wall_cells(cells, offset, wall_types, wall_cells)   # pass 1
 	for cell in cells:                                         # pass 2
@@ -1469,6 +1523,10 @@ func _rebuild_dynamics(cells: Array) -> void:
 	elif _was_dark:
 		_reset_static_light()                          # dark -> lit: restore full brightness, once
 	_was_dark = any_dark
+	# ...and reshape the ground pools to the light map this turn actually reports. UNCONDITIONAL,
+	# not under `any_dark`: the turn a zone stops being dark is precisely the turn its pools need
+	# their day shape, and gating this the way the relight is gated would skip it.
+	_shape_pools(cells)
 	# The cutaway's lit test needs this map — but only if there are walls to fade (the world
 	# map has none, so it's skipped there entirely).
 	if not _wall_cutaway.is_empty():
@@ -1642,6 +1700,35 @@ func _ghost_wall_mesh(src: Mesh) -> ArrayMesh:
 
 ## Restore full brightness to the tracked static sprites/meshes — called once when a zone
 ## goes from having dark cells to fully lit (e.g. dawn), since _relight is then skipped.
+## RESHAPE THE LIVE ZONE'S POOLS TO THIS TURN'S LIGHT MAP.
+##
+## The mask is baked when the zone is built, and the zone is built ONCE on entry — so a zone
+## entered at noon bakes an all-lit mask (everything is Light at noon) and would still be spilling
+## light through walls at midnight, which is exactly the hour anyone would look. Same shape as the
+## voxel props that wore the light they were built in: a value that moves cannot be baked.
+##
+## Cheap by construction. A mask is a string, so an unchanged one compares equal in one operation
+## and the common case — nothing changed since last turn — costs a compare per light and no texture
+## work at all. Textures are cached on (n, mask), so even a real change usually finds one already
+## built: the day mask and the night mask for a given torch are two strings, not two hundred.
+func _shape_pools(cells: Array) -> void:
+	if _lights.is_empty():
+		return
+	var lit := {}
+	for c in cells:
+		if int(c.get("light", LIGHT_LIT)) >= LIGHT_LIT:
+			lit[Vector2i(int(c.get("x", 0)), int(c.get("y", 0)))] = true
+	for L in _lights:
+		if not L.has("cell") or not is_instance_valid(L["glow"]):
+			continue
+		var k: Vector2i = L["cell"]
+		var n: int = L["pool_n"]
+		var m := _pool_mask(lit, k.x, k.y, n)
+		if m == L.get("pool_mask", ""):
+			continue
+		L["pool_mask"] = m
+		(L["glow"] as MeshInstance3D).material_override = _fx_material(_pool_texture(n, m), true)
+
 func _reset_static_light() -> void:
 	for e in _lit_sprites:
 		if is_instance_valid(e["s"]):
@@ -3402,10 +3489,11 @@ func _place_light(cx: int, cy: int, radius: float, smokes := true, on_fire := fa
 	# point, and it is why the size and the texture are derived from the SAME `n` rather than one
 	# being rounded and the other not.
 	var n := _pool_cells(d)
+	var mask := _pool_mask(_build_lit, cx, cy, n)
 	gm.size = Vector2(n, n)
 	glow.mesh = gm
 	glow.position = Vector3(cx, FLOOR_Y + 0.01, cy)
-	glow.material_override = _fx_material(_pool_texture(n), true)
+	glow.material_override = _fx_material(_pool_texture(n, mask), true)
 	lp.add_child(glow)
 
 	# THE FLAME. Live zone: PARTICLE FIRE (Daniel: the drawn flame was "not
@@ -3439,8 +3527,12 @@ func _place_light(cx: int, cy: int, radius: float, smokes := true, on_fire := fa
 	# smoke is a NIGHT effect (its flame fades by day). A FIRE (campfire) burns day + night, so its smoke
 	# emits always — `fire_smoke` tells set_daylight not to switch it off at dawn.
 	if _live_build:
+		# `cell`/`pool_n`/`pool_mask` are what _shape_pools needs to keep the pool honest as the
+		# light map moves: a zone built in daylight has an all-lit mask, and without a refresh its
+		# pools would still be spilling through walls come nightfall.
 		var entry := {"glow": glow, "flame": flame, "energy": 1.0, "on_fire": on_fire,
-			"particle_fire": particle_fire}
+			"particle_fire": particle_fire,
+			"cell": Vector2i(cx, cy), "pool_n": n, "pool_mask": mask}
 		if smokes:
 			var smoke := _make_smoke()
 			smoke.position = Vector3(cx, 0.85, cy)   # just above the flame
