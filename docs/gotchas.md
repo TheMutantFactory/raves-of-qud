@@ -2727,3 +2727,46 @@ Two traps, both paid for:
   north–south row at the same screen x and blows the y up to five figures for anything near its own
   depth. Filter to the frame before believing a coordinate — the boundary probes in `zones.txt`
   have been printing exactly this kind of nonsense for rows the camera was not looking at.
+
+## Two mechanisms for one requirement, and the crude one wins
+
+Joppa's torches never lit — no pool, no flame, no smoke, at any hour. The static light gate also
+required `not tile.contains("nofire")`, on the reading that a torch wearing its NOFIRE art was Qud
+saying "unlit". **The art filename is not the state.** Measured at night, all 21 Torchposts report
+`lightRadius: 6` and `onFire: true` while still wearing `sw_torch_nofire.png`. The tile never
+changes, so the test was true around the clock.
+
+The daytime requirement it was added for — "torches aboveground should not have fire or smoke
+during the day" — was already met, twice over and properly, by TIME OF DAY: `_glow_mul` and
+`_flame_mul` fall to zero at midday and `_smoke_on` gates the plume on `_daylight`. So the crude
+guard shadowed the good one, and a rule that looked enforced was a rig switched off permanently.
+`tools/regression/torch_daylight_audit.py` pins the daylight fade now, because removing something
+that *looks* load-bearing is exactly the change worth a test — and that test was checked by putting
+the filename gate back and watching it fail.
+
+## Custom art bypasses the recolour — including the one that makes the MEMORY ghost
+
+A tile with a file in `tiles_custom/` short-circuits `_colored_tex_rgb` and comes back as authored:
+full colour, no recolour, no fill, no cutout. That is the point of custom art, and it silently
+applied to the ghost as well — the ghost texture built from the K/K pair came back byte-identical
+to the live one, so swapping them each turn changed nothing. A custom-arted object rendered at
+FULL COLOUR in cells the player cannot see, while its stock-arted neighbours went teal.
+
+Same cells, same night, same camera, only the flatten toggled:
+
+```
+flatten off   (51,0) and (56,2)  ->  (0, 90, 16)   green-excess +74
+flatten on    the same two       ->  (6, 37, 47)   green-excess   0
+```
+
+(0,90,16) is Qud's `&G` at full saturation, in a cell whose own inspector line read
+`visible=false explored=true -> MEMORY (K/k ghost)`.
+
+The fix is a `flat` flag: paint every opaque pixel `main`, keep alpha, throw the colour away.
+Custom art has no main/detail mask to lerp between — it is finished pixels — so "recolour it to K"
+can only mean keep the silhouette. For ordinary mask art the existing lerp already lands there once
+main == detail == K, so nothing changes for it.
+
+**Three call sites need it, not one**: the sprite ghost, and the two that colour through
+`_art_colors` (ground texture and billboard), because `_art_colors` hands back the memory pair
+exactly when `_remembered_build` — so a departed zone had the same bug by the other road.

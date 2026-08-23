@@ -993,13 +993,21 @@ func _place_cell(cell: Dictionary, offset: Vector2i, wall_cells: Dictionary, ski
 				int(rk.get("rank", -1)), int(rk.get("below", 0)), ground_show)
 		# Creature lights are placed in the DYNAMIC pass so they follow the creature;
 		# here (static) we only place fixed lights (sconces, braziers, lit terrain).
-		# A torch wearing its NOFIRE tile is Qud saying "unlit" — daytime
-		# aboveground torches get NO rig at all: no fire, no smoke, no pool
-		# (Daniel: "Torches aboveground should not have fire or smoke during
-		# the day"). First-party: underground torches never wear nofire, and
-		# campfires (onFire) always burn — you cook in the daytime.
-		if o.has("lightRadius") and not (skip_creatures and _is_creature(o)) \
-				and not String(o.get("tile", "")).contains("nofire"):
+		#
+		# THE ART FILENAME IS NOT THE STATE. This also required `not tile.contains("nofire")`, on
+		# the reading that "a torch wearing its NOFIRE tile is Qud saying unlit". Qud says no such
+		# thing: measured at night, all 21 of Joppa's Torchposts report `lightRadius: 6` and
+		# `onFire: true` while still wearing `sw_torch_nofire.png`. The tile never changes, so the
+		# test was true at every hour and those torches got no rig EVER -- no pool, no flame, no
+		# smoke. Daniel: "the torches don't seem to be lighting at night."
+		#
+		# The daytime requirement it was added for ("torches aboveground should not have fire or
+		# smoke during the day") was already met, twice over and properly, by TIME OF DAY rather
+		# than by a filename: _glow_mul and _flame_mul both fall to zero at midday, and _smoke_on
+		# gates the plume on _daylight. Two mechanisms for one requirement, and the cruder one
+		# masked the better one -- so what looked like a working daytime rule was a rig that had
+		# been switched off around the clock.
+		if o.has("lightRadius") and not (skip_creatures and _is_creature(o)):
 			_place_light(cx, cy, float(o["lightRadius"]), not _is_creature(o), bool(o.get("onFire", false)))
 		idx += 1
 
@@ -7196,7 +7204,11 @@ func _place_nonwall(obj: Dictionary, cx: int, cy: int, idx: int, in_wall: bool, 
 	# material, so there is no per-cell node to tint afterwards. A water tile one step over the
 	# border was the tell — still frankly blue under a ramp that had only dimmed it 18%.
 	var ac: Array = _art_colors(obj)
-	var tex := _colored_tex_rgb(tile, ac[0], ac[1], ac[2], _fill_for(tile, wall_fill))
+	# `_remembered_build` is precisely when _art_colors returned the K/K memory pair, so it is also
+	# precisely when a custom tile must be flattened rather than handed back in full colour. Without
+	# this a departed zone kept its custom-arted trees bright while everything around them went teal.
+	var tex := _colored_tex_rgb(tile, ac[0], ac[1], ac[2], _fill_for(tile, wall_fill),
+		false, _remembered_build)
 
 	# A filed verdict overrides everything below it. This is how facts that are not
 	# in Qud's data get in: nothing in `sw_waterwheel_1` says the wheel runs
@@ -7448,8 +7460,10 @@ func _place_nonwall(obj: Dictionary, cx: int, cy: int, idx: int, in_wall: bool, 
 			# Gaps *enclosed* by the art read as the cell background, the way Qud
 			# draws them; everything outside the silhouette stays see-through.
 			var bac: Array = _art_colors(obj)
+			# ...and flatten a custom tile when those colours ARE the memory pair — same reason as
+			# the ground texture above. This is the billboard the dogthorn tree is drawn as.
 			var btex := _colored_tex_rgb(tile, bac[0], bac[1], bac[2],
-				_fill_for(tile, Fill.INTERIOR), _cutout_for(tile))
+				_fill_for(tile, Fill.INTERIOR), _cutout_for(tile), _remembered_build)
 			if btex == null:
 				btex = tex
 			var s := _take_sprite()
@@ -7548,7 +7562,7 @@ func _place_nonwall(obj: Dictionary, cx: int, cy: int, idx: int, in_wall: bool, 
 				# each, and the 1.40 between them is the whole look. So both ends are K here and
 				# the field supplies the contrast.
 				var gtex := _colored_tex_rgb(tile, _qud_color("K"), _qud_color("K"),
-					_color_key(obj) + "~ghost", _fill_for(tile, Fill.INTERIOR), _cutout_for(tile))
+					_color_key(obj) + "~ghost", _fill_for(tile, Fill.INTERIOR), _cutout_for(tile), true)
 				_lit_sprites.append({"s": s, "cell": Vector2i(cx, cy),
 					"hide_dark": bool(obj.get("hideDark", false)),
 					"live": btex, "ghost": gtex})
@@ -9176,13 +9190,24 @@ func _colored_tex(tile: String, main_c: String, detail_c: String, fill := Fill.N
 		"%s|%s" % [main_c, detail_c], fill)
 
 ## Same, but with colours already resolved (the painted-ConsoleChar path).
-func _colored_tex_rgb(tile: String, main: Color, detail: Color, ckey: String, fill := Fill.NONE, cutout := false) -> ImageTexture:
+## `flat` — paint EVERY opaque pixel `main`, whatever the source. This is what MEMORY is: Qud draws
+## a remembered thing as its glyph in flat K on a field of k, and for ordinary two-colour mask art
+## the existing lerp already lands there once main == detail == K, so nothing changes for it.
+##
+## CUSTOM ART IS WHY THE FLAG HAS TO EXIST. A tile with a file in tiles_custom/ short-circuits below
+## and comes back AS AUTHORED -- full colour, no recolour, which is the whole point of custom art --
+## and that short-circuit ignored main and detail entirely. So the ghost texture built from the K/K
+## pair came back byte-identical to the live one, and swapping one for the other each turn changed
+## nothing: a custom-arted object rendered at full colour in cells the player cannot see. Daniel,
+## on a dogthorn tree wearing Terrain_sw_fattree2.bmp: "visible" -- against an inspector line in the
+## same report reading `fog: visible=false explored=true -> MEMORY (K/k ghost)`.
+func _colored_tex_rgb(tile: String, main: Color, detail: Color, ckey: String, fill := Fill.NONE, cutout := false, flat := false) -> ImageTexture:
 	if tile.is_empty() or _tiles_dir.is_empty():
 		return null
 	# _wall_bg keys the FILL colour (gap pixels paint _wall_bg_color()), so it
 	# must key the cache too — a gold-fill Starship texture must not be served
 	# for a world-fill wall that shares tile+colours.
-	var key := "%s|%s|%d|%s|%d" % [tile, ckey, fill, _wall_bg, 1 if cutout else 0]
+	var key := "%s|%s|%d|%s|%d|%d" % [tile, ckey, fill, _wall_bg, 1 if cutout else 0, 1 if flat else 0]
 	# Custom art renders AS-AUTHORED: full colour straight from the file, no recolour,
 	# no fill, no cutout. mtime in the key = edits invalidate themselves.
 	var custom := _custom_tile_path(tile)
@@ -9193,6 +9218,19 @@ func _colored_tex_rgb(tile: String, main: Color, detail: Color, ckey: String, fi
 		var cimg := _mask(tile)   # _mask already loads the custom file
 		if cimg == null:
 			return null
+		if flat:
+			# The memory redraw. Custom art has no main/detail mask to lerp between -- it is
+			# finished pixels -- so "recolour it to K" can only mean: keep the SILHOUETTE, throw
+			# away the colour. Alpha is preserved so the shape still reads; that shape in flat K
+			# on the field's k is exactly the ghost every other tile gets.
+			var gimg := Image.create(cimg.get_width(), cimg.get_height(), false, Image.FORMAT_RGBA8)
+			for gy in cimg.get_height():
+				for gx in cimg.get_width():
+					var gp := cimg.get_pixel(gx, gy)
+					gimg.set_pixel(gx, gy, Color(main.r, main.g, main.b, gp.a))
+			var gtx := ImageTexture.create_from_image(gimg)
+			_tex_cache[key] = gtx
+			return gtx
 		var ctex2 := ImageTexture.create_from_image(cimg)
 		_tex_cache[key] = ctex2
 		return ctex2
