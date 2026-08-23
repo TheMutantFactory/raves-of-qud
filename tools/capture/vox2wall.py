@@ -181,7 +181,25 @@ def bake(bits, verbose=True):
         if not placed:
             flags["interior"] += 1
 
-    im.save(bmp_path, format="PNG")
+    # DO NOT TOUCH THE FILE WHEN NOTHING CHANGED. The game watches tiles_custom by MTIME, and a
+    # changed mtime means "custom art edited" -> _drop_all_static -> the whole live zone and all
+    # eight neighbours rebuild. A --watch left running re-baked this tile every few seconds for
+    # EIGHT DAYS, writing byte-identical PNGs, and the renderer dutifully threw away and rebuilt
+    # its entire world each time. Daniel: "something is redrawing over and over." Nothing was
+    # wrong with the picture; it was simply being rebuilt from scratch forever.
+    #
+    # Comparing the ENCODED bytes, not the pixels: PIL re-encodes deterministically here, and it
+    # is the file the watcher's consumer keys on.
+    import io
+    buf = io.BytesIO()
+    im.save(buf, format="PNG")
+    new_bytes = buf.getvalue()
+    old_bytes = open(bmp_path, "rb").read() if os.path.exists(bmp_path) else None
+    if new_bytes != old_bytes:
+        with open(bmp_path, "wb") as fh:
+            fh.write(new_bytes)
+    elif verbose:
+        print(f"  {bits}: identical bake, file left alone (mtime unchanged)")
 
     # round-trip: rebuild from the baked bands, count surviving voxels
     wall2vox.export(FAMILY, bits)

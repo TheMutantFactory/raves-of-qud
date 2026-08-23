@@ -3091,7 +3091,16 @@ func _load_overrides() -> void:
 	var csig := ""
 	var cd := DirAccess.open(_custom_dir())
 	if cd != null:
-		for f2 in cd.get_files():
+		# Sorted because DirAccess.get_files() gives no ordering guarantee and this signature is
+		# about the SET of (name, mtime), never the order the OS felt like handing them over. A
+		# latent hazard rather than one that has bitten: when "something is redrawing over and
+		# over" was chased here, the differing entry turned out to be a single file's MTIME, not
+		# the order — a mtime with the same digit count keeps the signature's LENGTH identical, so
+		# "same length, different hash" looked like re-ordering and was not. Kept anyway; the
+		# guarantee costs one sort of 46 names.
+		var names := cd.get_files()
+		names.sort()
+		for f2 in names:
 			csig += "%s|%d;" % [f2, FileAccess.get_modified_time(_custom_dir().path_join(f2))]
 	if csig != _custom_sig:
 		_custom_sig = csig

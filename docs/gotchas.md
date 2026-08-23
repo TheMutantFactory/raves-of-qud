@@ -3079,3 +3079,34 @@ full cell. Two separate things were eating them, and both are normal:
 Sweeping four headings found 50,043 / 37,000 / 0 / 89,988 magenta pixels. **One sample of a
 camera-dependent effect is not a measurement** — the same lesson as the frame-wide black count, in
 a new costume. Sweep the heading, or move the player, before believing an absence.
+
+## A watcher that rewrites an identical file rebuilds the whole world
+
+"Something is redrawing over and over." Measured: **~30 zone re-bakes in 30 seconds with nobody
+touching the keyboard**, live zone plus all eight neighbours, forever.
+
+The chain: `_load_overrides` runs every snapshot and signs `tiles_custom` as (name, mtime) pairs.
+A changed signature means "custom art was edited", which calls `_drop_all_static()` — which clears
+`_live_static_id`, so the next snapshot sees `zone_changed` and rebuilds everything. Correct, and
+exactly what you want when art really is edited.
+
+What was editing it: a **`vox2wall.py --watch` left running since eight days earlier**, re-baking
+one tile every few seconds and writing byte-identical PNGs. Nothing was wrong with the picture. It
+was simply being thrown away and rebuilt from scratch, permanently, and it only became noticeable
+once the walls got expensive enough to rebuild.
+
+Two fixes, and the tool's is the real one: **`vox2wall` now compares the encoded bytes and leaves
+the file alone when the bake is identical**, so no watcher can do this again. Sorting the file list
+in the signature is kept as well, but see below.
+
+**The first diagnosis was wrong, and the way it was wrong is the lesson.** The instrumentation
+printed `46 files, len 2571 -> 2571 (hash X -> Y)` — same count, same length, different hash — and
+that reads as "the same entries in a different ORDER". It was not: an mtime with the same number of
+digits keeps the length identical too. Printing WHICH ENTRY DIFFERED found it in one run:
+
+```
+Assets_..._wall_metal-00100010.bmp|1787522969  ->  ...|1787522972
+```
+
+A summary statistic that is consistent with two explanations is not evidence for either. Print the
+differing element, not the aggregate.
