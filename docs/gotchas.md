@@ -2945,3 +2945,40 @@ The rotation check found nothing four times running, because I tested for a "cre
 (`r>190, g>180, b>150`). The head actually measures **(158,173,206)** at night — a pale BLUE-white,
 Qud's `&w` under the night ambient. An earlier version of the same test thresholded on "warm" and
 matched 5,000 px of brown ground instead. Sample the thing, then write the predicate.
+
+## Sizing a plume: a node scale ties width to height
+
+The held torch's fire first covered the painted flame by scaling the emitter node — one factor for
+the emission box AND the rise AND, because `billboard_keep_scale` does not save you from it, the
+tongues themselves. A painted flame is 9 columns wide and 10 rows tall at different fractions of
+the art, so the two numbers are not one number. Set `emission_box_extents` from the flame's WIDTH
+and `initial_velocity_min/max` from `flame_h / FIRE_LIFETIME`, and leave the node unscaled.
+
+Measured, before and after: the plume went from **14 px wide** (a thread through a 9-column flame)
+to **35 px**, with its bbox `x[1006,1040] y[556,576]` fully containing the painted flame's
+`x[1014,1023] y[568,573]`.
+
+**`direction` is WORLD space when `local_coords = false`**, and every fire in this file sets that
+so tongues keep rising instead of being dragged by the emitter. Written as a local `(sin, cos, 0)`
+it leaned along world +X — screen-LEFT at most compass headings — so the plume tipped away from the
+flame. The emission BOX is still local, so the node's basis orients that; the direction is aimed in
+world terms, per frame, in `_aim_held`. Two conventions, one node.
+
+Also worth knowing: **lean is a weak lever on a short plume.** 22° to 70° moved the centroid all of
++1.6 px across, because damping and a 0.23-unit rise leave little room to travel. Coverage came
+from the width, not the tilt.
+
+## Three predicates in a row measured the wrong thing
+
+Finding the fire in a screenshot went wrong three times, each time producing a confident number:
+
+- `r>120 & r>b+40` — matched **5,000 px of brown ground**.
+- `r>190 & g>180 & b>150` ("cream") — matched **nothing**; the flame head is (158,173,206), a pale
+  BLUE-white, Qud's `&w` under night ambient.
+- `r>50 & g>50 & b<g-25` ("olive tongues") — matched **12,096 px of the player's own art**, who
+  renders `&y`. That one read as "the plume leans left", which sent me rewriting working code.
+
+The `held` probe paints the tongues magenta precisely so none of this is necessary: 290 px, bbox
+`x[1007,1047]`, unmistakable. **Use the probe first and the predicate second** — and when a
+predicate returns a count that is wildly larger or smaller than the thing could possibly be, that
+is the finding, not the measurement.

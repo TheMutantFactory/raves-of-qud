@@ -6566,6 +6566,12 @@ const HELD_GRIP := 0.46        # fraction of the player's own band height where 
 ## the player's own 0.80. A held thing is smaller than the world thing; at this scale the flame
 ## clears the head by a little, which is where you would hold one.
 const HELD_SCALE := 0.55
+## The held flame's plume: how far it leans across the screen, how wide it fans, and how many
+## tongues. The lean is what puts the fire over the painted flame instead of beside it — this art
+## carries its flame up and to the RIGHT of the grip, so the plume goes the same way.
+const HELD_FIRE_LEAN_DEG := 22.0
+const HELD_FIRE_SPREAD := 26.0
+const HELD_FIRE_AMOUNT := 20
 func _place_held_light(cx: int, cy: int, hflip: bool) -> void:
 	if _held_dbg:
 		print("[held] cell=(%d,%d) held=%s flat=%s 1to1=%s" % [cx, cy, str(_held_light), _flat_2d, _one_to_one])
@@ -6649,17 +6655,34 @@ func _place_held_light(cx: int, cy: int, hflip: bool) -> void:
 	# the creature it belongs to.
 	_place_light(cx, cy, lit_radius, false, false, Vector3.INF, 0.0, true)
 	var pf := _make_fire(false)
+	# THE FIRE COVERS THE PIXEL FLAME, rather than rising through the middle of it in a thread.
+	# Daniel: "let's spread the torch fire up and to the right a bit to cover the pixel flame."
+	# The painted flame is a 9x10 blob; the stock emitter is a 0.05 box rising dead vertical, which
+	# covers about two of those nine columns.
+	#
+	# Sized from the ART, not from a node scale. Scaling the emitter was the earlier trick and it
+	# ties width to height — one factor for both — and shrinks the tongues themselves along with it.
+	# Setting the box and the velocity separately lets the plume be as WIDE as the flame is painted
+	# and as TALL as it is painted, which are different numbers.
+	var fpm: ParticleProcessMaterial = (_fire_pm as ParticleProcessMaterial).duplicate()
+	fpm.emission_box_extents = Vector3(float(band.size.x) * ps * 0.5, ps * 0.5, ps * 0.5)
+	fpm.initial_velocity_min = flame_h / FIRE_LIFETIME * 0.75
+	fpm.initial_velocity_max = flame_h / FIRE_LIFETIME * 1.20
+	fpm.spread = HELD_FIRE_SPREAD
+	# ...and it LEANS, aimed per frame by _aim_held. NOT set here: with `local_coords = false` --
+	# which every fire in this file uses, so tongues keep rising in world space instead of being
+	# dragged along by the emitter -- `direction` is read in WORLD space and the node's own basis
+	# does not touch it. Written here it leaned along world +X, which is screen-LEFT at most
+	# compass headings, so the plume tipped away from the flame instead of over it.
 	if _held_dbg:   # PROBE: paint the held tongues magenta so they cannot be confused with art
-		var dpm: ParticleProcessMaterial = (_fire_pm as ParticleProcessMaterial).duplicate()
 		var dg := Gradient.new()
 		dg.offsets = PackedFloat32Array([0.0, 1.0])
 		dg.colors = PackedColorArray([Color(1, 0, 1, 1), Color(1, 0, 1, 1)])
 		var dgt := GradientTexture1D.new(); dgt.gradient = dg
-		dpm.color_ramp = dgt
-		pf.process_material = dpm
+		fpm.color_ramp = dgt
+	pf.process_material = fpm
 	pf.position = Vector3(cx, flame_base, cy)
-	var k: float = flame_h / (FIRE_RISE * FIRE_LIFETIME)
-	pf.scale = Vector3(k, k, k)
+	pf.amount = HELD_FIRE_AMOUNT          # more tongues, because there is more area to cover
 	pf.amount_ratio = clampf(_flame_mul(), 0.0, 1.0)   # gone by day, like every other flame
 	_dynamic_root.add_child(pf)
 	# SIDEWAYS IS A SCREEN DIRECTION, AND THE SCREEN TURNS. "The right-most hand" means right as
@@ -6704,7 +6727,21 @@ func _aim_held() -> void:
 	var f = _held_rig.get("fire")
 	if is_instance_valid(f):
 		var fo: float = _held_rig["fire_off"]
+		# ORIENT the emitter as well as place it: its emission box is a flat rectangle and its
+		# direction leans along local +X, so both are meaningless until +X is the camera's right.
+		# Un-stretched Z first (`r` is a world vector and this node lives under the z-stretch), or
+		# the basis is non-orthogonal and the plume shears as the camera turns.
+		var rl := Vector3(r.x, 0.0, r.z / zs).normalized()
+		var up := Vector3(0, 1, 0)
+		# the emission BOX is local, so the node's basis makes its wide axis the camera's right...
+		(f as Node3D).transform.basis = Basis(rl, up, rl.cross(up).normalized())
 		f.position = Vector3(float(k.x) + r.x * fo, f.position.y, float(k.y) + r.z * fo / zs)
+		# ...while `direction` is WORLD, so it is aimed here, in world terms, at the same target:
+		# up and to the right AS DRAWN. `r` (not `rl`) because this one is not a local offset.
+		var pm = (f as GPUParticles3D).process_material
+		if pm is ParticleProcessMaterial:
+			var lean := deg_to_rad(HELD_FIRE_LEAN_DEG)
+			(pm as ParticleProcessMaterial).direction = (r * sin(lean) + up * cos(lean)).normalized()
 
 ## The held torch's nodes + their SPRITE-SPACE offsets, resolved per frame by _aim_held.
 var _held_rig := {}

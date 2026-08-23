@@ -153,6 +153,33 @@ if os.path.exists(tile):
           "%.1f in [%d, %d]" % (fire_col, fx0, fx1))
 
 print()
+print("the plume covers the painted flame")
+LEAN = const("HELD_FIRE_LEAN_DEG")
+SPREAD = const("HELD_FIRE_SPREAD")
+AMOUNT = const("HELD_FIRE_AMOUNT")
+check(re.search(r"fpm\.emission_box_extents = Vector3\(float\(band\.size\.x\)", src) is not None,
+      "the emission box is as wide as the flame is PAINTED",
+      "the stock 0.05 box threads through a 9-column flame")
+check(re.search(r"fpm\.initial_velocity_min = flame_h / FIRE_LIFETIME", src) is not None,
+      "and the rise is set from the flame's height, not a node scale",
+      "one scale factor cannot serve a width and a height that differ")
+# scoped to _place_held_light: _place_light still scales ITS emitter, which is correct there --
+# a file-wide search for `pf.scale` failed on the sconce rig and had nothing to do with the torch.
+_held_body = ""
+_m = re.search(r"func _place_held_light\(.*?\n(?=\n?##|\nfunc )", src, re.S)
+if _m:
+    _held_body = _m.group(0)
+check(bool(_held_body), "the held-torch function is findable")
+check("pf.scale" not in _held_body,
+      "the held emitter is NOT node-scaled", "that shrank the tongues along with the plume")
+check(0 < LEAN < 45, "the lean is a lean, not a topple", "%.0f deg" % LEAN)
+check(SPREAD > 8.0, "the fan is wider than the stock torch's", "%.0f deg vs 8" % SPREAD)
+check(AMOUNT >= 12, "there are enough tongues to fill it", "%d" % AMOUNT)
+check(re.search(r"ParticleProcessMaterial\)\.direction = \(r \* sin\(lean\)", src) is not None,
+      "the lean is aimed in WORLD space, per frame",
+      "local_coords=false means `direction` ignores the node basis")
+
+print()
 if fails:
     print("%d check(s) failed" % len(fails))
     sys.exit(1)
