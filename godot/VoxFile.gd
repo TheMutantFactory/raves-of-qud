@@ -101,7 +101,37 @@ static func read(path: String) -> Dictionary:
 		if mids2 == null or (mids2 as Array).is_empty():
 			continue
 		nodes[String(t["name"])] = {"model": int((mids2 as Array)[0])}
-	return {"models": models, "palette": palette, "nodes": nodes}
+	# WHICH INDEXING CONVENTION DID THE WRITER USE? The spec says colour index i is RGBA entry i-1;
+	# MagicaVoxel writes it straight (index i at array position i) and this reader always followed
+	# MagicaVoxel. vengi writes PER SPEC — so a wall Daniel drew there came back with every colour
+	# one palette slot off: its 3,312 background voxels (Qud's k, meaning ABSENCE) rendered as a
+	# solid brown, and 1,560 body voxels landed on a stray red. "Colors are off. They load
+	# correctly in vengi-voxedit."
+	#
+	# The file itself says which convention it uses, no writer sniffing needed: score both by how
+	# many voxels land on a FULL-ALPHA palette entry. A real drawing is made of opaque colours, so
+	# the correct read wins by a mile (measured on the wall: 4,973 vs 3,530 of 5,272). Ties keep
+	# STRAIGHT — every file this project wrote and verified before vengi arrived reads that way,
+	# and a tie means the shift changes nothing that can be seen anyway.
+	var straight := 0
+	var spec := 0
+	for m in models:
+		for e in m["vox"]:
+			var i := int(e[1])
+			if palette[i].a8 >= 250:
+				straight += 1
+			if i >= 1 and palette[i - 1].a8 >= 250:
+				spec += 1
+	var convention := "straight"
+	if spec > straight:
+		convention = "spec"
+		var shifted := PackedColorArray()
+		shifted.resize(256)
+		shifted[0] = Color(0, 0, 0, 0)
+		for i in 255:
+			shifted[i + 1] = palette[i]
+		palette = shifted
+	return {"models": models, "palette": palette, "nodes": nodes, "convention": convention}
 
 ## MagicaVoxel DICT: int32 count, then count * (STRING key, STRING value). Returns {"d":.., "end":..}
 static func _read_dict(d: PackedByteArray, pos: int) -> Dictionary:

@@ -3110,3 +3110,25 @@ Assets_..._wall_metal-00100010.bmp|1787522969  ->  ...|1787522972
 
 A summary statistic that is consistent with two explanations is not evidence for either. Print the
 differing element, not the aggregate.
+
+## Two .vox writers, two palette conventions — and the file says which
+
+"Colors are off. They load correctly in vengi-voxedit." Both halves were true. The .vox spec maps
+colour index `i` to RGBA entry `i-1`; MagicaVoxel writes it straight, and VoxFile.gd followed
+MagicaVoxel. **vengi writes per spec** — so every colour in Daniel's wall came back one palette
+slot off: 3,312 background voxels (Qud's `k`, meaning absence) rendered as a solid brown, and
+1,560 body voxels landed on a stray red. Even our own tools disagree: `png2doorvox` writes
+straight, `wall2vox` writes per spec, and both had "verified" their convention against files that
+happened to match it.
+
+No writer sniffing needed — **score both conventions by how many voxels land on a full-alpha
+palette entry** and take the winner (measured: 4,973 vs 3,530). Ties keep straight, which is why
+all 28 door files (every voxel opaque under both readings) are untouched by construction. The
+convention is reported per file in zonereport's VOXEL WALLS section.
+
+**And honour the palette's alpha.** vengi keeps slots with alpha 1..89 — stray brush picks,
+material slots — and renders them invisible, which is the other half of "loads correctly in
+vengi". The mesher kept the RGB and dropped the alpha, so 119 voxels on `(255,0,0,1)`-style slots
+drew as solid red stripes up the wall. Alpha is transparency in the file's own terms: below half,
+the voxel does not draw. That rule also carved the model's real relief open — the field voxels
+plus the sub-alpha ones are absence, and the ground now shows through the slats.

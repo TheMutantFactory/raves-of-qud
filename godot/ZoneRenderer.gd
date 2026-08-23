@@ -8797,8 +8797,9 @@ func _read_wall_vox(path: String) -> Dictionary:
 			# the height IS the opt-in — see WALL_VOX_LAYERS
 			if d.z == WALL_VOX_LAYERS:
 				got = {"model": m, "palette": v.get("palette", PackedColorArray())}
-			_wall_vox_files[path.get_file()] = "%dx%dx%d %s" % [d.x, d.y, d.z,
-				"USED" if d.z == WALL_VOX_LAYERS else "ignored (not %d layers)" % WALL_VOX_LAYERS]
+			_wall_vox_files[path.get_file()] = "%dx%dx%d %s (%s indexing)" % [d.x, d.y, d.z,
+				"USED" if d.z == WALL_VOX_LAYERS else "ignored (not %d layers)" % WALL_VOX_LAYERS,
+				String(v.get("convention", "straight"))]
 	return got
 
 ## Mesh one cell from a hand-authored model. `nb` says which lateral directions have a wall
@@ -8821,6 +8822,13 @@ func _wall_vox_mesh(mv: Dictionary, nb: Dictionary) -> ArrayMesh:
 		# A FIELD-COLOURED VOXEL IS ABSENCE, not paint — the same rule the doors needed. The editor
 		# wants something to build in, and Qud's k is what "background" means everywhere else here.
 		if _vox_is_field(c):
+			continue
+		# ...AND SO IS A NEAR-TRANSPARENT ONE. vengi keeps palette slots whose alpha is 1..89 —
+		# stray brush picks and material slots — and renders them invisible, which is why the model
+		# "loads correctly" there. This mesher used to keep the RGB and drop the alpha, so 119
+		# voxels on (255,0,0,1)-style slots drew as solid RED stripes up the wall face. Alpha is
+		# transparency in the file's own terms; below half, the voxel does not draw.
+		if c.a < 0.5:
 			continue
 		occ[e[0] as Vector3i] = c
 	if occ.is_empty():
