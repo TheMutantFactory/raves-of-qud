@@ -55,6 +55,12 @@ check(re.search(r"no_flame", src) is not None,
       "the pool and the flame are placed separately",
       "a per-turn rig must not pile into _lights")
 
+check(re.search(r"func _grip_px", src) is not None,
+      "the grip point is READ off the art, not assumed")
+check(re.search(r"var side: float = HELD_SIDE", src) is not None,
+      "the torch goes on the RIGHT-most hand", "the diagonal art lies across the chest on the left")
+check("flame_dx" in src, "the fire is clamped across the stick as well as up it")
+
 print()
 print("the clamp arithmetic")
 
@@ -124,6 +130,27 @@ k = flame_h / (FIRE_RISE * FIRE_LIFETIME)
 check(0.3 < k < 3.0, "the emitter scale is sane", "%.2f" % k)
 check(ps * shown < PIXEL_SIZE * pband, "a held torch is shorter than the person holding it",
       "%.2f < %.2f" % (ps * shown, PIXEL_SIZE * pband))
+
+if os.path.exists(tile):
+    # the grip and the flame pull the sprite in OPPOSITE directions across the art, and the fire
+    # has to end up over the flame pixels rather than over the middle of the sprite
+    w2 = im.size[0]
+    bottom_cols = [x for x in range(w2) if px[x, bot][3] >= 128]
+    grip_col = bottom_cols[len(bottom_cols) // 2]
+    fl_cols = [x for x in range(w2) for y in range(h)
+               if px[x, y][3] >= 128 and sum(px[x, y][:3]) / 3 > 128]
+    fx0, fx1 = min(fl_cols), max(fl_cols)
+    grip_dx = (w2 - 1) * 0.5 - grip_col
+    flame_dx = (fx0 + (fx1 - fx0 + 1) * 0.5 - 0.5) - (w2 - 1) * 0.5
+    check(grip_dx > 0, "the grip correction pushes the sprite AWAY from the hand",
+          "grip col %d, +%.1f px" % (grip_col, grip_dx))
+    check(flame_dx > 0, "the flame sits to the same side as the lean",
+          "flame cols %d..%d, %+.1f px" % (fx0, fx1, flame_dx))
+    # with both applied, the fire lands within the flame's own columns
+    fire_col = grip_col + grip_dx + flame_dx
+    check(fx0 - 0.5 <= fire_col <= fx1 + 0.5,
+          "the fire lands INSIDE the flame's columns",
+          "%.1f in [%d, %d]" % (fire_col, fx0, fx1))
 
 print()
 if fails:

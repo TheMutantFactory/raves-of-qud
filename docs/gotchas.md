@@ -2905,3 +2905,43 @@ completely swamped by the player's own art — the player renders `&y`, so an ol
 where the flame should be and I could not tell them apart. `held` (a godot command) repaints the
 held tongues MAGENTA: 179 px, bbox x[952,965] y[586,601], exactly at the tip. Unmistakable in one
 shot, where staring at the render had already misled me twice.
+
+## "To his right" is a SCREEN direction, and the screen turns
+
+The held torch is offset to the right of the player *as drawn*. Baking that as `cx + HELD_SIDE` at
+placement time is wrong the moment the compass camera is not facing north — which is most of the
+time. It put the torch on his left, and it looked like the offset had simply been applied backwards
+rather than like a frame-of-reference bug.
+
+`_aim_held` resolves the offset against the camera's own right vector every frame, flattened onto
+the ground plane (keeping the vertical part slides the torch up the sprite as the camera tilts).
+Two details:
+
+- **Divide Z by the renderer's z-stretch.** These are LOCAL positions under a node scaled
+  (1, 1, zstretch); a world-space vector written straight in comes out squashed along Z by exactly
+  that factor, and the torch appears to drift as you turn.
+- **Per frame, not per turn.** Placement alone is correct until the first Q/E press, which reads as
+  "it moved on its own".
+
+Measured through a full turn — flame head at x≈1019 with the player at x≈960, at 0°, 90°, 180° and
+270°.
+
+## Place the GRIP on the hand, not the sprite's middle
+
+`sw_torch_lit` is a diagonal stick: its butt is at art column 1 while the art's centre is 7.5. So
+centring the sprite on the hand grips it six pixels up the shaft and buries the bottom in the
+player. `_grip_px` reads the bottom-most opaque pixel and the placement shifts by the difference.
+The flame needs the same correction from the other end — it occupies columns 6..14, so a fire left
+on the sprite's centre line burns *beside* the flame rather than on it. `_flame_band` returns a
+BOX, not just rows, for exactly this.
+
+Following the body part Qud names ("left hand", mirrored by `hflip`) is more faithful and looks
+worse: on the character's left this art lies across his chest with the fire over his face. Right
+hand, always — the grip points back at him and the flame points away into open air.
+
+## Measure the colour before you threshold on it
+
+The rotation check found nothing four times running, because I tested for a "cream" flame head
+(`r>190, g>180, b>150`). The head actually measures **(158,173,206)** at night — a pale BLUE-white,
+Qud's `&w` under the night ambient. An earlier version of the same test thresholded on "warm" and
+matched 5,000 px of brown ground instead. Sample the thing, then write the predicate.

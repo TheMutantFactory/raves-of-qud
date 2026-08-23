@@ -1363,6 +1363,7 @@ func _rebuild_dynamics(cells: Array) -> void:
 	_orbiters.clear()           # those orbiter roots were children of _dynamic_root (just freed)
 	_anim_items.clear()         # animator registries: nodes were _dynamic_root children (freed above)
 	_float_sprites.clear()      # ...and the floaters, whose sprites were freed with them
+	_held_rig = {}              # ...and the held torch, same subtree
 	_anim_pool_cells.clear()
 	_anim_tnode = null
 	_sparkle_pool.clear()
@@ -4136,6 +4137,7 @@ func _process(_dt: float) -> void:
 	if _one_to_one or not _anim_sprites.is_empty() or not _anim_items.is_empty():
 		_animate_1to1()          # Qud's per-frame render programs (blinks, flashes, sparkles)
 	_animate_float(_dt)          # ...and anything riding above its cell (see FLY_LIFT)
+	_aim_held()                  # ...and the torch, which is offset in SCREEN space
 	if _ib_active:
 		_ib_step()               # advance the incremental live-static build one chunk per frame
 	var gmul := _glow_mul()      # daylight dimming, recomputed once per frame
@@ -6586,10 +6588,18 @@ func _place_held_light(cx: int, cy: int, hflip: bool) -> void:
 	var vr := _opaque_v(mask)
 	var top := vr.x * th                 # first opaque row of the torch art
 	var shown: float = maxf(1.0, vr.y * th)
-	# WHICH SIDE. "left hand" is the character's left, which is screen-RIGHT when he faces us;
-	# hflip is Qud's own answer to which way he is facing, so the two compose.
-	var left: bool = String(_held_light.get("part", "")).to_lower().contains("left")
-	var side: float = (1.0 if left else -1.0) * (-1.0 if hflip else 1.0) * HELD_SIDE
+	# THE RIGHT-MOST HAND, always. Daniel: "can we place it by the right-most hand?" Following the
+	# body part Qud names ("left hand", mirrored by hflip) is more faithful and looks worse: this
+	# art is a DIAGONAL stick with its shaft running down-left and its flame up-right, so on the
+	# character's left it lies across his chest with the fire over his face. On the right the grip
+	# points back at him and the flame points away into open air, which is how you carry one.
+	var side: float = HELD_SIDE
+	# ...and the GRIP goes on the hand, not the sprite's middle. The butt of the shaft is at art
+	# column 1 where the centre is 7.5, so simply centring the sprite on the hand grips it six
+	# pixels up the stick and buries the bottom of it in the player.
+	var gp := _grip_px(tile)
+	var grip_col: float = float(gp.x) if gp.x >= 0 else (float(tex.get_width()) - 1.0) * 0.5
+	var grip_dx: float = ((float(tex.get_width()) - 1.0) * 0.5 - grip_col)
 	# WHERE THE HAND IS: a fraction up the PLAYER's band, not a constant, so a tall character holds
 	# his torch higher than a short one.
 	var pmask := _mask(_player_tile)
@@ -6608,12 +6618,12 @@ func _place_held_light(cx: int, cy: int, hflip: bool) -> void:
 	s.render_priority = 12          # in front of the player's own billboard, never behind his arm
 	# the band's BOTTOM lands in the hand
 	var base_y: float = grip_y + ps * shown * 0.5
-	s.position = Vector3(cx + side, base_y, cy)
+	s.position = Vector3(cx, base_y, cy)      # x is set per frame — see _aim_held
 	_dynamic_root.add_child(s)
 	# ...and the fire on the burning end of it.
 	var band := _flame_band(tile)
 	var lit_radius: float = maxf(1.0, float(_held_light.get("radius", 5)))
-	if band.x < 0:
+	if band.size.y <= 0:
 		# No bright pixels: the art says nothing is burning, so give it the pool and no flame
 		# rather than inventing one. (Qud only sends this object at all when its LightSource is
 		# lit, so this is a strange-art case, not an unlit-torch case.)
@@ -6622,11 +6632,16 @@ func _place_held_light(cx: int, cy: int, hflip: bool) -> void:
 	# Tile rows run DOWN and world Y runs UP: the band's top row is the highest point of the
 	# sprite, so the flame's base is the row BELOW its last bright row.
 	var band_top_world: float = base_y + ps * shown * 0.5
-	var flame_base: float = band_top_world - ps * (float(band.x - top) + float(band.y))
-	var flame_h: float = ps * float(band.y)
+	var flame_base: float = band_top_world - ps * (float(band.position.y - top) + float(band.size.y))
+	var flame_h: float = ps * float(band.size.y)
+	# ...and ACROSS the stick too. The flame occupies columns 6..15 of a 16-wide tile while the
+	# shaft runs down to column 1, so a fire left on the sprite's centre line burns beside the
+	# flame rather than on it. Same correction as the grip, from the other end of the art.
+	var flame_col: float = float(band.position.x) + float(band.size.x) * 0.5 - 0.5
+	var flame_dx: float = flame_col - (float(tex.get_width()) - 1.0) * 0.5
 	if _held_dbg:
-		print("[held] tile=%s side=%.2f grip=%.3f sprite_y=%.3f band=%s flame_base=%.3f h=%.3f" %
-			[tile, side, grip_y, base_y, str(band), flame_base, flame_h])
+		print("[held] tile=%s side=%.2f grip_dx=%.1fpx flame_dx=%.1fpx hand_y=%.3f sprite_y=%.3f band=%s flame_base=%.3f h=%.3f" %
+			[tile, side, grip_dx, flame_dx, grip_y, base_y, str(band), flame_base, flame_h])
 	# THE POOL from the shared rig, THE FLAME by hand. _place_light only builds a particle fire for
 	# _live_build -- which the dynamic pass is not, deliberately, so per-turn rigs cannot pile up in
 	# _lights -- and a torch being carried is exactly the thing that should have real tongues on it.
@@ -6642,11 +6657,57 @@ func _place_held_light(cx: int, cy: int, hflip: bool) -> void:
 		var dgt := GradientTexture1D.new(); dgt.gradient = dg
 		dpm.color_ramp = dgt
 		pf.process_material = dpm
-	pf.position = Vector3(cx + side, flame_base, cy)
+	pf.position = Vector3(cx, flame_base, cy)
 	var k: float = flame_h / (FIRE_RISE * FIRE_LIFETIME)
 	pf.scale = Vector3(k, k, k)
 	pf.amount_ratio = clampf(_flame_mul(), 0.0, 1.0)   # gone by day, like every other flame
 	_dynamic_root.add_child(pf)
+	# SIDEWAYS IS A SCREEN DIRECTION, AND THE SCREEN TURNS. "The right-most hand" means right as
+	# DRAWN, and the player is a billboard — but the offset that puts a thing to his right is a
+	# world vector, and which world vector that is changes every time the compass camera rotates.
+	# Baking `cx + HELD_SIDE` at placement time put the torch on his left the moment the heading
+	# was not north, which is most of the time. So the rig records its offsets in SPRITE space and
+	# _aim_held resolves them against the live camera each frame.
+	_held_rig = {"sprite": s, "fire": pf, "cell": Vector2i(cx, cy),
+		"sprite_off": side + grip_dx * ps, "fire_off": side + (grip_dx + flame_dx) * ps}
+	_aim_held()
+
+## Put the held torch to the RIGHT OF THE PLAYER AS DRAWN, whatever the camera is doing.
+##
+## The offset is a distance across the screen, so it resolves against the camera's own right vector,
+## flattened onto the ground plane (the vertical part of it would slide the torch up the sprite as
+## the camera tilts). Z is divided by the renderer's z-stretch because these are LOCAL positions
+## under a node scaled (1, 1, zstretch): a world-space vector written straight in would come out
+## squashed along Z by exactly that factor, which reads as the torch drifting as you turn.
+##
+## Called at placement and again every frame — placement alone would be correct until the first
+## Q/E press, which is the kind of bug that looks like "it moved on its own".
+func _aim_held() -> void:
+	if _held_rig.is_empty():
+		return
+	var s = _held_rig.get("sprite")
+	if not is_instance_valid(s):
+		_held_rig = {}
+		return
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	var r := cam.global_transform.basis.x
+	r.y = 0.0
+	if r.length_squared() < 1e-6:
+		return
+	r = r.normalized()
+	var zs: float = scale.z if absf(scale.z) > 1e-6 else 1.0
+	var k: Vector2i = _held_rig["cell"]
+	var so: float = _held_rig["sprite_off"]
+	s.position = Vector3(float(k.x) + r.x * so, s.position.y, float(k.y) + r.z * so / zs)
+	var f = _held_rig.get("fire")
+	if is_instance_valid(f):
+		var fo: float = _held_rig["fire_off"]
+		f.position = Vector3(float(k.x) + r.x * fo, f.position.y, float(k.y) + r.z * fo / zs)
+
+## The held torch's nodes + their SPRITE-SPACE offsets, resolved per frame by _aim_held.
+var _held_rig := {}
 
 ## The lit thing in the player's hand this turn: {} when there is none. See render_snapshot.
 var _held_light := {}
@@ -6657,6 +6718,7 @@ var _held_fallback_mtime := 0
 var _held_fallback := {}
 ## Which rows of a tile are BURNING, as (first_row, row_count) — (-1, 0) when nothing is.
 var _flame_band_cache := {}
+var _grip_cache := {}
 
 ## Read the held light out of inventory.json when the snapshot does not carry it.
 ##
@@ -6703,26 +6765,52 @@ func _held_light_fallback() -> Dictionary:
 ## that is rows 3..12 with the shaft running dark from 12 down to 20. No hand-written row numbers
 ## and no per-tile table: a different torch with a taller flame reports a taller band.
 ##
-## Returns (first_row, row_count) in TILE rows, or (-1, 0) when the art has no bright pixels at all
-## — an unlit torch, where the honest answer is that nothing is burning.
-func _flame_band(tile: String) -> Vector2i:
+## Returns the bright pixels' BOUNDING BOX in tile coordinates, or a zero-size rect when the art has
+## no bright pixels at all — an unlit torch, where the honest answer is that nothing is burning.
+##
+## The BOX and not just the rows, because the flame is off to one side on a diagonal torch (columns
+## 6..15 while the shaft runs down to column 1): clamping the fire to the burning rows but leaving
+## it on the sprite's centre line hangs it beside the flame instead of on it.
+func _flame_band(tile: String) -> Rect2i:
 	if _flame_band_cache.has(tile):
 		return _flame_band_cache[tile]
-	var out := Vector2i(-1, 0)
+	var out := Rect2i(0, 0, 0, 0)
 	var m := _mask(tile)
 	if m != null:
-		var first := -1
-		var last := -1
+		var x0 := 1 << 30
+		var x1 := -1
+		var y0 := 1 << 30
+		var y1 := -1
 		for y in m.get_height():
 			for x in m.get_width():
 				var px := m.get_pixel(x, y)
 				if px.a >= 0.5 and (px.r + px.g + px.b) / 3.0 > 0.5:
-					if first < 0: first = y
-					last = y
-					break
-		if first >= 0:
-			out = Vector2i(first, last - first + 1)
+					x0 = mini(x0, x); x1 = maxi(x1, x)
+					y0 = mini(y0, y); y1 = maxi(y1, y)
+		if x1 >= 0:
+			out = Rect2i(x0, y0, x1 - x0 + 1, y1 - y0 + 1)
 	_flame_band_cache[tile] = out
+	return out
+
+## Where the torch is GRIPPED: the bottom-most opaque pixel of the art, which on every torch in the
+## game is the butt of the shaft. Returns (column, row); (-1, -1) if the art is empty. Read rather
+## than assumed, because sw_torch_lit is a DIAGONAL stick — its grip is at column 1 while the art's
+## centre is 7.5, so centring the sprite on the hand puts the hand six pixels up the shaft.
+func _grip_px(tile: String) -> Vector2i:
+	if _grip_cache.has(tile):
+		return _grip_cache[tile]
+	var out := Vector2i(-1, -1)
+	var m := _mask(tile)
+	if m != null:
+		for y in range(m.get_height() - 1, -1, -1):
+			var cols: Array[int] = []
+			for x in m.get_width():
+				if m.get_pixel(x, y).a >= 0.5:
+					cols.append(x)
+			if not cols.is_empty():
+				out = Vector2i(cols[cols.size() / 2], y)
+				break
+	_grip_cache[tile] = out
 	return out
 
 func _opaque_v(img: Image) -> Vector2:
