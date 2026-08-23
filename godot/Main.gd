@@ -649,6 +649,12 @@ func _exec_godot_cmd(cmd: String) -> void:
 			if parts.size() >= 2 and _cam_rig != null:
 				_cam_rig._compass_yaw = fposmod(_cam_rig._compass_yaw
 					+ deg_to_rad(float(parts[1])), TAU)
+		"held":
+			# `held` — toggle the hand-torch diagnostic. Only useful from source (the exported app
+			# writes no stdout), which is exactly where this gets debugged.
+			if renderer != null:
+				renderer._held_dbg = not renderer._held_dbg
+				print("[held] debug %s" % ("ON" if renderer._held_dbg else "off"))
 		"zonereport":
 			# `zonereport` — write zones.txt: which zones the store holds, where each lands in the
 			# 3x3 slot grid, and what the SURROUND BAND actually built this turn.

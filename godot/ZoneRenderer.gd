@@ -847,6 +847,13 @@ func render_snapshot(data: Dictionary, neighbors: Array = []) -> void:
 	_world_map = live_id != "" and not live_id.contains(".")
 	var pc: Dictionary = data.get("player", {})
 	_player_cell = Vector2i(int(pc.get("x", -9999)), int(pc.get("y", -9999))) if not pc.is_empty() else Vector2i(-9999, -9999)
+	# WHAT THE PLAYER IS CARRYING THAT BURNS. Absent unless a lit LightSource is equipped, so the
+	# usual case costs nothing; see WriteHeldLight in mod/ZoneSnapshot.cs for why it rides the
+	# per-turn snapshot instead of inventory.json (that file is only rewritten when a status screen
+	# opens, and a torch is lit, burned out and dropped during ordinary play).
+	_held_light = pc.get("heldLight", {}) if pc.has("heldLight") else _held_light_fallback()
+	_player_tile = String(pc.get("tile", ""))
+	_player_hflip = bool(pc.get("hflip", false))
 
 	# LIVE STATIC — walls + floors + static sprites + lights. Rebuilt only when you
 	# ENTER a new zone (fresh Qud data), then frozen while you step within it. This
@@ -1341,6 +1348,15 @@ var _anim_sprites: Array = []
 var _occupied := {}   # creature cells this turn (Vector2i -> true), for the winner rule
 
 func _rebuild_dynamics(cells: Array) -> void:
+	# THE LIT SET, AGAIN. _build_zone fills this for the static pass, but a carried torch moves and
+	# the build-time set describes wherever the player was standing when the zone was built --
+	# masking his pool against it left him in the dark the moment he walked anywhere new. Refilled
+	# here in LOCAL coords, which is what the dynamic pass places in; the next static build clears
+	# and refills it before placing anything, so the two passes cannot poison each other.
+	_build_lit.clear()
+	for lc in cells:
+		if int(lc.get("light", LIGHT_LIT)) >= LIGHT_LIT:
+			_build_lit[Vector2i(int(lc.get("x", 0)), int(lc.get("y", 0)))] = true
 	_occupied.clear()
 	for c in _dynamic_root.get_children():
 		c.free()
@@ -1474,6 +1490,11 @@ func _rebuild_dynamics(cells: Array) -> void:
 	# which is how the player kept appearing in front of the first-person camera after the first
 	# fix. Where a node IS cannot be faked by pooling.
 	_tag_player_cell()
+	# The held torch rides the dynamic pass, like the creature it belongs to: it moves every step,
+	# and it must be freed and rebuilt with the rest of _dynamic_root rather than baked into a
+	# static that only rebuilds on zone entry.
+	if _player_cell.x != -9999:
+		_place_held_light(_player_cell.x, _player_cell.y, _player_hflip)
 	_placing_player = false
 	# Winner rule, dynamic half: a creature is its cell's face — the static winner under
 	# it hides for the turn and pops back the turn the creature moves off. No rebuilds.
@@ -3466,7 +3487,11 @@ func _place_burning(cx: int, cy: int) -> void:
 	print("[burning] cell (%d,%d)" % [cx, cy])
 
 ## above the sconce. Qud's radius is in cells; 1 cell == 1 world unit.
-func _place_light(cx: int, cy: int, radius: float, smokes := true, on_fire := false) -> void:
+## `flame_at` / `flame_scale` — put the flame somewhere other than a guessed height above the cell,
+## and size it to match. A torch in a hand burns at the top of the STICK, not at 0.62 units above
+## the floor, and the stick moves with the player. Vector3.INF means "the old behaviour".
+func _place_light(cx: int, cy: int, radius: float, smokes := true, on_fire := false,
+		flame_at := Vector3.INF, flame_h := 0.0, no_flame := false) -> void:
 	if _one_to_one:
 		return   # 1:1: Qud has no glow pools / flames / smoke — the rectangular lit cells ARE
 		         # the light. Hard gate so none of this geometry is even created.
@@ -3503,11 +3528,28 @@ func _place_light(cx: int, cy: int, radius: float, smokes := true, on_fire := fa
 	# with a baked flame reads better than one with no fire at all.
 	# Glow-critters (smokes=false, not on_fire) also keep the faint sprite —
 	# a glowfish must not literally catch fire.
-	var flame: Node3D
+	var flame: Node3D = null
+	# `no_flame` — the caller is drawing its own. A torch in a hand needs a particle fire on a node
+	# that is freed with the dynamic pass, which is not something this function can hand out: it
+	# only builds particles for _live_build, precisely so per-turn rigs cannot pile into _lights.
 	var particle_fire: bool = _live_build and (smokes or on_fire)
+	if no_flame:
+		if _live_build:
+			_lights.append({"glow": glow, "flame": null, "energy": 1.0, "on_fire": on_fire,
+				"particle_fire": false,
+				"cell": Vector2i(cx, cy), "pool_n": n, "pool_mask": mask})
+		else:
+			glow.transparency = clampf(1.0 - (_fire_glow_mul() if on_fire else _glow_mul()) * 0.6, 0.0, 1.0)
+		return
 	if particle_fire:
 		var pf := _make_fire(on_fire)
-		pf.position = Vector3(cx, 0.42 if on_fire else 0.62, cy)   # tongues rise from the base
+		# The tongues rise FROM this point, so it is the flame's BASE, not its middle.
+		pf.position = flame_at if flame_at != Vector3.INF else Vector3(cx, 0.42 if on_fire else 0.62, cy)
+		if flame_h > 0.0:
+			# Scaling the emitter scales its emission box AND its rise, which together ARE the
+			# flame's height — the whole of "clamped to the burning part".
+			var k: float = flame_h / (FIRE_RISE * FIRE_LIFETIME)
+			pf.scale = Vector3(k, k, k)
 		lp.add_child(pf)
 		flame = pf
 	else:
@@ -3519,7 +3561,16 @@ func _place_light(cx: int, cy: int, radius: float, smokes := true, on_fire := fa
 		fsp.transparent = true
 		# on-fire: ALPHA (reads on any background); else ADDITIVE (a glowing torch core).
 		fsp.material_override = _fx_material_alpha(fsp.texture) if on_fire else _fx_material(_flame_tex)
-		fsp.position = Vector3(cx, 0.55 if on_fire else 0.7, cy)
+		if flame_h > 0.0:
+			# A SPRITE IS SIZED BY ITS TEXTURE, not by a particle's rise: reusing the emitter's
+			# scale factor here made a 64px flame 1.25 units tall, taller than the man holding it.
+			# Its height is pixel_size * texture height, so solve for pixel_size — and a sprite is
+			# CENTRED, where `flame_at` is the flame's base.
+			fsp.pixel_size = flame_h / maxf(1.0, float(fsp.texture.get_height()))
+			fsp.position = (flame_at + Vector3(0, flame_h * 0.5, 0)) if flame_at != Vector3.INF \
+				else Vector3(cx, 0.55 if on_fire else 0.7, cy)
+		else:
+			fsp.position = flame_at if flame_at != Vector3.INF else Vector3(cx, 0.55 if on_fire else 0.7, cy)
 		lp.add_child(fsp)
 		flame = fsp
 
@@ -3535,7 +3586,9 @@ func _place_light(cx: int, cy: int, radius: float, smokes := true, on_fire := fa
 			"cell": Vector2i(cx, cy), "pool_n": n, "pool_mask": mask}
 		if smokes:
 			var smoke := _make_smoke()
-			smoke.position = Vector3(cx, 0.85, cy)   # just above the flame
+			# just above the flame — wherever the flame actually is
+			smoke.position = (flame_at + Vector3(0, 0.25, 0)) if flame_at != Vector3.INF \
+				else Vector3(cx, 0.85, cy)
 			smoke.emitting = true if on_fire else _smoke_on()
 			lp.add_child(smoke)
 			entry["smoke"] = smoke
@@ -6490,6 +6543,188 @@ func _fence_material(ew_tile: String, main_c: String, detail_c: String, half: St
 
 # (offset, scale) in V covering the opaque rows of an image — used to trim the
 # vertical padding from a directional tile so its content sits on the ground.
+## HOLD THE TORCH. Daniel: "when they're lit, let's hold them in our player hand and have the fire
+## effects clamped to the burning part of the torch."
+##
+## Two decisions worth keeping:
+##
+## THE HAND COMES FROM THE BODY PART, not from a constant. Qud says which part holds it ("left
+## hand"), so the sprite goes on that side — and then MIRRORS with the player, because the player's
+## billboard is display-flipped by Qud (`hflip`) and a torch pinned to screen-left would swap hands
+## every time the character turned around.
+##
+## THE FLAME COMES FROM THE ART. _flame_band reads the torch's own bright pixels; the emitter sits
+## at the BOTTOM of that band and is scaled so its rise covers exactly the band's height. So the
+## fire is on the burning end of the stick at whatever size the stick is drawn, and a torch with a
+## taller flame gets a taller fire without a number changing here.
+const HELD_SIDE := 0.30        # cells from the player's centre to the hand
+const HELD_GRIP := 0.46        # fraction of the player's own band height where the hand sits
+## An item tile is drawn at CELL scale, and a torch drawn at cell scale and gripped at hand height
+## stands 40% taller than the person carrying it — measured: an 18-row stick is 0.76 units against
+## the player's own 0.80. A held thing is smaller than the world thing; at this scale the flame
+## clears the head by a little, which is where you would hold one.
+const HELD_SCALE := 0.55
+func _place_held_light(cx: int, cy: int, hflip: bool) -> void:
+	if _held_dbg:
+		print("[held] cell=(%d,%d) held=%s flat=%s 1to1=%s" % [cx, cy, str(_held_light), _flat_2d, _one_to_one])
+	if _held_light.is_empty() or _flat_2d or _one_to_one:
+		return
+	var tile := String(_held_light.get("tile", ""))
+	# A HAND, not a backpack. A lit lantern clipped to the Back is a light source and emphatically
+	# not something to draw in a fist; `type` is Qud's own slot class, so this needs no name list.
+	if tile == "" or String(_held_light.get("type", "")) != "Hand":
+		if _held_dbg: print("[held] bail: tile=%s type=%s" % [tile, _held_light.get("type", "")])
+		return
+	var obj := {"tile": tile, "color": _held_light.get("color", ""),
+		"tilecolor": _held_light.get("tilecolor", ""), "detail": _held_light.get("detail", "")}
+	var tex := _colored_tex_rgb(tile, _obj_main(obj), _obj_detail(obj), _color_key(obj))
+	var mask := _mask(tile)
+	if tex == null or mask == null:
+		if _held_dbg: print("[held] bail: no texture/mask for %s" % tile)
+		return
+	var th := float(tex.get_height())
+	var vr := _opaque_v(mask)
+	var top := vr.x * th                 # first opaque row of the torch art
+	var shown: float = maxf(1.0, vr.y * th)
+	# WHICH SIDE. "left hand" is the character's left, which is screen-RIGHT when he faces us;
+	# hflip is Qud's own answer to which way he is facing, so the two compose.
+	var left: bool = String(_held_light.get("part", "")).to_lower().contains("left")
+	var side: float = (1.0 if left else -1.0) * (-1.0 if hflip else 1.0) * HELD_SIDE
+	# WHERE THE HAND IS: a fraction up the PLAYER's band, not a constant, so a tall character holds
+	# his torch higher than a short one.
+	var pmask := _mask(_player_tile)
+	var pband: float = (_opaque_v(pmask).y * float(pmask.get_height())) if pmask != null else 17.0
+	var grip_y: float = PIXEL_SIZE * pband * HELD_GRIP
+	var ps := PIXEL_SIZE * HELD_SCALE
+	var s := Sprite3D.new()
+	s.texture = tex
+	s.pixel_size = ps
+	s.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	s.shaded = false
+	s.transparent = true
+	s.alpha_cut = SpriteBase3D.ALPHA_CUT_DISCARD
+	s.region_enabled = true
+	s.region_rect = Rect2(0, top, tex.get_width(), shown)
+	s.render_priority = 12          # in front of the player's own billboard, never behind his arm
+	# the band's BOTTOM lands in the hand
+	var base_y: float = grip_y + ps * shown * 0.5
+	s.position = Vector3(cx + side, base_y, cy)
+	_dynamic_root.add_child(s)
+	# ...and the fire on the burning end of it.
+	var band := _flame_band(tile)
+	var lit_radius: float = maxf(1.0, float(_held_light.get("radius", 5)))
+	if band.x < 0:
+		# No bright pixels: the art says nothing is burning, so give it the pool and no flame
+		# rather than inventing one. (Qud only sends this object at all when its LightSource is
+		# lit, so this is a strange-art case, not an unlit-torch case.)
+		_place_light(cx, cy, lit_radius, false, false, Vector3.INF, 0.0, true)
+		return
+	# Tile rows run DOWN and world Y runs UP: the band's top row is the highest point of the
+	# sprite, so the flame's base is the row BELOW its last bright row.
+	var band_top_world: float = base_y + ps * shown * 0.5
+	var flame_base: float = band_top_world - ps * (float(band.x - top) + float(band.y))
+	var flame_h: float = ps * float(band.y)
+	if _held_dbg:
+		print("[held] tile=%s side=%.2f grip=%.3f sprite_y=%.3f band=%s flame_base=%.3f h=%.3f" %
+			[tile, side, grip_y, base_y, str(band), flame_base, flame_h])
+	# THE POOL from the shared rig, THE FLAME by hand. _place_light only builds a particle fire for
+	# _live_build -- which the dynamic pass is not, deliberately, so per-turn rigs cannot pile up in
+	# _lights -- and a torch being carried is exactly the thing that should have real tongues on it.
+	# Building the emitter here puts it in _dynamic_root, which is freed and rebuilt every turn like
+	# the creature it belongs to.
+	_place_light(cx, cy, lit_radius, false, false, Vector3.INF, 0.0, true)
+	var pf := _make_fire(false)
+	if _held_dbg:   # PROBE: paint the held tongues magenta so they cannot be confused with art
+		var dpm: ParticleProcessMaterial = (_fire_pm as ParticleProcessMaterial).duplicate()
+		var dg := Gradient.new()
+		dg.offsets = PackedFloat32Array([0.0, 1.0])
+		dg.colors = PackedColorArray([Color(1, 0, 1, 1), Color(1, 0, 1, 1)])
+		var dgt := GradientTexture1D.new(); dgt.gradient = dg
+		dpm.color_ramp = dgt
+		pf.process_material = dpm
+	pf.position = Vector3(cx + side, flame_base, cy)
+	var k: float = flame_h / (FIRE_RISE * FIRE_LIFETIME)
+	pf.scale = Vector3(k, k, k)
+	pf.amount_ratio = clampf(_flame_mul(), 0.0, 1.0)   # gone by day, like every other flame
+	_dynamic_root.add_child(pf)
+
+## The lit thing in the player's hand this turn: {} when there is none. See render_snapshot.
+var _held_light := {}
+var _held_dbg := false   # `held` godot command: print what the hand-torch path decided
+var _player_tile := ""       # the player's own art, so the hand height comes from HIS band
+var _player_hflip := false   # ...and which way he faces, so the torch stays in the same hand
+var _held_fallback_mtime := 0
+var _held_fallback := {}
+## Which rows of a tile are BURNING, as (first_row, row_count) — (-1, 0) when nothing is.
+var _flame_band_cache := {}
+
+## Read the held light out of inventory.json when the snapshot does not carry it.
+##
+## PURELY A SHIM for a Qud that has not been restarted since the mod gained `heldLight`, because a
+## mod deploy costs a full Qud restart and nobody should have to take one to see a feature work.
+## The file is the same facts from the same body parts (InventoryExporter walks Body.GetParts too),
+## but it is only rewritten when a STATUS SCREEN opens, so it can lag by minutes. Re-read only when
+## the mtime moves. Once the restarted mod sends the field, this never runs again.
+func _held_light_fallback() -> Dictionary:
+	var path := InputModel.support_dir().path_join("inventory.json")
+	if not FileAccess.file_exists(path):
+		return {}
+	var mt := int(FileAccess.get_modified_time(path))
+	if mt == _held_fallback_mtime:
+		return _held_fallback
+	_held_fallback_mtime = mt
+	_held_fallback = {}
+	var txt := FileAccess.get_file_as_string(path)
+	var data = JSON.parse_string(txt)
+	if typeof(data) != TYPE_DICTIONARY:
+		return _held_fallback
+	for sl in (data as Dictionary).get("slots", []):
+		if typeof(sl) != TYPE_DICTIONARY:
+			continue
+		var slot: Dictionary = sl
+		var tile := String(slot.get("tile", ""))
+		# "lit" off the ITEM TEXT, not the filename: a Torchpost burns while wearing
+		# sw_torch_nofire.png. The exported item string is Qud's own display name, and a lit torch
+		# is called one ("lit torch (blazing)").
+		if tile == "" or not String(slot.get("item", "")).to_lower().contains("lit "):
+			continue
+		_held_fallback = {"part": slot.get("name", ""), "type": slot.get("type", ""),
+			"name": slot.get("item", ""), "tile": tile,
+			"color": slot.get("color", ""), "tilecolor": "", "detail": slot.get("detail", ""),
+			"radius": 5}
+		break
+	return _held_fallback
+
+## THE BURNING PART OF A TORCH, read off its own art.
+##
+## A lit-torch tile is two materials: the SHAFT in the object's main colour and the FLAME in its
+## detail colour. Qud's masks encode that as luminance — dark pixels take main, bright pixels take
+## detail (see _recolor_rgb) — so the flame is exactly the bright band, and on Items/sw_torch_lit
+## that is rows 3..12 with the shaft running dark from 12 down to 20. No hand-written row numbers
+## and no per-tile table: a different torch with a taller flame reports a taller band.
+##
+## Returns (first_row, row_count) in TILE rows, or (-1, 0) when the art has no bright pixels at all
+## — an unlit torch, where the honest answer is that nothing is burning.
+func _flame_band(tile: String) -> Vector2i:
+	if _flame_band_cache.has(tile):
+		return _flame_band_cache[tile]
+	var out := Vector2i(-1, 0)
+	var m := _mask(tile)
+	if m != null:
+		var first := -1
+		var last := -1
+		for y in m.get_height():
+			for x in m.get_width():
+				var px := m.get_pixel(x, y)
+				if px.a >= 0.5 and (px.r + px.g + px.b) / 3.0 > 0.5:
+					if first < 0: first = y
+					last = y
+					break
+		if first >= 0:
+			out = Vector2i(first, last - first + 1)
+	_flame_band_cache[tile] = out
+	return out
+
 func _opaque_v(img: Image) -> Vector2:
 	if img == null:
 		return Vector2(0, 1)

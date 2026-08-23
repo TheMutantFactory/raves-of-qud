@@ -1239,6 +1239,56 @@ namespace RavesOfQud
         /// Write an object's render fields for a panel icon: the FULL (known) tile from the raw Render
         /// part, PLUS a perceived override (see WritePerceivedOverride). The client shows the perceived
         /// icon by default and the full one under the global "Full info" toggle.
+        /// <summary>
+        /// The LIGHT THE PLAYER IS CARRYING, if any — so Raves can draw it in the hand that holds it
+        /// and sit its flame on the art's own burning pixels.
+        ///
+        /// This has to come down the ZONE SNAPSHOT and not from inventory.json, which is the other
+        /// place the same facts live. That file is written by InventoryExporter.ReExport, and the only
+        /// thing that calls it is the `export` command, which Raves sends when a STATUS SCREEN opens.
+        /// During ordinary play it is minutes stale, and a torch is lit, burned out, swapped and
+        /// dropped during ordinary play. A held flame that lags the game by a screen-open is worse
+        /// than no held flame at all.
+        ///
+        /// Emitted only when there IS one, so the field's absence is the common case and costs a
+        /// snapshot nothing. `lit` is read off the LightSource rather than guessed from the tile name:
+        /// a Torchpost wears sw_torch_nofire.png while burning happily (its art never changes), so the
+        /// filename is not the state — the same trap that kept every torch in Joppa unlit for months.
+        /// </summary>
+        private static void WriteHeldLight(JsonWriter j, GameObject player)
+        {
+            if (player == null) return;
+            try
+            {
+                var body = player.Body;
+                if (body == null) return;
+                foreach (var part in body.GetParts())
+                {
+                    if (part == null) continue;
+                    GameObject item = part.Equipped;
+                    if (item == null) continue;
+                    LightSource ls = item.GetPart<LightSource>();
+                    if (ls == null || !ls.Lit) continue;
+                    var r = item.GetPart<Render>();
+                    bool painted;
+                    string tile = r != null ? ResolvedTile(item, r, out painted) : "";
+                    if (tile.Length > 0) TileExporter.Ensure(tile);
+                    j.Name("heldLight").BeginObject()
+                        .Member("part", part.Name ?? "")            // "left hand" — which hand holds it
+                        .Member("type", part.Type ?? "")            // "Hand"; a lantern on the Back is not held
+                        .Member("name", DisplayNameOf(item))
+                        .Member("tile", tile)
+                        .Member("color", r != null ? (r.ColorString ?? "") : "")
+                        .Member("tilecolor", r != null ? (r.TileColor ?? "") : "")
+                        .Member("detail", r != null ? (r.DetailColor ?? "") : "")
+                        .Member("radius", ls.Radius)
+                    .EndObject();
+                    return;   // the first lit thing wins; two lit torches is not a case worth a list
+                }
+            }
+            catch { }   // never let a cosmetic extra break the snapshot
+        }
+
         private static void WriteObjectRender(JsonWriter j, GameObject go)
         {
             try
@@ -1494,6 +1544,7 @@ namespace RavesOfQud
                 .Member("x", pc != null ? pc.X : -1)
                 .Member("y", pc != null ? pc.Y : -1);
             if (player != null) WriteObjectRender(j, player);   // player's icon (for the log's "you" pictograph)
+            WriteHeldLight(j, player);                          // a lit torch, so Raves can put it in the hand
             j.EndObject();
 
             // The current location's WORLD-MAP terrain (its tile + landmark/biome name, e.g. "Salt marsh",

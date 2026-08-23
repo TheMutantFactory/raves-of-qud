@@ -2857,3 +2857,51 @@ get the deliberately TIGHT campfire halo (`radius * 0.7` -> 5 cells) rather than
 pool (`radius * 1.6` -> 11 cells) the code was written to give them. The wide branch may never run
 for a real torch. Nobody had seen it either way, because until the filename gate came off, torches
 got no rig at all.
+
+## What the player is CARRYING is not on the per-turn wire
+
+The zone snapshot's `player` is position + render only. Equipment lives in `inventory.json`, which
+`InventoryExporter.ReExport` writes — and the only thing that calls it is the `export` command,
+which Raves sends when a STATUS SCREEN opens. During ordinary play that file is minutes stale, and
+a torch is lit, burned out, swapped and dropped during ordinary play. So a held light rides the
+snapshot (`player.heldLight`, `WriteHeldLight` in mod/ZoneSnapshot.cs), emitted only when there is
+one. The client keeps an `inventory.json` fallback purely so the feature works on a Qud that has
+not been restarted since the mod changed — a mod deploy costs a full Qud restart, and nobody should
+have to take one to see whether a thing works.
+
+`lit` comes off `LightSource.Lit`, never the tile name: a Torchpost burns happily wearing
+`sw_torch_nofire.png`.
+
+## Clamping fire to art: tile rows run DOWN, world Y runs UP
+
+A lit-torch tile is two materials — the shaft in the object's MAIN colour and the flame in its
+DETAIL colour — and Qud's masks encode that as luminance, so the flame is exactly the bright band
+(`Items/sw_torch_lit` = rows 3..12, shaft 12..20). No per-tile table: a torch with a taller flame
+reports a taller band.
+
+Mapping that band to world Y is where the sign bites. The band's TOP row is the sprite's HIGHEST
+point, so the flame's base is the row *below* its last bright row:
+
+    flame_base = band_top_world - ps * ((first_bright - first_opaque) + bright_count)
+
+Get it backwards and the fire hangs off the bottom of the stick, which reads as "the torch is
+upside down" rather than as an off-by-one.
+
+Three things that were wrong on the way, all of them invisible in a screenshot:
+
+- **A sprite is sized by its texture, not by a particle's rise.** Reusing the emitter's scale factor
+  on the drawn-flame fallback made a 64px flame 1.25 units tall — taller than the man holding it.
+  Solve `pixel_size = flame_h / texture_height` instead, and remember a sprite is CENTRED where
+  `flame_at` is a base.
+- **A carried light MOVES, so its pool cannot be masked against the build-time lit set.** That set
+  describes wherever the player stood when the zone was built; walking anywhere new left him with a
+  pool of nothing. `_rebuild_dynamics` refills it per turn.
+- **`_place_light` only builds particle fire for `_live_build`**, deliberately, so per-turn rigs
+  cannot pile into `_lights`. A held torch wants real tongues, so it takes the pool from
+  `_place_light` (`no_flame`) and builds its own emitter into `_dynamic_root`.
+
+**And a probe for "where did the particles go".** The tongues turned out to be a 14×16px cluster
+completely swamped by the player's own art — the player renders `&y`, so an olive arm sat right
+where the flame should be and I could not tell them apart. `held` (a godot command) repaints the
+held tongues MAGENTA: 179 px, bbox x[952,965] y[586,601], exactly at the tip. Unmistakable in one
+shot, where staring at the render had already misled me twice.
