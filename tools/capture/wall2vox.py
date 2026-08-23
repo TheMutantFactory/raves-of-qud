@@ -31,17 +31,33 @@ import voxwall
 from PIL import Image
 
 CUSTOM = os.path.expanduser("~/Library/Application Support/RavesOfQud/tiles_custom")
+TILES = os.path.expanduser("~/Library/Application Support/RavesOfQud/tiles")
 OUT = os.path.expanduser("~/Library/Application Support/RavesOfQud/vox")
 MAIN = (166, 74, 46)
 WALL_FACE_ROWS = 10
 
 
+# A FAMILY'S EXPORTED FILE NAME, which is not uniform: Qud ships the metal walls under
+# Tiles_*.bmp and the brinestalk ones under Walls_*.png, and the custom file has to match the
+# exported name EXACTLY or _custom_tile_path never finds it. Resolved from what is actually on
+# disk rather than from a table, so a family nobody has hardcoded still works.
+def family_base(family):
+    """-> (name_prefix, extension) for `family`, e.g. ("Assets_..._wall_metal", ".bmp")."""
+    import glob
+    for d in (CUSTOM, TILES):
+        for p in sorted(glob.glob(os.path.join(d, "*%s-*" % family))):
+            stem = os.path.basename(p)
+            i = stem.rindex("%s-" % family) + len(family)
+            return stem[:i], os.path.splitext(stem)[1]
+    raise SystemExit("no exported tiles found for family %r — is the name right?" % family)
+
+
 def custom_art(family, bits):
     """voxwall art dict from a CUSTOM file (as-authored, canonical split),
     with the renderer's _cap_variant cardinal fallback; None if no custom."""
-    base = {"wall_metal": "Assets_Content_Textures_Tiles_wall_metal"}[family]
+    base, ext = family_base(family)
     for cand in (bits, "".join(b if i % 2 == 0 else "0" for i, b in enumerate(bits))):
-        p = f"{CUSTOM}/{base}-{cand}.bmp"
+        p = f"{CUSTOM}/{base}-{cand}{ext}"
         if os.path.exists(p):
             im = Image.open(p).convert("RGBA")
             w, h = im.size
@@ -68,12 +84,12 @@ def variant_fn(family):
     return vt
 
 
-def cells_for_bits(bits):
+def cells_for_bits(bits, family="wall_metal"):
     """Neighbour layout reproducing an exact 8-bit variant name."""
-    cells = {(0, 0): "wall_metal"}
+    cells = {(0, 0): family}
     for i, b in enumerate(bits):
         if b == "1":
-            cells[voxwall.OFFS[i]] = "wall_metal"
+            cells[voxwall.OFFS[i]] = family
     return cells
 
 
@@ -140,7 +156,7 @@ def write_vox(path, dims, colors):
 
 def export(family, bits):
     vt = variant_fn(family)
-    cells = cells_for_bits(bits)
+    cells = cells_for_bits(bits, family)
     v, _expo, farts, cap_art = voxwall.build_cell(vt, cells, (0, 0), family)
     colors = voxel_colors(v, cap_art, farts)
     os.makedirs(OUT, exist_ok=True)
@@ -151,21 +167,33 @@ def export(family, bits):
 
 
 def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    if "--family" in sys.argv:
-        fam = args[0] if args else "wall_metal"
-        base = {"wall_metal": "Assets_Content_Textures_Tiles_wall_metal"}[fam]
+    # `--family F` used to mean "export every customised variant of F", taking the family as a
+    # bare arg. It now NAMES the family for whatever follows, so the same flag works for one
+    # variant as for all of them -- exporting a single variant of a second family had no spelling
+    # at all before, which is what you need first when starting a family from scratch.
+    fam = "wall_metal"
+    argv = sys.argv[1:]
+    if "--family" in argv:
+        i = argv.index("--family")
+        if i + 1 >= len(argv):
+            sys.exit("--family needs a name, e.g. --family wall_brinestalk")
+        fam = argv[i + 1]
+        del argv[i:i + 2]
+    args = [a for a in argv if not a.startswith("--")]
+    if "--all" in sys.argv or not args:
+        base, ext = family_base(fam)
         seen = set()
         for f in sorted(os.listdir(CUSTOM)):
-            if f.startswith(base + "-") and f.endswith(".bmp"):
-                bits = f[len(base) + 1:-4]
+            if f.startswith(base + "-") and f.endswith(ext):
+                bits = f[len(base) + 1:-len(ext)]
                 if bits not in seen:
                     seen.add(bits)
                     export(fam, bits)
+        if not seen:
+            print("no customised variants of %s yet — name a variant to export the stock shape,"
+                  "\n  e.g. wall2vox.py --family %s 00100010" % (fam, fam))
         return
-    if not args:
-        sys.exit("usage: wall2vox.py <bits> | --family wall_metal")
-    export("wall_metal", args[0])
+    export(fam, args[0])
 
 
 if __name__ == "__main__":

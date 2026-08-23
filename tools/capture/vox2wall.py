@@ -40,7 +40,16 @@ from PIL import Image
 
 CUSTOM = wall2vox.CUSTOM
 VOXDIR = wall2vox.OUT
-BASE = "Assets_Content_Textures_Tiles_wall_metal"
+# The family being baked. `wall_metal` is the one the pipeline grew up around; the name is a
+# parameter now because a second family (wall_brinestalk, which Qud ships as Walls_*.png rather
+# than Tiles_*.bmp) needed the same loop and every "wall_metal" in this file was a wall.
+FAMILY = "wall_metal"
+
+
+def _paths(bits):
+    """(vox path, custom-art path) for FAMILY's variant — the extension is the family's own."""
+    base, ext = wall2vox.family_base(FAMILY)
+    return f"{VOXDIR}/{FAMILY}-{bits}.vox", f"{CUSTOM}/{base}-{bits}{ext}"
 RUN_CARRIERS = {"00100010", "00100000", "00000010", "00000000"}
 WALL_FACE_ROWS = 10
 
@@ -87,12 +96,12 @@ def read_vox(path):
 
 
 def bake(bits, verbose=True):
-    vox_path = f"{VOXDIR}/wall_metal-{bits}.vox"
-    bmp_path = f"{CUSTOM}/{BASE}-{bits}.bmp"
+    vox_path, bmp_path = _paths(bits)
     if not os.path.exists(vox_path):
         sys.exit(f"no export to bake: {vox_path} (run wall2vox.py {bits} first)")
     if not os.path.exists(bmp_path):
-        sys.exit(f"no custom art to bake into: {bmp_path}")
+        sys.exit(f"no custom art to bake into: {bmp_path}\n"
+                 f"  seed it from the stock tile first: vox2wall.py --seed {bits}")
     voxels, (VW, VD, VR) = read_vox(vox_path)
     im = Image.open(bmp_path).convert("RGBA")
     w, h = im.size
@@ -107,9 +116,9 @@ def bake(bits, verbose=True):
     # forward rule backwards — each one missed (soft gaps, foundation,
     # rim, corner shells) surfaced as phantom edits (measured: 45 phantom
     # band px on an untouched cell).
-    cells = wall2vox.cells_for_bits(bits)
-    vt = wall2vox.variant_fn("wall_metal")
-    v, _expo, farts, cap_art = voxwall.build_cell(vt, cells, (0, 0), "wall_metal")
+    cells = wall2vox.cells_for_bits(bits, FAMILY)
+    vt = wall2vox.variant_fn(FAMILY)
+    v, _expo, farts, cap_art = voxwall.build_cell(vt, cells, (0, 0), FAMILY)
     base = wall2vox.voxel_colors(v, cap_art, farts)
 
     def solid(x, z, r):
@@ -175,7 +184,7 @@ def bake(bits, verbose=True):
     im.save(bmp_path, format="PNG")
 
     # round-trip: rebuild from the baked bands, count surviving voxels
-    wall2vox.export("wall_metal", bits)
+    wall2vox.export(FAMILY, bits)
     rebuilt, _ = read_vox(vox_path)
     lost = sum(1 for k in voxels if k not in rebuilt)
     gained = sum(1 for k in rebuilt if k not in voxels)
@@ -193,7 +202,7 @@ def watch():
     seen = {}
     while True:
         for f in sorted(os.listdir(VOXDIR)) if os.path.isdir(VOXDIR) else []:
-            if not (f.startswith("wall_metal-") and f.endswith(".vox")):
+            if not (f.startswith(FAMILY + "-") and f.endswith(".vox")):
                 continue
             p = f"{VOXDIR}/{f}"
             m = os.path.getmtime(p)
@@ -202,7 +211,7 @@ def watch():
                 continue
             if m != seen[p]:
                 seen[p] = m
-                bake(f[len("wall_metal-"):-4])
+                bake(f[len(FAMILY) + 1:-4])
         time.sleep(1)
 
 
@@ -218,8 +227,8 @@ def selftest():
     import tempfile
 
     cells = wall2vox.cells_for_bits("00100010")
-    vt = wall2vox.variant_fn("wall_metal")
-    v, _e, farts, cap_art = voxwall.build_cell(vt, cells, (0, 0), "wall_metal")
+    vt = wall2vox.variant_fn(FAMILY)
+    v, _e, farts, cap_art = voxwall.build_cell(vt, cells, (0, 0), FAMILY)
     colors = wall2vox.voxel_colors(v, cap_art, farts)
     with tempfile.TemporaryDirectory() as td:
         plain = f"{td}/plain.vox"
@@ -289,7 +298,38 @@ def selftest():
     print("selftest: reader handles all mocked editor file shapes")
 
 
+def seed(bits):
+    """Copy a family's STOCK tile into tiles_custom so there is something to bake into.
+
+    A family that has never been customised has no tiles_custom file, and bake() refuses to
+    invent one -- deliberately, because the bake works by DIFFING the voxels against a volume
+    rebuilt from the current art, and with no art there is no baseline to diff against. Seeding
+    with the stock tile makes the first bake mean "here is what changed from vanilla", which is
+    the same thing every later bake means.
+    """
+    base, ext = wall2vox.family_base(FAMILY)
+    src = f"{wall2vox.TILES}/{base}-{bits}{ext}"
+    dst = f"{CUSTOM}/{base}-{bits}{ext}"
+    if not os.path.exists(src):
+        sys.exit(f"no stock tile to seed from: {src}")
+    if os.path.exists(dst):
+        print(f"already customised: {dst}")
+        return dst
+    os.makedirs(CUSTOM, exist_ok=True)
+    Image.open(src).convert("RGBA").save(dst, format="PNG")   # the .bmp extension lies
+    print(f"seeded {dst} from stock")
+    return dst
+
+
 def main():
+    global FAMILY
+    if "--family" in sys.argv:
+        FAMILY = sys.argv[sys.argv.index("--family") + 1]
+    if "--seed" in sys.argv:
+        args = [a for a in sys.argv[1:] if not a.startswith("--")]
+        # --family consumes the token after it; --seed takes the LAST bare arg
+        seed(args[-1])
+        return
     if "--watch" in sys.argv:
         watch()
         return
@@ -297,8 +337,10 @@ def main():
         selftest()
         return
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    if FAMILY in args:
+        args.remove(FAMILY)
     if not args:
-        sys.exit("usage: vox2wall.py <bits> | --watch | --selftest")
+        sys.exit("usage: vox2wall.py [--family F] <bits> | --seed <bits> | --watch | --selftest")
     bake(args[0])
 
 
