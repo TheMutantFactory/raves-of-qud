@@ -2770,3 +2770,22 @@ main == detail == K, so nothing changes for it.
 **Three call sites need it, not one**: the sprite ghost, and the two that colour through
 `_art_colors` (ground texture and billboard), because `_art_colors` hands back the memory pair
 exactly when `_remembered_build` — so a departed zone had the same bug by the other road.
+
+## `shot clean` — the plate without the inspector over it
+
+`_screenshot(clean, forced)` has always taken a `clean` flag that drops the selection overlay, and
+no command ever passed it. The overlay is a full-height wall of text pinned over the playfield, so
+the one gesture that tells you what a cell IS also hides the thing you inspected — every appearance
+check after an inspect had to move the camera off its own subject first. `shot clean` now passes it.
+
+## Pick the metric before you trust it
+
+Ctesiphus wearing the glow rule measured **magenta-halo 1582 → 1165**, i.e. LESS of the colour the
+bloom is made of, which reads as "the bloom did not appear". It had: the bloom's outer ring is
+cyan-white, where r ≈ g ≈ b, so a test written as `r > g+8 AND b > g+8` scores the halo's brightest
+part at zero. The picture settled it in one look, and the honest number was the other one in the
+same table — warm-orange **3645 → 0**, the sconce pool and flame gone.
+
+Same shape as the frame-wide black count that turned out to be sky: a number that is easy to
+compute is not therefore a measurement of the thing you care about. State what the metric would do
+if the change worked BEFORE running it, and if the answer is "I'm not sure", it is the wrong metric.

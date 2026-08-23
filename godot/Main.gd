@@ -576,7 +576,13 @@ func _exec_godot_cmd(cmd: String) -> void:
 	var parts := cmd.split(" ", false)
 	match parts[0]:
 		"shot":
-			_screenshot(false, true)   # forced: window is unfocused, no auto-draw
+			# `shot` — the window as it stands. `shot clean` — the same frame with the SELECTION
+			# OVERLAY dropped: the inspector's report panel is a full-height wall of text pinned
+			# over the playfield, so the one gesture that tells you what a cell IS also hides the
+			# thing you inspected. _screenshot has taken a `clean` flag all along and no command
+			# ever passed it, which is why every appearance check after an inspect had to move the
+			# camera away from its own subject first.
+			_screenshot(parts.size() > 1 and parts[1] == "clean", true)   # forced: unfocused, no auto-draw
 		"census":
 			# Rung 6a: dump the renderer's per-cell placement verdicts so the rig
 			# can diff them against the wire's cells — "did we draw everything

@@ -1007,7 +1007,14 @@ func _place_cell(cell: Dictionary, offset: Vector2i, wall_cells: Dictionary, ski
 		# gates the plume on _daylight. Two mechanisms for one requirement, and the cruder one
 		# masked the better one -- so what looked like a working daytime rule was a rig that had
 		# been switched off around the clock.
-		if o.has("lightRadius") and not (skip_creatures and _is_creature(o)):
+		# ...and a GLOWING thing is not a sconce. The dynamic pass has always skipped _place_light
+		# for anything _should_glow says is bioluminescent -- it gets the bloom on its own sprite
+		# instead -- but this path never asked, so one filed `effect: glow` verdict meant two
+		# different things depending on which pass happened to place the object. Creatures only
+		# ever reach the dynamic pass (both _build_zone callers pass skip_creatures true), so what
+		# this actually fixes is the STATIC glow-emitters: a glowpad wearing a lightRadius got a
+		# sconce's pool and flame stacked on top of its own bloom.
+		if o.has("lightRadius") and not (skip_creatures and _is_creature(o)) and not _should_glow(o):
 			_place_light(cx, cy, float(o["lightRadius"]), not _is_creature(o), bool(o.get("onFire", false)))
 		idx += 1
 

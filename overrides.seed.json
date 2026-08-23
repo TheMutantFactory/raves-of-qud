@@ -11,8 +11,14 @@
   "sw_basket": {
    "fill": "FILL: keep only the SMALL POCKETS (weave shadows); the big arch goes clear"
   },
+  "sw_door_basic": {
+   "fill": "FILL: solid OPAQUE block"
+  },
   "sw_dromad": {
    "fill": "make the neck gaps TRANSPARENT (see-through)"
+  },
+  "sw_giantdragonfly": {
+   "position": "POS: FLOAT centered in the tile"
   },
   "sw_honey_sign": {
    "shape": "build it as a SIGNPOST (two posts + slab)"
@@ -20,8 +26,20 @@
   "sw_hookah_sign": {
    "shape": "build it as a SIGNPOST (two posts + slab)"
   },
+  "sw_kitty": {
+   "effect": "EFFECT: bioluminescent GLOW"
+  },
+  "sw_marsh_worldmap": {
+   "shape": "should be an UPRIGHT BILLBOARD sprite"
+  },
   "sw_millstone": {
    "fill": "FILL: fill the holes with BACKGROUND"
+  },
+  "sw_plant": {
+   "shape": "should be an UPRIGHT BILLBOARD sprite"
+  },
+  "sw_shroom": {
+   "shape": "should be an UPRIGHT BILLBOARD sprite"
   },
   "sw_sign_apple": {
    "shape": "build it as a SIGNPOST (two posts + slab)"
@@ -80,6 +98,9 @@
   "sw_sign_wine": {
    "shape": "build it as a SIGNPOST (two posts + slab)"
   },
+  "sw_splat": {
+   "position": "POS: seat on the GROUND (default)"
+  },
   "sw_watervine": {
    "fill": "make the gaps see-through",
    "recolor": {
@@ -87,11 +108,14 @@
    }
   },
   "sw_waterwheel": {
-   "shape": "WATERWHEEL: 12-panel cylinder on an east-west axle",
-   "fill": "FILL: fill the holes with BACKGROUND"
+   "fill": "FILL: fill the holes with BACKGROUND",
+   "shape": "WATERWHEEL: 12-panel cylinder on an east-west axle"
   },
   "tent": {
    "shape": "build it as a TENT (pole cylinder + skin slabs)"
+  },
+  "tile-brinestalk": {
+   "fill": "FILL: make TRANSPARENT (see through)"
   }
  }
 }
