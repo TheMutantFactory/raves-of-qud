@@ -3005,3 +3005,39 @@ flame reads as a thinner one.
 
 Visible height still grows less than the multiplier, and that is honest rather than broken: the top
 of a flame fades out. The WORLD rise is exactly 3x.
+
+## The side column is a plain VBox — it needs its own backing
+
+Each side panel paints its own box, so the playfield showed through everything BETWEEN them: the
+4px separations, the 3px rounded corners, any slack under the last panel. Measured at the gap rows,
+x=1770:
+
+```
+no backing   (0,0,0) and (1,12,16)     <- the field / the void
+backing      (12,14,16)                <- chrome
+```
+
+The wrapper is a `PanelContainer` around the VBox, square-cornered so it meets the window edge with
+no seam, and it is what carries the column's WIDTH — `_side` stays the VBox so everything that
+adds, orders or measures panels is untouched. Three sites had to move to `_side_box`:
+`_apply_layout_mode`, `_on_sidebar_drag` and the 1:1 sidebar fraction.
+
+## A panel builds its heading in `_ready()`, so wiring it at construction gets null
+
+Drag-to-reorder wires each panel's heading as its handle. Wired inline while building the column, all
+three `drag_handle()` calls returned null — the headings do not exist until the node is in the tree —
+and the three `return`s were silent, so the feature was simply absent with nothing in any log. It is
+`call_deferred` now, and the null path `push_warning`s: a feature that quietly does nothing is worse
+than one that fails.
+
+## An auto-name is not an id — again
+
+The persisted panel order keys on node names, and the Nearby panel had no explicit one. Godot named
+it `@PanelContainer@162`, the counter is per-RUN, and the first saved order came back as
+`["Minimap", "MessageLog", "@PanelContainer@162"]` — a third entry that would never match anything
+again. Exactly the trap `element_key` was built to avoid on the feedback envelope, in a different
+corner of the same codebase. All three panels are named now, and `_panel_order` refuses to persist
+an order containing an `@` name rather than writing one that silently drops a panel to the bottom.
+
+Also: `Settings.set_value` is memory-only. `save()` writes the file. The order looked perfectly
+correct in memory for a whole session and came back wrong after every restart.

@@ -131,6 +131,7 @@ var _qud_view := ""                # Qud's CurrentGameView from the snapshot ("L
 var _zone_has_stairs_up := true    # last snapshot's stats.stairsUp (assume yes until told)
 var _row_split: HSplitContainer    # row-3 split (holo | side); sidebar width set per mode
 var _side: VBoxContainer           # the row-3 side column (panels)
+var _side_box: PanelContainer      # ...and its opaque backing, which is what the split actually holds
 # 1:1 only: Qud draws one continuous background behind the top strip (rows 1+2) and one behind the bottom
 # strip (rows 4+5) — no playfield showing through the inter-element gaps. We back the chrome with two
 # opaque rects sized to the strips above/below the play hole (row 3).
@@ -1374,14 +1375,14 @@ func _apply_layout_mode(on: bool) -> void:
 		# In 1:1 the strip is redundant (connect auto-runs, viewport auto-enables) — hide it once
 		# connected so the play hole starts at the top like Qud. Before connect it stays up as a fallback.
 		_dev_bar.visible = not (on and _holo != null)
-	if _side != null and _row_split != null:
+	if _side_box != null and _row_split != null:
 		if on:
 			var w := float(get_viewport().get_visible_rect().size.x)
 			# Qud's minimum log width (NOT clamped to the wider user-mode min) so the playfield is largest.
-			_side.custom_minimum_size = Vector2(round(w * SIDEBAR_FRAC_1TO1), 0)
+			_side_box.custom_minimum_size = Vector2(round(w * SIDEBAR_FRAC_1TO1), 0)
 			_row_split.split_offset = 0   # deterministic: side = its min width, holo takes the rest
 		else:
-			_side.custom_minimum_size = Vector2(SIDEBAR_W_USER, 0)
+			_side_box.custom_minimum_size = Vector2(SIDEBAR_W_USER, 0)
 			_row_split.split_offset = 900
 	# Row 1 carries Qud's STRIP colour in 1:1, not the panel fill: Qud's top band is continuous with
 	# the strip background behind it, and painting the panel fill there put our darkest chrome where
@@ -1412,10 +1413,10 @@ func _apply_layout_mode(on: bool) -> void:
 ## (dragged left) widens the log. Clamped between a readable min and half the window; the camera play
 ## inset follows so the zone re-fits the shrinking/growing hole. Transient (not persisted).
 func _on_sidebar_drag(dx: float) -> void:
-	if not Settings.clone_of_qud() or _side == null:
+	if not Settings.clone_of_qud() or _side_box == null:
 		return
 	var w := float(get_viewport().get_visible_rect().size.x)
-	_side.custom_minimum_size.x = clampf(_side.custom_minimum_size.x - dx, 120.0, w * 0.5)
+	_side_box.custom_minimum_size.x = clampf(_side_box.custom_minimum_size.x - dx, 120.0, w * 0.5)
 	_push_play_inset(true)
 	_layout_row_bgs.call_deferred()
 
@@ -1524,6 +1525,118 @@ func _style_menu_strip(on: bool) -> void:
 	_menu_strip.add_theme_stylebox_override("panel", mstyle)
 
 
+# ── side-column reordering ────────────────────────────────────────────────────────────────────
+#
+# Daniel: "allow the user to be able to drag the minimap/nearby objects/message log." Grab a panel
+# by its HEADING and drag it up or down; the column re-stacks live and the order is remembered.
+#
+# The heading is the handle because it is the one strip of every panel that is not already
+# something: the minimap is a map, the nearby list has clickable rows, the log has a filter toggle
+# and a scrollbar. A panel-wide drag would fight all three. Each panel answers `drag_handle()` with
+# the Control to grab, so the reorder logic lives HERE, with the column that owns the children,
+# and the panels only say where their grab point is.
+const PANEL_ORDER_KEY := "side_panel_order"
+var _drag_panel: Control = null
+var _drag_order_at_press: Array = []
+
+## Panels in their stacking order, by node name — the stable id, since the order is persisted and
+## the panels are built fresh each run.
+##
+## AN AUTO-NAME IS NOT AN ID. Godot names an unnamed node `@PanelContainer@162`, and the counter is
+## per-RUN: the Nearby panel had no explicit name, so the first saved order came back as
+## ["Minimap", "MessageLog", "@PanelContainer@162"] and that third entry would never match anything
+## again. Exactly the trap `element_key` was built to avoid on the feedback envelope. All three
+## panels are named now; this refuses to persist an order it cannot honour rather than writing one
+## that silently drops a panel to the bottom on the next launch.
+func _panel_order() -> Array:
+	var out := []
+	if _side != null:
+		for c in _side.get_children():
+			var nm := String(c.name)
+			if nm.begins_with("@"):
+				push_warning("reorder: %s has no stable name; order not saved" % nm)
+				return []
+			out.append(nm)
+	return out
+
+## Re-stack the column from a saved order. Unknown names are ignored and missing ones keep their
+## built-in position, so a saved order from a build with different panels cannot strand one.
+func _restore_panel_order() -> void:
+	if _side == null:
+		return
+	var want = Settings.get_value(PANEL_ORDER_KEY, null)
+	if typeof(want) != TYPE_ARRAY:
+		return
+	var idx := 0
+	for nm in want:
+		for c in _side.get_children():
+			if String(c.name) == String(nm):
+				_side.move_child(c, idx)
+				idx += 1
+				break
+
+## Wire every side panel's heading as its drag handle. Deferred from the column build — see there.
+func _wire_reorder() -> void:
+	for pnl in [_minimap, _nearby, _msglog]:
+		_make_reorderable(pnl)
+
+## Wire one panel's heading as its drag handle.
+func _make_reorderable(panel: Control) -> void:
+	if panel == null or not panel.has_method("drag_handle"):
+		push_warning("reorder: %s has no drag_handle()" % (panel.name if panel else "<null>"))
+		return
+	var h: Control = panel.call("drag_handle")
+	# LOUD, not quiet. This returned null for all three panels because the headings are built in
+	# _ready and the wiring ran before it — and a silent `return` made that look like a feature
+	# that had been implemented and did nothing.
+	if h == null:
+		push_warning("reorder: %s.drag_handle() is null — heading not built yet?" % panel.name)
+		return
+	h.mouse_filter = Control.MOUSE_FILTER_STOP
+	h.mouse_default_cursor_shape = Control.CURSOR_MOVE
+	h.gui_input.connect(func(ev: InputEvent) -> void: _panel_drag(panel, h, ev))
+
+func _panel_drag(panel: Control, handle: Control, ev: InputEvent) -> void:
+	if ev is InputEventMouseButton:
+		var mb := ev as InputEventMouseButton
+		if mb.button_index == MOUSE_BUTTON_LEFT:
+			if mb.pressed:
+				_drag_panel = panel
+				_drag_order_at_press = _panel_order()
+			else:
+				_drag_panel = null
+				# PERSIST ON RELEASE, and only if the gesture actually moved something.
+				# Settings.set_value is memory-only -- save() is what writes the file -- and
+				# saving on every swap would also re-run apply_global mid-drag. The order came
+				# back wrong after a restart until this was here, with the in-memory value
+				# looking perfectly correct the whole time.
+				var now := _panel_order()
+				if not now.is_empty() and now != _drag_order_at_press:
+					Settings.set_value(PANEL_ORDER_KEY, now)
+					Settings.save()
+			panel.modulate = Color(1, 1, 1, 0.75) if mb.pressed else Color.WHITE
+			handle.accept_event()
+		return
+	if not (ev is InputEventMouseMotion) or _drag_panel != panel or _side == null:
+		return
+	# SWAP WHEN THE POINTER PASSES A NEIGHBOUR'S MIDDLE, not when it leaves this panel. Using the
+	# dragged panel's own edge makes the swap fire the instant the pointer crosses it and then fire
+	# straight back, because the swap moves that edge under the pointer -- the row flickers between
+	# two positions and never settles. A neighbour's midpoint is a fixed line during the gesture.
+	var here := _side.get_children().find(panel)
+	var y := _side.get_local_mouse_position().y
+	var moved := false
+	if here > 0:
+		var above: Control = _side.get_child(here - 1)
+		if y < above.position.y + above.size.y * 0.5:
+			_side.move_child(panel, here - 1)
+			moved = true
+	if not moved and here < _side.get_child_count() - 1:
+		var below: Control = _side.get_child(here + 1)
+		if y > below.position.y + below.size.y * 0.5:
+			_side.move_child(panel, here + 1)
+			moved = true
+
 func _apply_panel_sizing(on: bool) -> void:
 	if _minimap != null:
 		# Qud's minimap is a short landscape strip; the QoL one reserved a tall box with dead space.
@@ -1531,10 +1644,12 @@ func _apply_panel_sizing(on: bool) -> void:
 	if _nearby != null:
 		# 1:1: size to content (no dead gap) — the panel itself fits its rows via set_one_to_one.
 		# User: expand to share the leftover height with the log.
-		# Follows the panel's OWN gate: sized to content is Qud's shape, and a Nearby panel showing
-		# the larger QoL icons needs the expanding share of the column to show them in.
-		_nearby.size_flags_vertical = Control.SIZE_SHRINK_BEGIN \
-			if (on and Settings.qud_shape("nearby")) else Control.SIZE_EXPAND_FILL
+		# BOTH MODES SIZE TO CONTENT NOW. User mode used to take an equal expanding share whatever
+		# the list held, so an empty Nearby panel reserved as much height as a crowded one and the
+		# message log lived in half a column. NearbyObjects._fit_user_height asks for exactly its
+		# rows (capped), so the log gets everything left over -- which is the whole point of the
+		# change, and would be undone here by forcing EXPAND_FILL back on.
+		_nearby.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	# 1:1: honour Qud's overlay options for both panels — hidden when off. User mode always shows.
 	_refresh_overlay_panels()
 	if _msglog != null:
@@ -1565,8 +1680,8 @@ func _push_play_inset(one_to_one: bool) -> void:
 	var frac := 0.0
 	if one_to_one:
 		var w := float(get_viewport().get_visible_rect().size.x)
-		if w > 0.0 and _side != null:
-			frac = clampf(_side.custom_minimum_size.x / w, 0.0, 0.6)
+		if w > 0.0 and _side_box != null:
+			frac = clampf(_side_box.custom_minimum_size.x / w, 0.0, 0.6)
 	_holo.set_ui_right_inset(frac)
 	_push_play_hole.call_deferred(one_to_one)   # deferred: read the hole rect AFTER the layout settles
 
@@ -1610,14 +1725,31 @@ func _row_main() -> Control:
 	holo.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	split.add_child(holo)
 
+	# AN OPAQUE BACKING, because the column is a plain VBox and the playfield is behind it. Each
+	# panel paints its own box, so what showed through was everything BETWEEN them: the 4px
+	# separations, the 3px rounded corners, and any slack under the last panel. Daniel: "connect the
+	# right-hand panel, or encapsulate it or whatever to make the gamefield not bleed through."
+	# The wrapper is what the split holds and what carries the column's WIDTH; _side stays the VBox
+	# so everything that adds, orders or measures panels is unchanged.
+	var side_box := PanelContainer.new()
+	var side_sb := _panel_style()
+	side_sb.set_corner_radius_all(0)     # a square column meets the window edge without a seam
+	side_sb.content_margin_left = 0
+	side_sb.content_margin_right = 0
+	side_sb.content_margin_top = 0
+	side_sb.content_margin_bottom = 0
+	side_box.add_theme_stylebox_override("panel", side_sb)
+	side_box.custom_minimum_size = Vector2(SIDEBAR_W_USER, 0)
+	_side_box = side_box
 	var side := VBoxContainer.new()
-	side.custom_minimum_size = Vector2(SIDEBAR_W_USER, 0)
 	side.add_theme_constant_override("separation", 4)
+	side.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_side = side
 	_minimap = load("res://MinimapView.gd").new()    # the real Minimap view (its own file)
 	_minimap.name = "Minimap"
 	_minimap.custom_minimum_size = Vector2(0, 220)
 	_nearby = load("res://NearbyObjects.gd").new()   # the real Nearby objects view (its own file)
+	_nearby.name = "NearbyObjects"   # the saved panel order keys on this — see _panel_order
 	_nearby.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_nearby.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_nearby.left_edge_drag.connect(_on_sidebar_drag)   # 1:1: its ||| bar continues the log's handle
@@ -1630,7 +1762,13 @@ func _row_main() -> Control:
 	side.add_child(_minimap)
 	side.add_child(_nearby)
 	side.add_child(_msglog)
-	split.add_child(side)
+	_restore_panel_order()
+	side_box.add_child(side)
+	split.add_child(side_box)
+	# DEFERRED, because every panel builds its heading in _ready() and _ready() does not run until
+	# the node is in the tree. Wiring them here got three nulls from drag_handle() and returned
+	# quietly three times: the feature was simply absent, with nothing to see in a log.
+	_wire_reorder.call_deferred()
 	# the overlay-option visibility rule ran in _apply_layout_mode BEFORE these panels
 	# existed — without this, a panel whose Qud option is off still shows until the next
 	# layout pass (resize/mode flip), which on a quiet run never comes

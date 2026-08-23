@@ -288,3 +288,8 @@ func _refresh_toggle() -> void:
 	_toggle.text = "minimal" if _mode == MODE_MINIMAL else "full"
 	var other := "full" if _mode == MODE_MINIMAL else "minimal"
 	_toggle.tooltip_text = "Switch to %s mode" % other
+
+## The strip MainFrame grabs to reorder this panel in the side column. The HEADING, because it is
+## the one part of the panel that is not already something clickable, scrollable or drawn on.
+func drag_handle() -> Control:
+	return _title

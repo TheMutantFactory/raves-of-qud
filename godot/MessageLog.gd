@@ -22,7 +22,11 @@ var _actions: HBoxContainer          # the one-action row under the log (see _re
 var _action_btn: Button = null
 var _grab: Control        # the ||| bar's own hit strip, so only IT shows a resize cursor
 
-var _filter := false
+## FILTER IS USER MODE'S DEFAULT. Verbatim is Qud's log and 1:1 forces it (see set_one_to_one), but
+## the QoL log exists to be readable: filter folds "You pass by a watervine." x9 into one row with a
+## count, which is most of what a walk through Joppa produces. Daniel: "let the default behavior of
+## the user mode message log be filter."
+var _filter := true
 var _last_msgs: Array = []       # last verbatim tail (for verbatim render + delta)
 var _since_load := -1            # count of msgs emitted since Qud loaded (1:1 log trims to this; -1 = all)
 var _entries: Array = []         # filter state: [{text, count, quiet, seen}]
@@ -127,7 +131,7 @@ func set_full_info(full: bool) -> void:
 ## 1:1 (parity) mode: render the Qud-faithful log — verbatim colored text, NO inline pictographs and no
 ## verbatim/filter toggle (Qud has neither). Reverting restores the QoL icons + toggle.
 var _one_to_one := false
-var _saved_filter := false   # user's verbatim/filter choice, restored when leaving 1:1
+var _saved_filter := true    # user's verbatim/filter choice, restored when leaving 1:1 (default: filter)
 ## Qud draws its whole message log — the "Message log" heading AND the lines — at ~0.76x the body UI font
 ## (measured 16px vs 21px at 1080), the heading in a dim teal. Match both in 1:1; user mode keeps the
 ## larger "title" heading + body-size lines in the default colour.
@@ -524,3 +528,8 @@ func _refresh_toggle() -> void:
 	if _toggle != null:
 		_toggle.text = "filter" if _filter else "verbatim"
 		_toggle.tooltip_text = "Switch to %s mode" % ("verbatim" if _filter else "filter")
+
+## The strip MainFrame grabs to reorder this panel in the side column. The HEADING, because it is
+## the one part of the panel that is not already something clickable, scrollable or drawn on.
+func drag_handle() -> Control:
+	return _title

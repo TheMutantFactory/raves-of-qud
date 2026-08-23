@@ -100,7 +100,7 @@ func _ready() -> void:
 	_rt.scroll_active = true
 	_rt.selection_enabled = false   # a selectable RTL grabs focus on click and the arrows stop
 	_rt.focus_mode = Control.FOCUS_NONE   # reaching the player (the command-bar rule)
-	_rt.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_rt.size_flags_vertical = Control.SIZE_SHRINK_BEGIN   # height comes from _fit_user_height
 	_rt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	v.add_child(_rt)
 
@@ -157,6 +157,10 @@ func set_snapshot(data: Dictionary) -> void:
 
 	var names: Array = found.keys()
 	names.sort_custom(func(a, b): return found[a]["dist"] < found[b]["dist"])
+	if names.is_empty():
+		_rt.clear()
+		_fit_user_height(0)
+		return
 
 	var img_h := UiFont.px(get_viewport(), "body") * 2   # match the message log's inline icon size
 	var img_w := int(round(img_h * 16.0 / 24.0))   # Qud tiles are 16x24
@@ -173,6 +177,33 @@ func set_snapshot(data: Dictionary) -> void:
 			_rt.append_text(_tiles.glyph_for(o, _full).replace("[", "[lb]"))   # fallback glyph
 		var suffix: String = ("  ×%d" % e["count"]) if e["count"] > 1 else ""
 		_rt.append_text(" " + QudText.to_bbcode(String(e["raw"]), _palette) + suffix + "\n")
+	_fit_user_height(mini(names.size(), MAX_ROWS))
+
+## SHRINK TO WHAT IS ACTUALLY NEARBY. Daniel: "let the Nearby objects window shrink to fit what's
+## nearby, leaving more room for the message log when the Nearby Objects list is short or empty."
+##
+## The QoL panel used to take an equal expanding share of the column whatever it held, so an empty
+## list reserved as much height as a full one and the log got half a column to show a walk's worth
+## of messages in. Now the panel asks for exactly the rows it has.
+##
+## CAPPED, because the other half of the sentence is "leaving more room for the message log": a
+## crowded market square would otherwise push the log off the bottom, which is the same complaint
+## from the other end. Past the cap it goes back to scrolling inside a fixed box, so a long list
+## costs the log nothing more.
+const USER_MAX_ROWS := 8          # rows shown before the panel stops growing and starts scrolling
+func _fit_user_height(rows: int) -> void:
+	if _one_to_one or _rt == null:
+		return
+	var line: float = float(UiFont.px(get_viewport(), "body")) * 2.0 + 2.0   # a row is an icon tall
+	var shown: int = mini(rows, USER_MAX_ROWS)
+	# The title and the panel's own margins ride above the rows; without them an empty list clips
+	# its own heading, which reads as the panel having vanished rather than having shrunk.
+	var chrome: float = float(UiFont.px(get_viewport(), "title")) + 14.0
+	_rt.fit_content = rows <= USER_MAX_ROWS
+	_rt.scroll_active = rows > USER_MAX_ROWS
+	_rt.custom_minimum_size.y = line * float(shown)
+	custom_minimum_size.y = line * float(shown) + chrome
+	size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 
 ## Driven by MainFrame's global top-menu toggle: perceived icons (default) vs the real ones.
 func set_full_info(full: bool) -> void:
@@ -413,3 +444,8 @@ func _arrow(dx: int, dy: int) -> String:
 	if dx > 0:
 		return "↗" if dy < 0 else "↘"
 	return "↖" if dy < 0 else "↙"
+
+## The strip MainFrame grabs to reorder this panel in the side column. The HEADING, because it is
+## the one part of the panel that is not already something clickable, scrollable or drawn on.
+func drag_handle() -> Control:
+	return _title
