@@ -161,8 +161,15 @@ check(re.search(r"fpm\.emission_box_extents = Vector3\(float\(band\.size\.x\)", 
       "the emission box is as wide as the flame is PAINTED",
       "the stock 0.05 box threads through a 9-column flame")
 check(re.search(r"fpm\.initial_velocity_min = flame_h / FIRE_LIFETIME", src) is not None,
-      "and the rise is set from the flame's height, not a node scale",
+      "the rise rate is a velocity, not a node scale",
       "one scale factor cannot serve a width and a height that differ")
+check(re.search(r"pf\.lifetime = FIRE_LIFETIME \* HELD_FIRE_HEIGHT_MUL", src) is not None,
+      "extra HEIGHT comes from lifetime, not from speed",
+      "a faster tongue spends its invisible stretch further out, not higher")
+check(re.search(r"pf\.preprocess = pf\.lifetime", src) is not None,
+      "and preprocess follows the lifetime")
+check(re.search(r"pf\.amount = int\(round\(HELD_FIRE_AMOUNT \* HELD_FIRE_HEIGHT_MUL\)\)", src) is not None,
+      "the tongue count scales with the column", "or a taller flame reads as a thinner one")
 # scoped to _place_held_light: _place_light still scales ITS emitter, which is correct there --
 # a file-wide search for `pf.scale` failed on the sconce rig and had nothing to do with the torch.
 _held_body = ""
@@ -175,6 +182,14 @@ check("pf.scale" not in _held_body,
 check(0 < LEAN < 45, "the lean is a lean, not a topple", "%.0f deg" % LEAN)
 check(SPREAD > 8.0, "the fan is wider than the stock torch's", "%.0f deg vs 8" % SPREAD)
 check(AMOUNT >= 12, "there are enough tongues to fill it", "%d" % AMOUNT)
+MUL = const("HELD_FIRE_HEIGHT_MUL")
+check(MUL >= 1.0, "the plume is at least as tall as the painted flame", "x%.1f" % MUL)
+check(re.search(r"var rise: float = flame_h \* HELD_FIRE_HEIGHT_MUL", src) is not None,
+      "the multiplier is measured off the painted flame",
+      "the fire still starts on the burning band")
+check(re.search(r"pf\.visibility_aabb = AABB\(.*rise \+ 1\.0", src) is not None,
+      "and the culling box grew with it",
+      "the stock box is sized for a sconce's 0.36 rise")
 check(re.search(r"ParticleProcessMaterial\)\.direction = \(r \* sin\(lean\)", src) is not None,
       "the lean is aimed in WORLD space, per frame",
       "local_coords=false means `direction` ignores the node basis")

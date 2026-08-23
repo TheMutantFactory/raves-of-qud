@@ -2982,3 +2982,26 @@ The `held` probe paints the tongues magenta precisely so none of this is necessa
 `x[1007,1047]`, unmistakable. **Use the probe first and the predicate second** — and when a
 predicate returns a count that is wildly larger or smaller than the thing could possibly be, that
 is the finding, not the measurement.
+
+## A taller flame is LIFETIME, not speed
+
+Tripling `initial_velocity` is the obvious way to make a particle flame taller and it barely works.
+A tongue's alpha ramps to zero across its life, so it covers most of its distance while nearly
+invisible; a faster particle just spends that invisible stretch further out. The extra speed goes
+into the SPREAD CONE instead, so the plume gets wider rather than higher.
+
+Measured on one scene with the magenta probe and identical clustering on both arms:
+
+```
+                      visible plume
+3x initial_velocity   30 x 16  ->  41 x 20     (height 1.25x, width 1.4x)
+3x lifetime           31 x 17  ->  52 x 38     (height 2.2x)
+```
+
+Lifetime stretches the whole fade over three times the distance, which is the part you can see. Two
+things have to follow it: `preprocess` (or the flame lights up from nothing on every rebuild) and
+`amount` — the same tongue count over three times the column is a third the density, so a "taller"
+flame reads as a thinner one.
+
+Visible height still grows less than the multiplier, and that is honest rather than broken: the top
+of a flame fades out. The WORLD rise is exactly 3x.

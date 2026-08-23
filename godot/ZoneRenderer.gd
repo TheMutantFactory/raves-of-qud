@@ -6572,6 +6572,11 @@ const HELD_SCALE := 0.55
 const HELD_FIRE_LEAN_DEG := 22.0
 const HELD_FIRE_SPREAD := 26.0
 const HELD_FIRE_AMOUNT := 20
+## How far the plume rises against the painted flame's own height. 1.0 is the strict clamp — fire
+## exactly as tall as the pixels — which turned out to read as a stub: a torch's flame licks well
+## past the few rows the tile can spare for it. The BASE stays pinned to the burning band, so this
+## grows the fire upward off the right spot rather than floating it.
+const HELD_FIRE_HEIGHT_MUL := 3.0
 func _place_held_light(cx: int, cy: int, hflip: bool) -> void:
 	if _held_dbg:
 		print("[held] cell=(%d,%d) held=%s flat=%s 1to1=%s" % [cx, cy, str(_held_light), _flat_2d, _one_to_one])
@@ -6666,8 +6671,25 @@ func _place_held_light(cx: int, cy: int, hflip: bool) -> void:
 	# and as TALL as it is painted, which are different numbers.
 	var fpm: ParticleProcessMaterial = (_fire_pm as ParticleProcessMaterial).duplicate()
 	fpm.emission_box_extents = Vector3(float(band.size.x) * ps * 0.5, ps * 0.5, ps * 0.5)
+	# HEIGHT COMES FROM LIFETIME, NOT SPEED. Tripling the initial velocity was the obvious move and
+	# it does not work: a tongue's alpha ramps to zero across its life, so it covers most of its
+	# distance while nearly invisible, and a faster particle just spends that invisible stretch
+	# further out. Measured, same scene, same probe — 3x the velocity took the VISIBLE plume from
+	# 16 px tall to 20, while widening it 30 -> 41, because the extra speed went into the spread
+	# cone. Tripling the LIFETIME instead stretches the whole fade over three times the distance,
+	# which is the thing that actually looks taller.
+	var rise: float = flame_h * HELD_FIRE_HEIGHT_MUL
 	fpm.initial_velocity_min = flame_h / FIRE_LIFETIME * 0.75
 	fpm.initial_velocity_max = flame_h / FIRE_LIFETIME * 1.20
+	pf.lifetime = FIRE_LIFETIME * HELD_FIRE_HEIGHT_MUL
+	pf.preprocess = pf.lifetime          # born mid-burn, or the flame lights up from nothing
+	# ...and the same number of tongues over three times the column is a third the density, so
+	# scale the count with it or a tripled flame reads as a thinner one.
+	pf.amount = int(round(HELD_FIRE_AMOUNT * HELD_FIRE_HEIGHT_MUL))
+	# A taller plume outgrows the stock emitter's culling box, which was sized for a sconce's
+	# 0.36 rise: past it the whole flame pops out of frame when its BASE leaves the view, which
+	# looks like flickering rather than like culling.
+	pf.visibility_aabb = AABB(Vector3(-0.6, -0.3, -0.6), Vector3(1.2, rise + 1.0, 1.2))
 	fpm.spread = HELD_FIRE_SPREAD
 	# ...and it LEANS, aimed per frame by _aim_held. NOT set here: with `local_coords = false` --
 	# which every fire in this file uses, so tongues keep rising in world space instead of being
@@ -6682,7 +6704,6 @@ func _place_held_light(cx: int, cy: int, hflip: bool) -> void:
 		fpm.color_ramp = dgt
 	pf.process_material = fpm
 	pf.position = Vector3(cx, flame_base, cy)
-	pf.amount = HELD_FIRE_AMOUNT          # more tongues, because there is more area to cover
 	pf.amount_ratio = clampf(_flame_mul(), 0.0, 1.0)   # gone by day, like every other flame
 	_dynamic_root.add_child(pf)
 	# SIDEWAYS IS A SCREEN DIRECTION, AND THE SCREEN TURNS. "The right-most hand" means right as
