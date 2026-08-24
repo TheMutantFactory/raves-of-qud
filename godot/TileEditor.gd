@@ -91,6 +91,7 @@ func setup(renderer: ZoneRenderer, host: CanvasLayer) -> void:
 	tools.add_child(_drop_btn)
 	tools.add_child(_make_button("Undo", _undo_stroke))
 	col.add_child(_make_button("Save -> game", _save))
+	col.add_child(_make_button("Save png", _save_png))
 	col.add_child(_make_button("Revert to Qud art", _revert))
 	col.add_child(_make_button("Close", close))
 
@@ -325,6 +326,22 @@ func _save() -> void:
 		_dirty = false
 	else:
 		_status.text = "SAVE FAILED"
+
+## Save the canvas as a plain PNG for the EXTERNAL loop — Daniel: "I'm going to voxelize some
+## things and I want the ability to save it." His voxel editor's imports and exports both live in
+## ~/Downloads (the wall platonic arrived from there), so that is where this lands — emphatically
+## NOT the repo, whose root already carries a hundred stray working PNGs, and NOT tiles_custom,
+## which the game hot-reloads as live art. A .png extension even when the tile calls itself .bmp,
+## because the file really is one and the editor's file picker filters on the name.
+func _save_png() -> void:
+	if _img == null or _tile == "":
+		return
+	var name := _flat(_tile).get_basename() + ".png"
+	var path := OS.get_environment("HOME").path_join("Downloads").path_join(name)
+	if _img.save_png(path) == OK:
+		_status.text = "saved -> ~/Downloads/%s" % name
+	else:
+		_status.text = "SAVE FAILED (%s)" % path
 
 func _revert() -> void:
 	if _tile == "" or _renderer == null:
