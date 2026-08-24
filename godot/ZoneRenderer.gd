@@ -473,6 +473,7 @@ var _edge_floor := {}
 ## build is still filling it (see _ib_step), so the band knows its ground is provisional.
 var _ring_complete := false
 ## The band's own subtree under _dynamic_root, so it can be rebuilt on its own (see _rebuild_band).
+var _nb_off_now := {}   # zoneId -> offset, fresh each snapshot (see render_snapshot)
 var _band_root: Node3D = null
 ## ...and that ring's TONE, so the band's ramp can START at the darkness of the cell it abuts
 ## instead of at a constant. Per-cell, not a mean: the ring crosses lit and unlit stretches, and
@@ -806,6 +807,15 @@ func _static_signature(cells: Array) -> int:
 
 func render_snapshot(data: Dictionary, neighbors: Array = []) -> void:
 	_tiles_dir = String(data.get("tilesDir", ""))
+	# THIS TURN'S neighbour offsets, stashed before anything builds. The surround band's
+	# `taken` set used to read each zone's dark_off meta — which on a CROSSING turn still
+	# holds the offset measured from the zone you just LEFT (_sync_neighbors updates it
+	# after the band is built). The south neighbour's slot computed one zone off, the band
+	# saw its ground as unvisited, and painted the fog slab over it for a full turn.
+	# Daniel: "the zone to the south is reloading or something. There is a green/grey flash."
+	_nb_off_now.clear()
+	for nbo in neighbors:
+		_nb_off_now[String(nbo.get("id", ""))] = Vector2i(nbo.get("offset", Vector2i.ZERO))
 
 	# Current combat target (for the 1:1 target-highlight blink). Captured before the
 	# dynamics rebuild consumes it; pos + disposition colour letter from the mod.
@@ -2634,9 +2644,16 @@ func _build_unexplored(parent: Node) -> void:
 	var taken := {Vector2i(0, 0): true}
 	for id in _static_zones:
 		var zn: Node3D = _static_zones[id]
-		if zn.has_meta("dark_off"):
-			var o: Vector2i = zn.get_meta("dark_off")
-			taken[Vector2i(int(round(float(o.x) / float(zw))), int(round(float(o.y) / float(zh))))] = true
+		# FRESH offset first (this snapshot's), meta as the fallback — the meta lags by a
+		# turn on crossings and lagged slots are the green/grey flash (see render_snapshot).
+		var o: Vector2i
+		if _nb_off_now.has(id):
+			o = _nb_off_now[id]
+		elif zn.has_meta("dark_off"):
+			o = zn.get_meta("dark_off")
+		else:
+			continue
+		taken[Vector2i(int(round(float(o.x) / float(zw))), int(round(float(o.y) / float(zh))))] = true
 	var st := SurfaceTool.new()          # the band: blended
 	var sto := SurfaceTool.new()         # everything at full darkness: opaque
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
