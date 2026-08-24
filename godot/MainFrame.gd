@@ -2036,6 +2036,13 @@ func _check_mod_version(data: Dictionary) -> void:
 		status = 3
 	else:
 		status = 1
+	# Remember the mod's identity for the TITLE screen's version corner (report 9e4163d1): the
+	# title has no bridge, so it can only show the last mod this client actually talked to.
+	# Change-gated — save() writes disk, and the stamp only moves when Qud restarts on a new mod.
+	var stamp := "v%d — %s" % [proto, String(data.get("mod", "?"))]
+	if String(Settings.get_value("last_mod_stamp", "")) != stamp:
+		Settings.set_value("last_mod_stamp", stamp)
+		Settings.save()
 	if status == _mod_status:
 		return
 	_mod_status = status

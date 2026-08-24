@@ -838,14 +838,24 @@ func _build_hint() -> void:
 		l.offset_top += 6      # measured: Qud's hint inks at y 1036, the seeded rect put ours at 1030
 		l.offset_bottom += 6
 func _build_version() -> void:
-	if Settings.clone_of_qud():
+	# The title is Qud's shape in both modes (clone_of_qud), so this divergence goes through
+	# the one sanctioned gate: the "versions" QoL feature. 1:1 always gets Qud's corner.
+	if Settings.qud_shape("versions"):
 		_build_version_qud()
 		return
-	var l := _label("%s\nbuild %s" % [Brand.GAME_NAME, Brand.LICENSE], MUTED, "caption")
+	# User mode: OUR versions, not Qud's — the client's release and the mod build it last spoke
+	# to (report 9e4163d1). The mod line comes from the last bridge handshake Settings remembers;
+	# before any first connection there is nothing truthful to show, so it says so.
+	var stamp := String(Settings.get_value("last_mod_stamp", ""))
+	var l := _label("%s %s · %s\nmod %s" % [Brand.GAME_NAME, Brand.RAVES_VERSION, Brand.LICENSE,
+		stamp if stamp != "" else "not connected yet"], MUTED, "caption")
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	l.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
 	add_child(l)
 	_place(l, "version")
+	# The mod line outgrows the layout rect; growth must run LEFT so the right edge stays
+	# pinned in the corner instead of the text walking off the screen (it did).
+	l.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 
 ## 1:1: Qud's own version corner — its release + build, right-aligned, in a READABLE colour.
 ## Qud draws the build line very dark (illegible); we lift it. A RichTextLabel so the two lines

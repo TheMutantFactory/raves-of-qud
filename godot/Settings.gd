@@ -87,6 +87,10 @@ const QOL_FEATURES := {
 	# Daniel asked for both back, and neither costs parity — 1:1 short-circuits qud_shape() for
 	# every feature, so the Qud-faithful shape is untouched there.
 	"msglog": ["Message log: group repeats (xN) + inline pictographs", true],
+	# ON by default (report 9e4163d1): user mode's title corner shows RAVES' client + mod
+	# versions in place of Qud's release/build — you cannot pin a bug report to a build you
+	# were never shown. 1:1 keeps Qud's corner untouched, as with every QoL feature.
+	"versions": ["Title screen: Raves client + mod versions", true],
 	"nearby": ["Nearby objects: larger icons", true],
 }
 
