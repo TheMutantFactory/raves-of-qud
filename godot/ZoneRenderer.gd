@@ -3923,16 +3923,29 @@ func _gate_leaf_mesh(img: Image, col0: int, col1: int, flip: bool, lf: float) ->
 	if top < 0:
 		return null
 	var d := GATE_DEPTH_PX * ps
+	# The leaf's opaque columns, so the WIDTH can be stretched to exactly half the cell:
+	# at sprite scale 16 px is 0.67 of a cell, which left the closed leaves short of the
+	# middle ("make the gate bigger so the middle parts touch — the edges stay on the
+	# edges"). Hinge column maps to 0, tip column to 0.5; height and depth stay at
+	# sprite scale so the gate keeps matching the fence run.
+	var c_min := col1
+	var c_max := col0
+	for r0 in range(top, bot + 1):
+		for c0 in range(col0, col1 + 1):
+			if img.get_pixel(int((c0 + 0.5) * sx), int((r0 + 0.5) * (h / 24.0))).a >= 0.5:
+				c_min = mini(c_min, c0)
+				c_max = maxi(c_max, c0)
+	var xs := 0.5 / float(c_max - c_min + 1)
 	for r in range(top, bot + 1):
 		for c in range(col0, col1 + 1):
 			var px2 := img.get_pixel(int((c + 0.5) * sx), int((r + 0.5) * (h / 24.0)))
 			if px2.a < 0.5:
 				continue
 			# hinge-relative column: 0 at the hinge whichever side the leaf came from
-			var hc: float = float(c - col0) if not flip else float(col1 - c)
+			var hc: float = float(c - c_min) if not flip else float(c_max - c)
 			var wc := Color(px2.r * lf, px2.g * lf, px2.b * lf)
-			_vox_block(st, Vector3(hc * ps, float(bot - r) * ps, -d * 0.5),
-				Vector3(ps, ps, d), wc, [true, true, true, true, true, true])
+			_vox_block(st, Vector3(hc * xs, float(bot - r) * ps, -d * 0.5),
+				Vector3(xs, ps, d), wc, [true, true, true, true, true, true])
 	var mesh := ArrayMesh.new()
 	st.commit(mesh)
 	return mesh
