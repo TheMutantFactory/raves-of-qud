@@ -474,6 +474,38 @@ var _edge_floor := {}
 var _ring_complete := false
 ## The band's own subtree under _dynamic_root, so it can be rebuilt on its own (see _rebuild_band).
 var _nb_off_now := {}   # zoneId -> offset, fresh each snapshot (see render_snapshot)
+var _nb_want := {}          # zoneId -> nb dict from the last sync (deferred builds read this)
+var _nb_build_queue: Array = []   # remembered zones awaiting their one-per-frame build
+
+## Drain one queued remembered-zone build. Called once per frame from _process; skipped while
+## the live zone's own incremental build runs — one GPU-heavy stream at a time.
+func _drain_nb_builds() -> void:
+	if _nb_build_queue.is_empty() or _ib_active:
+		return
+	var id: String = _nb_build_queue.pop_front()
+	if _static_zones.has(id) or not _nb_want.has(id):
+		return   # built meanwhile, or no longer wanted — either way, not ours to do
+	var nb: Dictionary = _nb_want[id]
+	var sub := Node3D.new()
+	_remembered_root.add_child(sub)
+	_static_zones[id] = sub
+	_bank = sub
+	_noting = false
+	_remembered_build = true
+	_remembered_off = Vector2i(nb.get("offset", Vector2i.ZERO))
+	var wt := {}
+	Profiler.begin("remembered.art")
+	_build_zone(nb.get("cells", []), Vector2i.ZERO, true, wt)
+	_rebuild_walls(wt)
+	_flush_floor_batch()
+	Profiler.done("remembered.art")
+	_remembered_build = false
+	_noting = true
+	_bank = null
+	# Position exactly as the sync does (offset + vertical stacking) — a zone at the wrong
+	# spot for even a frame flashes ON the live zone. The next sync re-applies the same.
+	var off := Vector2i(nb.get("offset", Vector2i.ZERO))
+	sub.position = Vector3(off.x, -float(int(nb.get("dz", 0))) * level_height, off.y)
 var _band_root: Node3D = null
 ## ...and that ring's TONE, so the band's ramp can START at the darkness of the cell it abuts
 ## instead of at a constant. Per-cell, not a mean: the ring crosses lit and unlit stretches, and
@@ -3191,6 +3223,7 @@ func _sync_neighbors(neighbors: Array) -> void:
 	var want := {}
 	for nb in neighbors:
 		want[String(nb.get("id", ""))] = nb
+	_nb_want = want   # the deferred one-per-frame builds read the CURRENT data at build time
 	# drop subtrees for zones that are no longer neighbours — but NEVER the live
 	# zone's static (it isn't in `neighbors`; render_snapshot owns its lifetime).
 	for id in _static_zones.keys():
@@ -3227,22 +3260,17 @@ func _sync_neighbors(neighbors: Array) -> void:
 					_static_zones[id].visible = false
 			continue
 		if not _static_zones.has(id):
-			var sub := Node3D.new()
-			_remembered_root.add_child(sub)
-			_static_zones[id] = sub
-			_bank = sub
-			_noting = false     # neighbours aren't inspected; don't touch _placed
-			_remembered_build = true    # ...and its art is drawn in Qud's memory pair
-			_remembered_off = Vector2i(nb.get("offset", Vector2i.ZERO))
-			var wt := {}
-			Profiler.begin("remembered.art")
-			_build_zone(nb.get("cells", []), Vector2i.ZERO, true, wt)   # local coords
-			_rebuild_walls(wt)     # _bank set -> into the subtree, no clear
-			_flush_floor_batch()   # batched floor MultiMeshes into the neighbour subtree
-			Profiler.done("remembered.art")
-			_remembered_build = false
-			_noting = true
-			_bank = null
+			# ONE NEIGHBOUR BUILD PER FRAME, never all of them in one. The live zone earned
+			# its incremental build when a single-frame batch of GPU resources overran the
+			# Metal buffer allocator (SIGBUS in _platform_memmove) — and the remembered
+			# builds still ran 8+ zones in the one frame that follows "continue" on a dense
+			# visited set. Daniel's crash report, 29s after launch, mid-write into an
+			# AGXMetalG13X buffer, said exactly that. The queue drains one zone per frame
+			# in _process; a zone appears a few frames late and bakes its darkness on the
+			# next sync, both invisible against the fog it appears under.
+			if not _nb_build_queue.has(id):
+				_nb_build_queue.append(id)
+			continue
 		# Bake this remembered zone's darkness from its stored light, so a dark cavern or
 		# night surface stays dark in memory instead of rendering fully lit. Meta-guarded
 		# to bake exactly ONCE — and done OUTSIDE the build block above so a zone that just
@@ -4746,6 +4774,7 @@ func _process(_dt: float) -> void:
 	_aim_held()                  # ...and the torch, which is offset in SCREEN space
 	if _ib_active:
 		_ib_step()               # advance the incremental live-static build one chunk per frame
+	_drain_nb_builds()           # ...and at most ONE remembered-zone build per frame (see the queue)
 	var gmul := _glow_mul()      # daylight dimming, recomputed once per frame
 	var fmul := _flame_mul()
 	for L in _lights:
@@ -9426,6 +9455,11 @@ var _ghost_mesh_cache := {}    # source Mesh -> its K/k ghost ArrayMesh (shared 
 ## per-instance metas rebuilt the same ghost hundreds of times per crossing (2.5s of the walk).
 func _ghost_wall_mesh_cached(src: Mesh) -> ArrayMesh:
 	if not _ghost_mesh_cache.has(src):
+		# Bounded: band-grammar walls mint FRESH source meshes per build, so keying by object
+		# grows forever on a long walk — and the cache's strong refs keep every dead source
+		# alive with it. Past the cap, start over; the shared vox meshes re-memoise instantly.
+		if _ghost_mesh_cache.size() > 512:
+			_ghost_mesh_cache.clear()
 		_ghost_mesh_cache[src] = _ghost_wall_mesh(src)
 	return _ghost_mesh_cache[src]
 ## How many cells the last build meshed from a hand-authored model, and how many .vox files it
