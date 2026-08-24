@@ -909,10 +909,13 @@ func render_snapshot(data: Dictionary, neighbors: Array = []) -> void:
 		# (fire_zone_radius), and everything else — fences, props, statues, doors — is
 		# ghosted by the darkness bake's _dim_frozen_node exactly as a fresh build would be.
 		# (frozen above, before the registries cleared — nothing further to do for it here)
-		_drop_static(live_id)          # replace any stale (neighbour-built) copy
-		_noting = true
-		_static_saw_missing = false
-		_build_static(live_id, cells)
+		if _thaw_zone(live_id, cells, static_sig):
+			_noting = true                 # the restored _placed notes are the live zone's again
+		else:
+			_drop_static(live_id)          # replace any stale (neighbour-built) copy
+			_noting = true
+			_static_saw_missing = false
+			_build_static(live_id, cells)
 		_live_static_id = live_id
 		_live_static_sig = static_sig
 		# A tile was still missing at build time (the mod exports on sight, usually the
@@ -2980,11 +2983,125 @@ func _freeze_departed() -> void:
 				if ln != null and is_instance_valid(ln):
 					ln.queue_free()
 					n_fire += 1
+	else:
+		# kept burning by the radius — tagged so a later thaw can sweep them before
+		# laying fresh live fires (untagged, they would double up)
+		for L in _lights:
+			for lk in ["glow", "flame", "smoke"]:
+				var ln = L.get(lk)
+				if ln != null and is_instance_valid(ln):
+					ln.set_meta("zlight", true)
 	# _lit_meshes need nothing here: the darkness bake's _dim_frozen_node ghosts them.
+	# THE THAW BUNDLE: everything re-entry needs to reverse this conversion in place lives
+	# on the subtree — the registries (with their live/ghost texture pairs), the inspector
+	# notes, and the zone's signature at departure. _thaw_zone restores it all when the
+	# signature still matches; a zone that changed while away falls back to a real rebuild.
+	var zn0 = _static_zones.get(_live_static_id)
+	if zn0 != null and is_instance_valid(zn0):
+		zn0.set_meta("thaw", {
+			"sig": _live_static_sig,
+			"lit_sprites": _lit_sprites.duplicate(),
+			"wall_cutaway": _wall_cutaway.duplicate(),
+			"lit_meshes": _lit_meshes.duplicate(),
+			"anim_sprites": _anim_sprites.duplicate(),
+			"cell_top": _cell_top_static.duplicate(),
+			"door_static": _door_static.duplicate(),
+			"placed": _placed.duplicate(),
+		})
 	# ONE LINE PER FREEZE — the reorder bug (freeze after the clears, converting nothing)
 	# was invisible precisely because nothing said how much work was done.
 	print("[freeze] %s: %d sprites ghosted, %d wall meshes ghosted, %d fire nodes freed"
 		% [_live_static_id, n_spr, n_wall, n_fire])
+
+## The freeze's mirror: re-dress a banked subtree back to LIVE on re-entry. Only when the
+## zone's static signature still matches its state at departure — Qud may have burned,
+## built or looted things while you were away, and a stale thaw would show the old world;
+## a signature mismatch falls back to the honest rebuild. Daniel: "it seems a little weird
+## to reload a zone that is already remembered and displayed."
+func _thaw_zone(id: String, cells: Array, sig: int) -> bool:
+	if _world_map:
+		return false
+	var zn = _static_zones.get(id)
+	if zn == null or not is_instance_valid(zn) or not zn.has_meta("thaw"):
+		return false
+	var th: Dictionary = zn.get_meta("thaw")
+	if int(th.get("sig", -1)) != sig:
+		zn.remove_meta("thaw")
+		return false
+	zn.remove_meta("thaw")
+	_lit_sprites = th["lit_sprites"]
+	_wall_cutaway = th["wall_cutaway"]
+	_lit_meshes = th["lit_meshes"]
+	_anim_sprites = th["anim_sprites"]
+	_cell_top_static = th["cell_top"]
+	_door_static = th["door_static"]
+	_placed = th["placed"]
+	_edge_floor.clear()   # the band-borrow ring is per-zone; a stale ring is the "inconsistent bibs" bug
+	var n_spr := 0
+	for e in _lit_sprites:
+		var sp = e["s"]
+		if not is_instance_valid(sp):
+			continue
+		var lt = e.get("live", null)
+		if lt != null and sp.texture != lt:
+			sp.texture = lt
+		# hideDark stays hidden until the relight (same snapshot) proves the cell in sight
+		sp.modulate = Color(0, 0, 0, 0) if bool(e.get("hide_dark", false)) else Color.WHITE
+		n_spr += 1
+	for wk in _wall_cutaway:
+		for wmi in _wall_cutaway[wk]:
+			if not is_instance_valid(wmi):
+				continue
+			if wmi.has_meta("live_mesh"):
+				var lm: Mesh = wmi.get_meta("live_mesh")
+				if wmi.mesh != lm:
+					wmi.mesh = lm
+	# the frozen era's baked darkness goes; the live zone's darkness is per-turn geometry
+	for ch in zn.get_children():
+		if ch.has_meta("is_darkness"):
+			ch.queue_free()
+	if zn.has_meta("dark_off"):
+		zn.remove_meta("dark_off")
+	if zn.has_meta("dark_cap"):
+		zn.remove_meta("dark_cap")
+	_thaw_nodes(zn)
+	_relight_fires(zn, cells)
+	zn.position = Vector3.ZERO
+	zn.visible = true
+	print("[thaw] %s: %d sprites relit, fires relaid" % [id, n_spr])
+	return true
+
+## Particles resume and surviving frozen fire nodes are swept (radius may have kept them
+## burning; the fresh live fires replace them).
+func _thaw_nodes(n: Node) -> void:
+	if n.has_meta("zlight"):
+		n.queue_free()
+		return
+	if n is GPUParticles3D:
+		(n as GPUParticles3D).emitting = true
+		(n as GPUParticles3D).visible = true
+	for c in n.get_children():
+		_thaw_nodes(c)
+
+## The static build's light pass, alone — for a thawed zone whose geometry needs no rebuild.
+func _relight_fires(zn: Node3D, cells: Array) -> void:
+	_build_lit.clear()
+	for lc in cells:
+		if int(lc.get("light", LIGHT_LIT)) >= LIGHT_LIT:
+			_build_lit[Vector2i(int(lc.get("x", 0)), int(lc.get("y", 0)))] = true
+	var was_bank = _bank
+	var was_live := _live_build
+	_bank = zn
+	_live_build = true
+	for lc in cells:
+		var cx := int(lc.get("x", 0))
+		var cy := int(lc.get("y", 0))
+		for o in lc.get("objs", []):
+			if o.has("lightRadius") and not _is_creature(o) and not _should_glow(o):
+				_place_light(cx, cy, float(o["lightRadius"]), not _is_creature(o),
+					bool(o.get("onFire", false)))
+	_bank = was_bank
+	_live_build = was_live
 
 func _drop_static(id: String) -> void:
 	if _ib_active and id == _ib_id:
