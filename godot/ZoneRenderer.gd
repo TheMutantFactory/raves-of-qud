@@ -4001,13 +4001,17 @@ func _place_light(cx: int, cy: int, radius: float, smokes := true, on_fire := fa
 	# that is freed with the dynamic pass, which is not something this function can hand out: it
 	# only builds particles for _live_build, precisely so per-turn rigs cannot pile into _lights.
 	var particle_fire: bool = _live_build and (smokes or on_fire)
+	# BORN ALREADY FADED, live or not. The live path left the pool at transparency 0 (fully
+	# on) for _process to correct — one frame normally, but a zone entry's build hitch holds
+	# that frame on screen, so every sconce pool flashed full-bright at noon on every crossing.
+	# Daniel: "the sconce floor lighting pattern is on when you step into the zone, whether
+	# it's night or not." Same formula the per-frame driver applies, at energy 1.
+	glow.transparency = clampf(1.0 - (_fire_glow_mul() if on_fire else _glow_mul()) * 0.6, 0.0, 1.0)
 	if no_flame:
 		if _live_build:
 			_lights.append({"glow": glow, "flame": null, "energy": 1.0, "on_fire": on_fire,
 				"particle_fire": false,
 				"cell": Vector2i(cx, cy), "pool_n": n, "pool_mask": mask})
-		else:
-			glow.transparency = clampf(1.0 - (_fire_glow_mul() if on_fire else _glow_mul()) * 0.6, 0.0, 1.0)
 		return
 	if particle_fire:
 		var pf := _make_fire(on_fire)
@@ -4052,6 +4056,13 @@ func _place_light(cx: int, cy: int, radius: float, smokes := true, on_fire := fa
 		var entry := {"glow": glow, "flame": flame, "energy": 1.0, "on_fire": on_fire,
 			"particle_fire": particle_fire,
 			"cell": Vector2i(cx, cy), "pool_n": n, "pool_mask": mask}
+		if particle_fire:
+			var pfb := flame as GPUParticles3D
+			var r0: float = 1.0 if on_fire else clampf(_flame_mul(), 0.0, 1.0)
+			pfb.amount_ratio = r0
+			pfb.emitting = r0 > 0.03
+		else:
+			(flame as Sprite3D).transparency = 0.0 if on_fire else clampf(1.0 - _flame_mul(), 0.0, 1.0)
 		if smokes:
 			var smoke := _make_smoke()
 			# just above the flame — wherever the flame actually is
@@ -4063,8 +4074,7 @@ func _place_light(cx: int, cy: int, radius: float, smokes := true, on_fire := fa
 			entry["fire_smoke"] = on_fire
 		_lights.append(entry)
 	else:
-		# Neighbour/static lights don't flicker in _process, so bake the current daylight dimming now.
-		glow.transparency = clampf(1.0 - (_fire_glow_mul() if on_fire else _glow_mul()) * 0.6, 0.0, 1.0)
+		# Neighbour/static lights don't flicker in _process; the birth fade above is their final state.
 		# NB: a Sprite3D's `modulate` is IGNORED once material_override is set, so dim via transparency.
 		# A drawn fire flame stays fully visible (it's the only fire cue by day); a torch flame fades.
 		(flame as Sprite3D).transparency = 0.0 if on_fire else clampf(1.0 - _flame_mul(), 0.0, 1.0)

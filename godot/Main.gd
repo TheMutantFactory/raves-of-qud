@@ -1851,6 +1851,14 @@ func _write_zone_report() -> void:
 			row.append("d%+d (%d,%d)@%d,%d" % [d, c.x, c.y, int(sp.x), int(sp.y)])
 		lines.append("  %s: %s" % [edge, "  ".join(PackedStringArray(row))])
 	lines.append("")
+	lines.append("LIGHTS  daylight=%.3f  glow_mul=%.3f  fire_glow_mul=%.3f  n=%d" % [
+		renderer._daylight, renderer._glow_mul(), renderer._fire_glow_mul(), renderer._lights.size()])
+	for li in range(mini(4, renderer._lights.size())):
+		var L: Dictionary = renderer._lights[li]
+		var gt: float = (L["glow"] as MeshInstance3D).transparency if L.get("glow") != null else -1.0
+		lines.append("  light[%d] cell=%s on_fire=%s glow_transparency=%.3f" % [
+			li, str(L.get("cell")), str(L.get("on_fire")), gt])
+	lines.append("")
 	lines.append("DEPARTED ZONES (their darkness hands over from the live zone's edge)")
 	lines.append("  ambient_tone (median)      %.4f" % renderer._ambient_tone)
 	lines.append("  rebake step                %d/%d" % [renderer._ambient_step(), int(renderer.CAP_QUANT)])
