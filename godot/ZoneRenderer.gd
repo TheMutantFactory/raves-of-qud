@@ -1473,7 +1473,11 @@ func _rebuild_dynamics(cells: Array) -> void:
 				# wrong hook here for a second reason -- user mode SKIPS hideDark objects when
 				# picking one, and the dawnglider that exposed this is hideDark, so it could
 				# never have been the winner however the gate was written.
-				_register_anim(od, cx, cy)
+				# ...except the SLEEP flash in user mode: the ^c flood is exactly the animation
+				# Daniel asked to be rid of, and the lying-down pose below is its replacement as
+				# the "this one is asleep" signifier. 1:1 keeps the flash — that is Qud's screen.
+				if _one_to_one or not _is_asleep(od):
+					_register_anim(od, cx, cy)
 				# A lit creature (NPC with a torch/glowsphere) carries its light with it —
 				# placed here every step so it tracks the creature. No smoke: a moving torch
 				# shouldn't trail a plume. (_live_build is false during dynamics, so this doesn't
@@ -3288,6 +3292,33 @@ func _override_for(tile: String) -> String:
 ## is not looked at at all.
 const FIRE_BG_FLASH := "W"      # the flash
 const FIRE_BG_BASE := "K"       # ...and what it flashes back to (matched case-insensitively)
+
+## Is this creature ASLEEP, read off the same render sweep as burning? Asleep is the OTHER
+## colour-only schedule: Qud floods the cell background CYAN and back while a creature sleeps —
+## real capture (kept as the burning audit's false-positive case): 60|0=;&c^c;|10=;;|20=;&c^c;
+## Daniel: "get rid of the sleep animation. Some sort of blue flashing." Same contract as
+## _is_burning: colour-only (any tile swap is some other animation), the ^c flood on at least two
+## distinct frames, and no wire flag or mod rebuild needed.
+func _is_asleep(obj: Dictionary) -> bool:
+	var spec := String(obj.get("animSched", ""))
+	if spec == "" or spec.find("^") < 0 or _is_burning(obj):
+		return false
+	var parts := spec.split("|")
+	var floods := 0
+	for i in range(1, parts.size()):
+		var kv := parts[i].split("=")
+		if kv.size() != 2:
+			continue
+		var axes := String(kv[1]).split(";")
+		if axes.size() != 3:
+			continue
+		if axes[0] != "":
+			return false          # a tile swap: some other animation
+		var col := String(axes[1])
+		var up := col.find("^")
+		if up >= 0 and up + 1 < col.length() and col.substr(up + 1, 1).to_lower() == "c":
+			floods += 1
+	return floods >= 2
 func _is_burning(obj: Dictionary) -> bool:
 	var spec := String(obj.get("animSched", ""))
 	if spec == "" or spec.find("^") < 0:
@@ -8023,15 +8054,27 @@ func _place_nonwall(obj: Dictionary, cx: int, cy: int, idx: int, in_wall: bool, 
 			# turn the sprite was nudged up 0.02 and then yanked back down by the next drift frame
 			# — a fixed-size hop, once a turn, which is what "jumping out of the cycle or being
 			# saturated" looks like from the outside.
+			# SLEEPING CREATURES LIE ON THE FLOOR (user mode; 1:1 is Qud's flat grid where the
+			# pose would be meaningless). The billboard stops facing the camera and lies face-up
+			# just above the ground overlays, head to the north — the pose IS the signifier, in
+			# place of the suppressed ^c flash. Submerged sleepers keep the upright treatment:
+			# a flat sprite under the waterline would vanish into the water quad.
+			var asleep: bool = not _one_to_one and _is_asleep(obj) and not submerged
+			if asleep:
+				s.billboard = BaseMaterial3D.BILLBOARD_DISABLED
+				s.rotation_degrees = Vector3(-90, 0, 0)
+				s.position = Vector3(cx, FLOOR_Y + 0.06, cy)
 			var float_scale := 0.0
-			if not _one_to_one and _is_flying(obj):
+			if asleep:
+				pass                    # no flight lift, no swim stir — it is asleep
+			elif not _one_to_one and _is_flying(obj):
 				s.position.y += FLY_LIFT
 				float_scale = 1.0
 			elif not _one_to_one and _is_swimming(obj):
 				# ...a swimmer stirs the water at a quarter of it, and takes no LIFT: it is IN the
 				# water, and _seat has already put it at the waterline.
 				float_scale = SWIM_AMP
-			if not _one_to_one:
+			if not _one_to_one and not asleep:
 				_register_sprite_anim(obj, s, tile, btex)
 			# STACK ORDER: same-cell billboards seat at the same (x,z), so a pile's quads are
 			# COPLANAR — their depths tie per pixel and the winner flips with every camera nudge
