@@ -789,7 +789,11 @@ func _static_signature(cells: Array) -> int:
 			# Include lightRadius: a static object can gain its light a snapshot AFTER it appears (a
 			# just-placed campfire lights up next tick), and the glow is placed only on a static rebuild —
 			# so the light state must be part of the signature or the campfire renders unlit.
-			h ^= hash("%d,%d,%s,%d" % [cx, cy, String(obj.get("name", "")), int(obj.get("lightRadius", 0))])
+			# Include solid: a fence gate keeps its NAME across open/close (only tile + solid flip),
+			# and its pose is placed in the static pass — without this bit a live toggle never
+			# rebuilt, so the gate stayed visually open after being shut (measured 2026-08-23).
+			h ^= hash("%d,%d,%s,%d,%d" % [cx, cy, String(obj.get("name", "")),
+				int(obj.get("lightRadius", 0)), 1 if bool(obj.get("solid", false)) else 0])
 	return h
 
 func render_snapshot(data: Dictionary, neighbors: Array = []) -> void:
