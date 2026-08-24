@@ -1347,6 +1347,8 @@ var _anim_sprites: Array = []
 
 var _occupied := {}   # creature cells this turn (Vector2i -> true), for the winner rule
 var _asleep_posed: Array = []   # cells whose creature lay down asleep this turn (zonereport)
+var _asleep_seen := {}          # Vector2i -> creature name: who slept LAST turn
+var _asleep_next := {}          # ...being collected for next turn
 
 func _rebuild_dynamics(cells: Array) -> void:
 	# THE LIT SET, AGAIN. _build_zone fills this for the static pass, but a carried torch moves and
@@ -1359,6 +1361,8 @@ func _rebuild_dynamics(cells: Array) -> void:
 		if int(lc.get("light", LIGHT_LIT)) >= LIGHT_LIT:
 			_build_lit[Vector2i(int(lc.get("x", 0)), int(lc.get("y", 0)))] = true
 	_asleep_posed.clear()       # per-turn: which cells hold a creature lying asleep
+	_asleep_seen = _asleep_next # last turn's sleepers, for the missed-window case (_asleep_now)
+	_asleep_next = {}
 	_occupied.clear()
 	for c in _dynamic_root.get_children():
 		c.free()
@@ -1478,7 +1482,7 @@ func _rebuild_dynamics(cells: Array) -> void:
 				# ...except the SLEEP flash in user mode: the ^c flood is exactly the animation
 				# Daniel asked to be rid of, and the lying-down pose below is its replacement as
 				# the "this one is asleep" signifier. 1:1 keeps the flash — that is Qud's screen.
-				if _one_to_one or not _is_asleep(od):
+				if _one_to_one or not _is_asleep(od):   # memory not needed: an empty sched has no flash
 					_register_anim(od, cx, cy)
 				# A lit creature (NPC with a torch/glowsphere) carries its light with it —
 				# placed here every step so it tracks the creature. No smoke: a moving torch
@@ -3302,14 +3306,23 @@ const FIRE_BG_BASE := "K"       # ...and what it flashes back to (matched case-i
 ##     60|0=;&c^c;|10=;;|20=;&c^c;                        (archived; two floods, colour-only)
 ##     60|0=;;|11=;&C^c;|25=;;|36=Text/95.bmp;&c;|45=;;   (live farmer, in his bed, 2026-08-23)
 ##
-## The first cut of this detector was written to the archived shape alone and a real sleeper
-## walked straight through it: the Text/ frame tripped the "any tile swap is some other
-## animation" rule, and one flood failed a two-flood minimum. Daniel: "He's standing and
-## flashing." So: a Text/ swap is the SLEEP GLYPH, not another animation (any other art swap
-## still disqualifies), and the bar is two floods OR one flood plus the glyph. Burning wins ties.
+## THE SWEEP IS A WINDOW, NOT THE ANIMATION. The mod records 60 frames of RenderEvent per
+## snapshot, and the sleep program's phases drift across that window — so the SAME sleeping
+## farmer sweeps to different shapes on different turns. Three real captures of one effect:
+##
+##     60|0=;&c^c;|10=;;|20=;&c^c;                        floods only
+##     60|0=;;|11=;&C^c;|25=;;|36=Text/95.bmp;&c;|45=;;   flood + z glyph
+##     60|0=;;|36=Text/95.bmp;&c;|45=;;                   z glyph ALONE (the same farmer,
+##                                                         minutes after matching the shape above)
+##
+## The detector was tightened to each specimen in turn and a later sweep of the SAME creature
+## walked through it — "he was flat for a few turns, now he's back up and flashing." The honest
+## rule is the program's alphabet, not a phase count: every animated frame must be a ^c flood or
+## a Text/ glyph (anything else is another animation), and at least ONE of either must appear.
+## Burning wins ties. And because a window can also catch NOTHING, _asleep_now remembers.
 func _is_asleep(obj: Dictionary) -> bool:
 	var spec := String(obj.get("animSched", ""))
-	if spec == "" or spec.find("^") < 0 or _is_burning(obj):
+	if spec == "" or _is_burning(obj):
 		return false
 	var parts := spec.split("|")
 	var floods := 0
@@ -3330,7 +3343,24 @@ func _is_asleep(obj: Dictionary) -> bool:
 		var up := col.find("^")
 		if up >= 0 and up + 1 < col.length() and col.substr(up + 1, 1).to_lower() == "c":
 			floods += 1
-	return floods >= 2 or (floods >= 1 and zglyphs >= 1)
+	return floods + zglyphs >= 1
+
+## Asleep THIS TURN, with one turn's memory: a sweep window that catches none of the program's
+## frames reports an empty schedule, and without memory the sleeper stood up for that turn and
+## lay back down the next. A remembered sleeper stays down while the SAME creature holds the SAME
+## cell with an empty-or-sleeping schedule; any other animation, or the cell changing hands,
+## wakes the slot. Known cost, accepted: a creature that wakes and stands perfectly still with no
+## animation stays posed until it moves — sleepers do not move, and wakers do.
+func _asleep_now(obj: Dictionary, cx: int, cy: int) -> bool:
+	var k := Vector2i(cx, cy)
+	var nm := String(obj.get("name", ""))
+	var asleep := _is_asleep(obj)
+	if not asleep and String(obj.get("animSched", "")) == "" \
+			and String(_asleep_seen.get(k, "")) == nm:
+		asleep = true             # the window missed; the sleeper has not moved
+	if asleep:
+		_asleep_next[k] = nm
+	return asleep
 func _is_burning(obj: Dictionary) -> bool:
 	var spec := String(obj.get("animSched", ""))
 	if spec == "" or spec.find("^") < 0:
@@ -8071,7 +8101,7 @@ func _place_nonwall(obj: Dictionary, cx: int, cy: int, idx: int, in_wall: bool, 
 			# just above the ground overlays, head to the north — the pose IS the signifier, in
 			# place of the suppressed ^c flash. Submerged sleepers keep the upright treatment:
 			# a flat sprite under the waterline would vanish into the water quad.
-			var asleep: bool = not _one_to_one and _is_asleep(obj) and not submerged
+			var asleep: bool = not _one_to_one and not submerged and _asleep_now(obj, cx, cy)
 			if asleep:
 				s.billboard = BaseMaterial3D.BILLBOARD_DISABLED
 				s.rotation_degrees = Vector3(-90, 0, 0)

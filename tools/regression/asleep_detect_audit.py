@@ -43,7 +43,9 @@ def is_burning(spec):
 
 
 def is_asleep(spec):
-    if not spec or "^" not in spec or is_burning(spec):
+    # NO caret precondition: the z-glyph-alone sweep has no ^ anywhere in it. Keeping the guard
+    # here after removing it from the GDScript is exactly the drift this mirror exists to catch.
+    if not spec or is_burning(spec):
         return False
     floods = zglyphs = 0
     for axes in _entries(spec):
@@ -56,7 +58,7 @@ def is_asleep(spec):
         i = col.find("^")
         if i >= 0 and i + 1 < len(col) and col[i + 1].lower() == "c":
             floods += 1
-    return floods >= 2 or (floods >= 1 and zglyphs >= 1)
+    return floods + zglyphs >= 1
 
 
 CASES = [
@@ -66,10 +68,16 @@ CASES = [
     ("the LIVE farmer capture (one flood + z glyph)",
      "60|0=;;|11=;&C^c;|25=;;|36=Text/95.bmp;&c;|45=;;", True),
     ("the archived Asleep capture", "60|0=;&c^c;|10=;;|20=;&c^c;", True),
+    # The THIRD real shape — the same farmer minutes after matching the flood+glyph capture: the
+    # sweep window caught only the z frame. Tightening to phase counts is how the detector lost
+    # to the same creature twice; the rule is the program's ALPHABET, not its phases.
+    ("the SAME farmer's later sweep (z glyph alone)", "60|0=;;|36=Text/95.bmp;&c;|45=;;", True),
     ("burning is burning, not sleeping", "60|0=;&r^k;|7=;&r^W;|12=;&r^k;", False),
-    ("a single steady cyan tint", "60|0=;&c^c;", False),
+    # A window can catch the flood ON for its whole span — this is a sweep alias of sleep, and
+    # it was originally written here as a NEGATIVE on the guess that a steady tint must be some
+    # other effect. No such effect has ever been captured; the guess lost to evidence twice.
+    ("a full-window cyan flood (sweep alias of sleep)", "60|0=;&c^c;", True),
     ("a NON-Text tile swap with ^c colours", "60|0=zz.bmp;&c^c;|20=;&c^c;", False),
-    ("a Text glyph alone, no flood (not sleep)", "60|0=;;|36=Text/95.bmp;&c;", False),
     ("^C uppercase floods still count", "60|0=;&y^C;|30=;&y^C;", True),
     ("hologram fg cycle, no backgrounds", "60|0=;&C;|15=;&b;|30=;&c;", False),
     ("empty schedule", "", False),
