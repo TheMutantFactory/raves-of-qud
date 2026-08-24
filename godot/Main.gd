@@ -701,6 +701,10 @@ func _exec_godot_cmd(cmd: String) -> void:
 					"zoom": _multiview.pane_zoom(pi, float(parts[3]))
 		"dbg":
 			_dbg_menu.toggle()    # the ` debug menu (for headless UI checks)
+		"profile":
+			# `profile` — dump the Pareto to profile.txt and reset; `profile keep` dumps
+			# without resetting. The F9/P keys' headless twin, for driving from outside.
+			_dump_profile(parts.size() < 2 or String(parts[1]) != "keep")
 		"spritedump":
 			# `spritedump CX CY` — print every visual node whose footprint covers the cell:
 			# type, position, modulate/albedo, texture id, visibility. The inspector reports

@@ -1700,7 +1700,7 @@ func _relight_static_sprites(cells: Array) -> void:
 				if not mi.has_meta("live_mesh"):
 					mi.set_meta("live_mesh", mi.mesh)
 				if not mi.has_meta("ghost_mesh"):
-					mi.set_meta("ghost_mesh", _ghost_wall_mesh(mi.get_meta("live_mesh")))
+					mi.set_meta("ghost_mesh", _ghost_wall_mesh_cached(mi.get_meta("live_mesh")))
 				var gm: Mesh = mi.get_meta("ghost_mesh")
 				if mi.mesh != gm:
 					mi.mesh = gm
@@ -1741,7 +1741,7 @@ func _relight_static_sprites(cells: Array) -> void:
 			var want: Mesh = live_m
 			if not wvis:
 				if not wmi.has_meta("ghost_mesh"):
-					wmi.set_meta("ghost_mesh", _ghost_wall_mesh(live_m))   # once, on first remembering
+					wmi.set_meta("ghost_mesh", _ghost_wall_mesh_cached(live_m))   # once, on first remembering
 				want = wmi.get_meta("ghost_mesh")
 			if wmi.mesh != want:
 				wmi.mesh = want
@@ -1755,6 +1755,12 @@ func _relight_static_sprites(cells: Array) -> void:
 ## 0.50 underside) survive as relief instead of flattening to a teal silhouette. Qud's own ghost
 ## is two-tone, K over k, for the same reason: the structure still has to read.
 func _ghost_wall_mesh(src: Mesh) -> ArrayMesh:
+	Profiler.begin("zb.ghostmesh")
+	var __r := _ghost_wall_mesh_body(src)
+	Profiler.done("zb.ghostmesh")
+	return __r
+
+func _ghost_wall_mesh_body(src: Mesh) -> ArrayMesh:
 	var out := ArrayMesh.new()
 	var gc := _qud_color("K")
 	for si in src.get_surface_count():
@@ -2007,7 +2013,7 @@ func _dim_frozen_node(n: Node, f: float) -> void:
 			if not mi.has_meta("live_mesh"):
 				mi.set_meta("live_mesh", mi.mesh)
 			if not mi.has_meta("ghost_mesh"):
-				mi.set_meta("ghost_mesh", _ghost_wall_mesh(mi.get_meta("live_mesh")))
+				mi.set_meta("ghost_mesh", _ghost_wall_mesh_cached(mi.get_meta("live_mesh")))
 			var gm: Mesh = mi.get_meta("ghost_mesh")
 			if mi.mesh != gm:
 				mi.mesh = gm
@@ -3125,6 +3131,12 @@ func tile_opaque_band(tile: String) -> Vector2:
 ## Reports the mode ACTUALLY applied (a filed verdict changes it), so the inspector
 ## no longer says "76 px" while 96 are filled.
 func tile_fill_px(tile: String, mode: int) -> int:
+	Profiler.begin("zb.fillpx")
+	var __r := tile_fill_px_body(tile, mode)
+	Profiler.done("zb.fillpx")
+	return __r
+
+func tile_fill_px_body(tile: String, mode: int) -> int:
 	var mask
 	match mode:
 		Fill.INTERIOR: mask = _interior(tile)
@@ -8109,7 +8121,12 @@ func _place_nonwall(obj: Dictionary, cx: int, cy: int, idx: int, in_wall: bool, 
 	if not _flat_2d and not _one_to_one:
 		var prop := _prop_vox_model(tile)
 		if not prop.is_empty():
-			var pmesh := _wall_vox_mesh(prop, {})
+			var pkey := "prop|" + tile
+			var pmesh: ArrayMesh = _vox_mesh_cache.get(pkey)
+			if pmesh == null:
+				pmesh = _wall_vox_mesh(prop, {})
+				if pmesh != null:
+					_vox_mesh_cache[pkey] = pmesh
 			if pmesh != null:
 				var pmi := _vox_prop_mesh(pmesh, cx, cy, light_frac)
 				# _wall_vox_mesh emits LOCAL vertices (the wall path positions its node); the
@@ -8535,6 +8552,11 @@ func _place_nonwall(obj: Dictionary, cx: int, cy: int, idx: int, in_wall: bool, 
 # flat quad with no volume, so a sunk sprite would just poke out underneath it
 # as soon as the camera tilts.
 func _seat(s: Sprite3D, tex: ImageTexture, tile: String, cx: int, cy: int, sink: float, float_center := false) -> void:
+	Profiler.begin("zb.seat")
+	_seat_body(s, tex, tile, cx, cy, sink, float_center)
+	Profiler.done("zb.seat")
+
+func _seat_body(s: Sprite3D, tex: ImageTexture, tile: String, cx: int, cy: int, sink: float, float_center := false) -> void:
 	var h := tex.get_height()
 	var vr := _opaque_v(_mask(tile))
 	var top := vr.x * h
@@ -8826,6 +8848,11 @@ func _face_variant(tile: String, e_on: bool, w_on: bool) -> String:
 	return tile
 
 func _rebuild_walls(wall_types: Dictionary) -> void:
+	Profiler.begin("zb.walls")
+	_rebuild_walls_body(wall_types)
+	Profiler.done("zb.walls")
+
+func _rebuild_walls_body(wall_types: Dictionary) -> void:
 	# Live rebuild clears _wall_root; when banking into a fresh neighbour subtree
 	# (_sync_neighbors), there is nothing to clear, so don't wipe it mid-build.
 	if _bank == null:
@@ -8892,7 +8919,12 @@ func _rebuild_walls(wall_types: Dictionary) -> void:
 			# rules open, and a drawn model has no carve rules to open them.
 			var mv := _wall_vox_model(v)
 			if not mv.is_empty():
-				var vmesh := _wall_vox_mesh(mv, {"n": wn, "s": ws, "e": we, "w": ww})
+				var vkey := "%s|%d%d%d%d" % [v, int(wn), int(ws), int(we), int(ww)]
+				var vmesh: ArrayMesh = _vox_mesh_cache.get(vkey)
+				if vmesh == null:
+					vmesh = _wall_vox_mesh(mv, {"n": wn, "s": ws, "e": we, "w": ww})
+					if vmesh != null:
+						_vox_mesh_cache[vkey] = vmesh
 				if vmesh != null:
 					var vmi := MeshInstance3D.new()
 					vmi.mesh = vmesh
@@ -9127,6 +9159,21 @@ var _last_faces_planes: Array[float] = []
 # one is an export. The number is the declaration.
 const WALL_VOX_LAYERS := 24
 var _wall_vox_cache := {}
+## The MESH cache the crossing pareto demanded (2026-08-24): a vox wall's mesh is a pure
+## function of (model, 4 wall-neighbour bits) — light and fog arrive later, via material
+## albedo and ghost swaps, never by touching vertices — so one ArrayMesh serves every cell,
+## zone and rebuild that shares the key. Before this, EVERY crossing re-meshed EVERY vox wall
+## cell from its 16x16x24 model: 652 meshings at ~20ms each across 8 crossings, ~85%% of all
+## zone-loading time. Session-lifetime, like _wall_vox_cache above (models re-read on restart).
+var _vox_mesh_cache := {}      # "variant|nsew" or "prop|tile" -> ArrayMesh
+var _ghost_mesh_cache := {}    # source Mesh -> its K/k ghost ArrayMesh (shared meshes share ghosts)
+
+## _ghost_wall_mesh, memoised by SOURCE. With meshes now shared across instances and zones,
+## per-instance metas rebuilt the same ghost hundreds of times per crossing (2.5s of the walk).
+func _ghost_wall_mesh_cached(src: Mesh) -> ArrayMesh:
+	if not _ghost_mesh_cache.has(src):
+		_ghost_mesh_cache[src] = _ghost_wall_mesh(src)
+	return _ghost_mesh_cache[src]
 ## How many cells the last build meshed from a hand-authored model, and how many .vox files it
 ## found. Reported by zonereport: "did my model get used" is otherwise a question you can only
 ## answer by walking to a wall and squinting at it in the dark.
@@ -9226,6 +9273,12 @@ func _read_wall_vox(path: String) -> Dictionary:
 ## abuts. Two cells still meet as two surfaces rather than one volume; if a model is recessed at
 ## the edge you will see the gap, and that is the model's to fix, not this function's.
 func _wall_vox_mesh(mv: Dictionary, nb: Dictionary) -> ArrayMesh:
+	Profiler.begin("zb.wallvox")
+	var __r := _wall_vox_mesh_body(mv, nb)
+	Profiler.done("zb.wallvox")
+	return __r
+
+func _wall_vox_mesh_body(mv: Dictionary, nb: Dictionary) -> ArrayMesh:
 	var m: Dictionary = mv["model"]
 	var pal: PackedColorArray = mv["palette"]
 	var d: Vector3i = m["dims"]
@@ -10451,6 +10504,12 @@ func _colored_tex_rgb(tile: String, main: Color, detail: Color, ckey: String, fi
 # separates them. Note Qud's own 2D view shows the cell background through that
 # interior too, so filling it matches the game.
 func _interior(tile: String) -> Array:
+	Profiler.begin("zb.interior")
+	var __r := _interior_body(tile)
+	Profiler.done("zb.interior")
+	return __r
+
+func _interior_body(tile: String) -> Array:
 	var fname := tile.replace("/", "_").replace("\\", "_").replace(":", "_")
 	if _interior_cache.has(fname):
 		return _interior_cache[fname]
@@ -10581,6 +10640,12 @@ func _pockets(tile: String) -> Array:
 	return out
 
 func _fill_holes(tile: String) -> Array:
+	Profiler.begin("zb.fillholes")
+	var __r := _fill_holes_body(tile)
+	Profiler.done("zb.fillholes")
+	return __r
+
+func _fill_holes_body(tile: String) -> Array:
 	var fname := tile_filename(tile) + "|holes"
 	if _interior_cache.has(fname):
 		return _interior_cache[fname]
@@ -10686,6 +10751,12 @@ func _recolor_image(mask: Image, main_c: String, detail_c: String, fill: int, in
 	return _recolor_rgb(mask, _qud_color(main_c), _qud_color(detail_c), fill, inner)
 
 func _recolor_rgb(mask: Image, main: Color, detail: Color, fill: int, inner = null) -> ImageTexture:
+	Profiler.begin("zb.recolor")
+	var __r := _recolor_rgb_body(mask, main, detail, fill, inner)
+	Profiler.done("zb.recolor")
+	return __r
+
+func _recolor_rgb_body(mask: Image, main: Color, detail: Color, fill: int, inner = null) -> ImageTexture:
 	var w := mask.get_width()
 	var h := mask.get_height()
 	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
@@ -10721,6 +10792,12 @@ func _is_binary(s: String) -> bool:
 	return true
 
 func _mask(tile: String) -> Image:
+	Profiler.begin("zb.mask")
+	var __r := _mask_body(tile)
+	Profiler.done("zb.mask")
+	return __r
+
+func _mask_body(tile: String) -> Image:
 	var fname := tile.replace("/", "_").replace("\\", "_").replace(":", "_")
 	var custom := _custom_tile_path(tile)
 	if custom != "":
@@ -11595,6 +11672,11 @@ func _take_sparkle() -> MeshInstance3D:
 ## default would add its quads again on every step and never drop the last lot. The surround band
 ## is exactly that caller — 904 quads a turn, accumulating.
 func _flush_floor_batch(into: Node = null) -> void:
+	Profiler.begin("zb.floorflush")
+	_flush_floor_batch_body(into)
+	Profiler.done("zb.floorflush")
+
+func _flush_floor_batch_body(into: Node = null) -> void:
 	for mat in _floor_batch:
 		var xforms: Array = _floor_batch[mat]
 		var mm := MultiMesh.new()
