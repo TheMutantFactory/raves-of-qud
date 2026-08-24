@@ -1991,17 +1991,12 @@ func _dim_frozen_node(n: Node, f: float) -> void:
 ## documented _platform_memmove crash, and the flat interior is one quad per run instead.
 func _frozen_flat_runs(cells: Array, st: SurfaceTool, off: Vector2i, fringe: int) -> void:
 	var expl := {}
-	var wallc := {}
 	var known := {}
 	for fc in cells:
 		var fk := Vector2i(int(fc.get("x", 0)), int(fc.get("y", 0)))
 		known[fk] = true
 		if _cell_explored(fc):
 			expl[fk] = true
-			for fo in fc.get("objs", []):
-				if _is_prism(fo):
-					wallc[fk] = true
-					break
 	for fy in range(int(_live_h)):
 		var fx := 0
 		while fx < int(_live_w):
@@ -2010,30 +2005,18 @@ func _frozen_flat_runs(cells: Array, st: SurfaceTool, off: Vector2i, fringe: int
 			var fx0 := fx
 			while fx < int(_live_w) and _flat_state(Vector2i(fx, fy), off, fringe, known, expl) == st0:
 				fx += 1
-			if st0 == 0:
-				continue
+			if st0 != 2:
+				continue   # explored ground wears NOTHING — its own baked art is the look
 			var run_l := float(fx0) - 0.5
 			var run_r := float(fx) - 0.5
 			var rz0 := float(fy) - 0.5
 			var rz1 := float(fy) + 0.5
-			if st0 == 1:
-				# the memory wash first (what the cells ARE), the darkness film over it
-				var wc := Color(_world_bg.r, _world_bg.g, _world_bg.b, REMEMBER_COVER)
-				for pw in [Vector3(run_l, DARK_FLOOR_Y - 0.005, rz0), Vector3(run_r, DARK_FLOOR_Y - 0.005, rz0),
-						Vector3(run_r, DARK_FLOOR_Y - 0.005, rz1), Vector3(run_l, DARK_FLOOR_Y - 0.005, rz0),
-						Vector3(run_r, DARK_FLOOR_Y - 0.005, rz1), Vector3(run_l, DARK_FLOOR_Y - 0.005, rz1)]:
-					st.set_color(wc)
-					st.add_vertex(pw)
-			var fa: float = MEMORY_TARGET if st0 == 1 else (1.0 - FOG_GROUND)
-			var dc := Color(0, 0, 0, fa)
+			var dc := Color(0, 0, 0, 1.0 - FOG_GROUND)
 			for pd in [Vector3(run_l, DARK_FLOOR_Y, rz0), Vector3(run_r, DARK_FLOOR_Y, rz0),
 					Vector3(run_r, DARK_FLOOR_Y, rz1), Vector3(run_l, DARK_FLOOR_Y, rz0),
 					Vector3(run_r, DARK_FLOOR_Y, rz1), Vector3(run_l, DARK_FLOOR_Y, rz1)]:
 				st.set_color(dc)
 				st.add_vertex(pd)
-	for wk in wallc:
-		if _band_depth(wk.x + off.x, wk.y + off.y) > fringe:
-			_dark_quad(st, float(wk.x), float(wk.y), DARK_ROOF_Y, MEMORY_TARGET)
 
 func _flat_state(k: Vector2i, off: Vector2i, fringe: int, known: Dictionary, expl: Dictionary) -> int:
 	if not known.has(k):
@@ -2133,7 +2116,13 @@ func _build_darkness(cells: Array, parent: Node, frozen_off := NOT_FROZEN) -> vo
 			# and takes the boundary straight to black. As a FLOOR it fails the other way — an
 			# explored cell you cannot see is usually unlit, so minf(0, MEMORY_GROUND) is 0 and 1836
 			# of a zone's 2000 cells render as though never seen. It is neither; it is the answer.
-			t = _frozen_tone(k, frozen_off)
+			# NO FILM ON A VISITED ZONE'S EXPLORED GROUND (2026-08-23, third calibration).
+			# Daniel, pointing at the ramp rows: the d=1 row — the one with NO film — "is the
+			# most correct"; every added step read as wrong. The bib lesson again: the
+			# neighbour's art is baked with STALE light, a different base from the live floor,
+			# so any film laid over it double-darkens. The zone's own baked art + the global
+			# grade carry the look; _dim_frozen_node (flat, below) handles what stands on it.
+			t = 0.0
 			# The memory WASH for a departed zone lives in _frozen_flat_runs now (the interior is
 			# run-merged there, wash included). The hand-over rows reach here and stay UNWASHED,
 			# same rule as ever: the band continues real ground art across the seam, and a flat
@@ -2203,27 +2192,13 @@ func _build_darkness(cells: Array, parent: Node, frozen_off := NOT_FROZEN) -> vo
 	# art-build time would freeze whichever view the zone happened to be first seen from, which is
 	# the same staleness the offset guard exists to prevent.
 	if frozen and parent != null:
+		# FLAT dim, one value for the whole zone (1 - MEMORY_TARGET = the fog's object level).
+		# The per-cell zk lookup that used to ride the ramp is gone with the ramp itself: the
+		# ground wears no film now, so everything standing in a departed zone — sprites, walls,
+		# props, per-cell or greedy-meshed — takes the same memory dim. Daniel, on the current
+		# level: "the sprite color might be correct."
 		for ch in parent.get_children():
-			var zk: Vector2i
-			if ch.has_meta("zcell"):
-				zk = ch.get_meta("zcell")
-			else:
-				# NO TAG MEANS IT WAS NOT PLACED PER CELL, and the walls are exactly that: greedy
-				# meshed ACROSS cells and added after the per-cell loop, so no single cell owns one
-				# and the tagging pass never saw them. They were left to the darkness quads alone —
-				# which cover a wall's roof and its exposed faces and nothing else, so a metal wall
-				# in a departed zone stayed lit wherever a quad did not reach. Daniel, filing from
-				# a zone away: "this wall is still bright. It looks like it's not in the fog-of-war."
-				#
-				# Take the cell from where the geometry actually IS. For a mesh spanning many cells
-				# that is its middle, which is approximate — but a departed zone's tone is flat
-				# almost everywhere (full dark past the ramp), so the approximation only matters
-				# inside the fringe, and being roughly right there beats being absent everywhere.
-				var c := _node_cell(ch)
-				if c.x == -9999:
-					continue
-				zk = c
-			_dim_frozen_node(ch, 1.0 - _frozen_tone(zk, frozen_off))
+			_dim_frozen_node(ch, 1.0 - MEMORY_TARGET)
 	# 1:1: Qud's model needs no overlay — the K/k ghost recolour at place time is the
 	# whole memory look (see _ghost_obj); unexplored cells draw nothing at all.
 	if _one_to_one:
@@ -2398,6 +2373,9 @@ func _frozen_light(k: Vector2i, off: Vector2i) -> float:
 ## but the rows immediately outside the live zone are the hand-over, and holding them at 0.16 is
 ## exactly the step being removed. Qud never draws these cells at all — it shows one zone — so
 ## there is no parity to lose, only a seam to close.
+## RETIRED 2026-08-23 (extra-zone view, third calibration): both callers are gone — a visited
+## zone's explored ground wears NO film (its baked art is the look) and the object dim is flat.
+## Kept for the band-sharing history in the comments around it; nothing calls it.
 func _frozen_tone(k: Vector2i, off: Vector2i) -> float:
 	var wx: int = k.x + off.x
 	var wy: int = k.y + off.y
