@@ -68,6 +68,13 @@ const DARK_MAX := 0.94          # deepest per-cell darkening (never pure black �
 ## stuck in 1:1 mode, where _build_darkness returns before doing anything — so every reading that
 ## drove it, including the request to go darker, described a render this constant never touched.
 const MEMORY_GROUND := 0.84
+## THE VISITED-ZONE HAND-OVER TARGET (2026-08-23): a zone you have BEEN IN no longer ramps to
+## black — it ramps to the exact darkness alpha the LIVE zone gives an explored, out-of-sight
+## cell (tone 1-MEMORY_GROUND times its DARK_MAX amax). Daniel: "I'd like the other zones to be
+## lit like they're in the zone, but hidden by the line-of-sight fog." Equal BY CONSTRUCTION,
+## not by tuning — the bib taught never to compute a colour twice and hope the copies agree.
+## Zones never visited keep the old look: the surround band still ramps to full black.
+const MEMORY_TARGET := (1.0 - MEMORY_GROUND) * DARK_MAX
 ## Qud's LightLevel.None. At or below it a cell is not perceived at all and renders as the K/k
 ## ghost; ABOVE it Qud draws full colour, with nothing in between (Cell.Render). The number was
 ## spelled `1` in three places that each had to re-explain what it meant.
@@ -1974,6 +1981,67 @@ func _dim_frozen_node(n: Node, f: float) -> void:
 ## `frozen_off`: for a zone the player has LEFT, its cell offset from the live zone. Turns on the
 ## distance ramp (see FROZEN_EDGE_DIM). Left at the sentinel for the live zone, which has no
 ## boundary to fade from.
+## The FLAT part of a visited zone's memory film, ROW-RUN MERGED. Emits, for every cell whose
+## band depth exceeds `fringe`: the field-colour wash + a MEMORY_TARGET darkness run (explored),
+## or a FOG_GROUND darkness run (unexplored), plus per-cell roof quads on walls (sparse — and
+## without them a wall top past the ramp is the one lit thing in the zone: "rusted metal wall
+## visibly red", again). `fringe = 0` takes the whole zone (every frozen cell has depth >= 1);
+## the near zones pass penumbra_radius + 1 so the hand-over rows stay on the per-cell path.
+## Run merging is the load-bearing part: per-cell blended sheets over every neighbour are the
+## documented _platform_memmove crash, and the flat interior is one quad per run instead.
+func _frozen_flat_runs(cells: Array, st: SurfaceTool, off: Vector2i, fringe: int) -> void:
+	var expl := {}
+	var wallc := {}
+	var known := {}
+	for fc in cells:
+		var fk := Vector2i(int(fc.get("x", 0)), int(fc.get("y", 0)))
+		known[fk] = true
+		if _cell_explored(fc):
+			expl[fk] = true
+			for fo in fc.get("objs", []):
+				if _is_prism(fo):
+					wallc[fk] = true
+					break
+	for fy in range(int(_live_h)):
+		var fx := 0
+		while fx < int(_live_w):
+			# run state: 0 = fringe or unknown (the per-cell path owns it), 1 = explored, 2 = not
+			var st0 := _flat_state(Vector2i(fx, fy), off, fringe, known, expl)
+			var fx0 := fx
+			while fx < int(_live_w) and _flat_state(Vector2i(fx, fy), off, fringe, known, expl) == st0:
+				fx += 1
+			if st0 == 0:
+				continue
+			var run_l := float(fx0) - 0.5
+			var run_r := float(fx) - 0.5
+			var rz0 := float(fy) - 0.5
+			var rz1 := float(fy) + 0.5
+			if st0 == 1:
+				# the memory wash first (what the cells ARE), the darkness film over it
+				var wc := Color(_world_bg.r, _world_bg.g, _world_bg.b, REMEMBER_COVER)
+				for pw in [Vector3(run_l, DARK_FLOOR_Y - 0.005, rz0), Vector3(run_r, DARK_FLOOR_Y - 0.005, rz0),
+						Vector3(run_r, DARK_FLOOR_Y - 0.005, rz1), Vector3(run_l, DARK_FLOOR_Y - 0.005, rz0),
+						Vector3(run_r, DARK_FLOOR_Y - 0.005, rz1), Vector3(run_l, DARK_FLOOR_Y - 0.005, rz1)]:
+					st.set_color(wc)
+					st.add_vertex(pw)
+			var fa: float = MEMORY_TARGET if st0 == 1 else (1.0 - FOG_GROUND)
+			var dc := Color(0, 0, 0, fa)
+			for pd in [Vector3(run_l, DARK_FLOOR_Y, rz0), Vector3(run_r, DARK_FLOOR_Y, rz0),
+					Vector3(run_r, DARK_FLOOR_Y, rz1), Vector3(run_l, DARK_FLOOR_Y, rz0),
+					Vector3(run_r, DARK_FLOOR_Y, rz1), Vector3(run_l, DARK_FLOOR_Y, rz1)]:
+				st.set_color(dc)
+				st.add_vertex(pd)
+	for wk in wallc:
+		if _band_depth(wk.x + off.x, wk.y + off.y) > fringe:
+			_dark_quad(st, float(wk.x), float(wk.y), DARK_ROOF_Y, MEMORY_TARGET)
+
+func _flat_state(k: Vector2i, off: Vector2i, fringe: int, known: Dictionary, expl: Dictionary) -> int:
+	if not known.has(k):
+		return 0
+	if fringe > 0 and _band_depth(k.x + off.x, k.y + off.y) <= fringe:
+		return 0
+	return 1 if expl.has(k) else 2
+
 const NOT_FROZEN := Vector2i(-99999, -99999)
 func _build_darkness(cells: Array, parent: Node, frozen_off := NOT_FROZEN) -> void:
 	var frozen: bool = frozen_off != NOT_FROZEN
@@ -1987,12 +2055,21 @@ func _build_darkness(cells: Array, parent: Node, frozen_off := NOT_FROZEN) -> vo
 	# step — profiler render.remembered max 18,759ms. Daniel: "the zones are taking longer and
 	# longer to load when you transition." One quad carries the identical picture.
 	if frozen and not _one_to_one and _zone_beyond_ramp(frozen_off):
+		# A VISITED zone wholly past the ramp is FLAT — but flat at the MEMORY film now, not at
+		# black (see MEMORY_TARGET). Emission is ROW-RUN MERGED, not per-cell: a full sheet of
+		# per-cell blended quads over every neighbour is the documented _platform_memmove crash
+		# (see the DO-NOT note below), and a flat region needs one quad per run, not per cell.
 		var sfar := SurfaceTool.new()
 		sfar.begin(Mesh.PRIMITIVE_TRIANGLES)
-		_dark_rect(sfar, 0, 0, int(_live_w), int(_live_h), DARK_SOLID_Y)
+		_frozen_flat_runs(cells, sfar, frozen_off, 0)
+		# the zone's objects: dimmed to the memory level, flat — the black cover that used to
+		# hide them is gone, so the dim is now what "hidden by the fog" means out here
+		if parent != null:
+			for fch in parent.get_children():
+				_dim_frozen_node(fch, 1.0 - MEMORY_TARGET)
 		var mfar := MeshInstance3D.new()
 		mfar.mesh = sfar.commit()
-		mfar.material_override = _dark_solid_material()
+		mfar.material_override = _dark_material()
 		mfar.set_meta("is_darkness", true)
 		parent.add_child(mfar)
 		return
@@ -2026,6 +2103,13 @@ func _build_darkness(cells: Array, parent: Node, frozen_off := NOT_FROZEN) -> vo
 	var walls := {}
 	for cell in cells:
 		var k := Vector2i(int(cell.get("x", 0)), int(cell.get("y", 0)))
+		# THE FLAT INTERIOR IS NOT OURS. Past the hand-over rows a visited zone's memory film is
+		# uniform, and uniform regions must not become per-cell blended quads (the crash note
+		# above): _frozen_flat_runs emits them merged, at the end of pass 2. Skipped HERE, before
+		# the explored check, so unexplored interior cells don't slip through to the per-cell
+		# path and double the film. Only the fringe rows — where the ramp varies — stay per-cell.
+		if frozen and _band_depth(k.x + frozen_off.x, k.y + frozen_off.y) > penumbra_radius + 1:
+			continue
 		# --- TONE: what the cell IS --- (see _live_cell_tone; the surround band reads it too)
 		var t: float
 		if not _cell_explored(cell):
@@ -2050,22 +2134,10 @@ func _build_darkness(cells: Array, parent: Node, frozen_off := NOT_FROZEN) -> vo
 			# explored cell you cannot see is usually unlit, so minf(0, MEMORY_GROUND) is 0 and 1836
 			# of a zone's 2000 cells render as though never seen. It is neither; it is the answer.
 			t = _frozen_tone(k, frozen_off)
-			# ...AND NO MEMORY WASH IN THE HAND-OVER ROWS. Everywhere else a remembered cell is
-			# repainted the FIELD colour (see REMEMBER_COVER) because that is what Qud shows. But the
-			# rows immediately outside the live zone are the seam, and there the wash is the last
-			# thing making the two sides look different: across the boundary the band continues the
-			# real ground art and fades it, while a washed neighbour goes flat field colour at once.
-			# Matching tones was not enough — measured at Daniel's NE corner, north
-			# (7,25,20)/(7,25,20)/(7,25,20)/(4,20,17) against east (9,28,23)/(9,28,23)/(5,23,19)/
-			# (2,16,14): the same rule, one lagging and flatter, because one was painting over art
-			# and the other over a flat wash. Daniel, on crossing east: "it will then render like it
-			# is in the north (incorrect). Every zone I've crossed has changed to the northern style."
-			#
-			# Same licence as dropping the memory floor on these rows: Qud draws one zone at a time,
-			# so these cells have no Qud counterpart to be faithful to. Past the hand-over the wash
-			# resumes and the departed zone reads as memory again.
-			if _band_depth(k.x + frozen_off.x, k.y + frozen_off.y) > penumbra_radius + 1:
-				wash[k] = true
+			# The memory WASH for a departed zone lives in _frozen_flat_runs now (the interior is
+			# run-merged there, wash included). The hand-over rows reach here and stay UNWASHED,
+			# same rule as ever: the band continues real ground art across the seam, and a flat
+			# field-colour wash beside it is what made the two sides read differently.
 		# --- VEIL: how far past the edge of the visible it sits ---
 		var v := 0.0
 		if not ZONE_RAMPS_ON:
@@ -2160,6 +2232,8 @@ func _build_darkness(cells: Array, parent: Node, frozen_off := NOT_FROZEN) -> vo
 		         # (Cell.Render's model — the ghost is a palette swap, not a black film).
 	for cell in cells:
 		var k := Vector2i(int(cell.get("x", 0)), int(cell.get("y", 0)))
+		if frozen and _band_depth(k.x + frozen_off.x, k.y + frozen_off.y) > penumbra_radius + 1:
+			continue   # the flat interior: pass 1 skipped it, so dark[k] is unset — see above
 		var cx := float(k.x)
 		var cy := float(k.y)
 		if walls.has(k):
@@ -2229,6 +2303,10 @@ func _build_darkness(cells: Array, parent: Node, frozen_off := NOT_FROZEN) -> vo
 				_dark_quad(sto, cx, cy, DARK_SOLID_Y, 1.0); any_solid = true
 			elif a >= 0.02:
 				_dark_quad(st, cx, cy, DARK_FLOOR_Y, a); any = true
+	# ...and the flat interior the two passes skipped, run-merged into the same blended mesh.
+	if frozen:
+		_frozen_flat_runs(cells, st, frozen_off, penumbra_radius + 1)
+		any = true
 	if any:
 		var mi := MeshInstance3D.new()
 		mi.mesh = st.commit()
@@ -2327,7 +2405,9 @@ func _frozen_tone(k: Vector2i, off: Vector2i) -> float:
 	if d <= 0:
 		return 1.0 - MEMORY_GROUND          # inside the live rect: not ours to dim
 	var t0: float = float(_edge_tone.get(_band_src(wx, wy), 1.0 - FOG_GROUND))
-	return _band_alpha(d, t0)
+	# Every cell routed here is EXPLORED (pass 1 sends unexplored cells down the FOG_GROUND
+	# branch), so the ramp lands on the memory film, not on black — see MEMORY_TARGET.
+	return _band_alpha(d, t0, MEMORY_TARGET)
 
 ## THE LIVE ZONE'S TONE RULE, alone, so the surround band can start its ramp at exactly the
 ## darkness of the cell it abuts. Pass 1 calls this; so does _tally_edge_tone. Two copies of it
@@ -2386,9 +2466,9 @@ func _band_depth(wx: int, wy: int) -> int:
 ## source cell of tone `t0`: starts AT that cell's own tone and reaches full dark at
 ## penumbra_radius + 1. d = 1 returns t0 exactly, which is the whole point — the first row outside
 ## the zone carries the brightness of the edge it abuts, so there is no seam to see.
-func _band_alpha(d: int, t0: float) -> float:
+func _band_alpha(d: int, t0: float, t1 := 1.0) -> float:
 	var f: float = clampf(float(d - 1) / float(maxi(1, penumbra_radius)), 0.0, 1.0)
-	return clampf(lerpf(t0, 1.0, f), 0.0, 1.0)
+	return clampf(lerpf(t0, t1, f), 0.0, 1.0)
 
 ## A solid rect with a hole cut for the ramp band: the parts of [x,y,w,h) that fall OUTSIDE the
 ## rect [ex0,ey0)-(ex1,ey1). Up to four pieces — left, right, then the top and bottom of what is
