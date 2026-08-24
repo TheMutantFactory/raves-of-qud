@@ -636,6 +636,14 @@ func apply_cross_shift(delta: Vector3) -> void:
 			_cam.look_at(_look, NORTH if xtop else Vector3.UP)
 
 ## The player is at `pos`; if they actually stepped (`moved` and not a crossing) update the trailing facing.
+## FOLLOW's turn keys, first-person style (Daniel: "left turns left 45 degrees"): rotate the
+## trailed heading in place. Same convention as FP's _compass_yaw += a — rotated(UP, +a) IS
+## (sin(y+a), cos(y+a)). The next real move re-derives facing from the move itself, which was
+## aimed with this heading, so turning and then stepping forward walks where you look.
+func turn_follow(a: float) -> void:
+	var f := _facing3().rotated(Vector3.UP, a)
+	_facing = Vector2(f.x, f.z).normalized()
+
 func set_player(pos: Vector3, facing: Vector2, update_facing: bool) -> void:
 	if update_facing and facing.length() > 0.0:
 		_facing = facing.normalized()

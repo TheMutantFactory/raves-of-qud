@@ -1195,7 +1195,7 @@ func _build_mode_label() -> void:
 
 const _MODE_NAMES := {
 	CamMode.COMPASS: "COMPASS — cardinal-locked · arrows move (↑=fwd) · Q/E rotate · R/F zoom · S/D height · W/X dolly",
-	CamMode.FOLLOW: "FOLLOW — trails your heading · arrows move (↑=fwd) · R/F zoom · S/D height · W/X dolly",
+	CamMode.FOLLOW: "FOLLOW — ↑↓ move · ←→ turn · Ctrl+Shift+←→ strafe · R/F zoom · S/D height · W/X dolly",
 	CamMode.FIRST_PERSON: "FIRST-PERSON — ↑↓ move · ←→ turn · Ctrl+Shift+←→ strafe · Shift+arrows diagonal",
 	CamMode.CINEMATIC: "CINEMATIC — frames you + selected tile",
 	# Named as the ENUM and the Options "Default camera" list name them. These heads are the
@@ -1648,13 +1648,17 @@ func _unhandled_input(event: InputEvent) -> void:
 					_move_relative(Vector2(-1, 1))       # NW diagonal
 				elif _cam_rig._mode == CamMode.FIRST_PERSON and not strafe_mod:
 					_cam_rig._compass_yaw += PI * 0.25            # turn left 45°
+				elif _cam_rig._mode == CamMode.FOLLOW and not strafe_mod:
+					_cam_rig.turn_follow(PI * 0.25)               # FOLLOW turns like first-person
 				else:
-					_move_relative(Vector2(-1, 0))       # strafe left (non-FP, or FP Ctrl+Shift)
+					_move_relative(Vector2(-1, 0))       # strafe left (or FP/FOLLOW Ctrl+Shift)
 			KEY_RIGHT:
 				if diag:
 					_move_relative(Vector2(1, -1))       # SE diagonal
 				elif _cam_rig._mode == CamMode.FIRST_PERSON and not strafe_mod:
 					_cam_rig._compass_yaw -= PI * 0.25            # turn right 45°
+				elif _cam_rig._mode == CamMode.FOLLOW and not strafe_mod:
+					_cam_rig.turn_follow(-PI * 0.25)
 				else:
 					_move_relative(Vector2(1, 0))        # strafe right
 			KEY_KP_8: client.send_command("move", {"dir": "N"})
