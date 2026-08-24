@@ -783,6 +783,7 @@ func _make_flame_tex(n: int) -> Texture2D:
 ## so it only changes when static content is added/removed — the cue to rebuild the frozen static.
 func _static_signature(cells: Array) -> int:
 	var h := 0
+	_sig_items = {}
 	for cell in cells:
 		var cx := int(cell.get("x", 0))
 		var cy := int(cell.get("y", 0))
@@ -795,15 +796,38 @@ func _static_signature(cells: Array) -> int:
 			# liquids, so excluding liquids keeps the placed-object detection this signature exists for.
 			if bool(obj.get("liquid", false)):
 				continue
+			# Gas is the same volatility one layer up: a spore cloud drifts every turn, and
+			# hashing it rebuilt the zone per step wherever gas hung in the air.
+			if obj.has("animGas"):
+				continue
 			# Include lightRadius: a static object can gain its light a snapshot AFTER it appears (a
 			# just-placed campfire lights up next tick), and the glow is placed only on a static rebuild —
 			# so the light state must be part of the signature or the campfire renders unlit.
 			# Include solid: a fence gate keeps its NAME across open/close (only tile + solid flip),
 			# and its pose is placed in the static pass — without this bit a live toggle never
 			# rebuilt, so the gate stayed visually open after being shut (measured 2026-08-23).
-			h ^= hash("%d,%d,%s,%d,%d" % [cx, cy, String(obj.get("name", "")),
-				int(obj.get("lightRadius", 0)), 1 if bool(obj.get("solid", false)) else 0])
+			var item := "%d,%d,%s,%d,%d" % [cx, cy, String(obj.get("name", "")),
+				int(obj.get("lightRadius", 0)), 1 if bool(obj.get("solid", false)) else 0]
+			_sig_items[item] = true
+			h ^= hash(item)
 	return h
+
+## THE DIFFERING ELEMENT, not the aggregate (the redraw-loop lesson): when a static rebuild
+## fires mid-zone, say WHICH signature entries appeared/vanished — a same-length churn is
+## invisible in the hash and "the screen refreshes every step" is invisible in a count.
+var _sig_items := {}
+var _sig_items_prev := {}
+func _sig_churn_report() -> void:
+	var gone: Array = []
+	var came: Array = []
+	for k in _sig_items_prev:
+		if not _sig_items.has(k):
+			gone.append(k)
+	for k in _sig_items:
+		if not _sig_items_prev.has(k):
+			came.append(k)
+	print("[staticchurn] -%d +%d  gone=%s  came=%s" % [gone.size(), came.size(),
+		str(gone.slice(0, 3)), str(came.slice(0, 3))])
 
 func render_snapshot(data: Dictionary, neighbors: Array = []) -> void:
 	_tiles_dir = String(data.get("tilesDir", ""))
@@ -888,6 +912,9 @@ func render_snapshot(data: Dictionary, neighbors: Array = []) -> void:
 	# Skipped on the world map (thousands of cells, and its static doesn't change under the player).
 	var static_sig := 0 if _world_map else _static_signature(cells)
 	var static_changed := (not zone_changed) and (not _world_map) and static_sig != _live_static_sig
+	if static_changed:
+		_sig_churn_report()
+	_sig_items_prev = _sig_items
 	if zone_changed:
 		_static_retry = 0              # fresh zone: reset the export-race retry budget
 	if zone_changed or _static_retry_pending or static_changed:
@@ -1122,6 +1149,14 @@ func _place_cell(cell: Dictionary, offset: Vector2i, wall_cells: Dictionary, ski
 	var idx := 0
 	for obj in cell.get("objs", []):
 		var o: Dictionary = obj
+		# GAS IS WEATHER, NOT FURNITURE. A drifting cloud (animGas on the wire) moves every
+		# turn; baked into the static it either goes stale or — worse — churns the static
+		# signature and rebuilds the whole zone per step. Daniel, two tiles from a spore
+		# cloud: "it does look like the whole screen is refreshing between each step."
+		# The dynamic pass places it fresh each turn, like the creatures it drifts among.
+		if o.has("animGas"):
+			idx += 1
+			continue
 		if not _is_prism(o):
 			var rk: Dictionary = ranks.get(idx, {})
 			_place_nonwall(o, cx, cy, idx, in_wall, sink, wet, skip_creatures, stair_cell, lf,
@@ -1504,6 +1539,15 @@ func _rebuild_dynamics(cells: Array) -> void:
 					if is_instance_valid(n):
 						(n as Node3D).visible = false
 				_place_nonwall(od, cx, cy, idx, false, sink, wet, false, false, lf)
+				idx += 1
+				continue
+			if not _is_prism(od) and od.has("animGas"):
+				# gas drifts per turn — placed here since the statics refuse it (see _build_zone).
+				# hideDark is true on gas: out of sight it simply isn't drawn, as Qud does.
+				if not _cell_seen(cell):
+					continue
+				_place_nonwall(od, cx, cy, idx, false, sink, wet, false, false, lf)
+				_register_anim(od, cx, cy)
 				idx += 1
 				continue
 			if not _is_prism(od) and _is_creature(od):
