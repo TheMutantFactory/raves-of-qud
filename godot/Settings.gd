@@ -28,6 +28,11 @@ const DEFAULTS := {
 	#              Higher subdivides the tile, so the fade steps WITHIN a tile; 16 puts a step on
 	#              every pixel column of Qud's 16x24 tile, which is as fine as the art can show.
 	"penumbra_radius": 3,
+	# How many zones OUT fires stay lit (sconce pools + flames) in user mode. 0 = only the
+	# zone you are standing in — a departed zone's flames are a memory, and a memory does not
+	# burn (Daniel, from a zone south of Joppa: "there are flames on. They are out-zone").
+	# Evaluated when a remembered zone builds, so raising it takes effect on the next crossing.
+	"fire_zone_radius": 0,
 	"penumbra_divisions": 1,
 	# SHADOW SHOWS ON THE ART, NOT ON THE GROUND. With this on, a remembered cell's ground keeps
 	# its LIT colour and only the things standing on it carry the memory palette. Daniel, at night

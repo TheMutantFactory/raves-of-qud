@@ -328,6 +328,7 @@ var _bank: Node3D = null        # non-null while building a zone's geometry INTO
 ##                ghost the zone you are standing in.
 ## The pair `_bank != null and not _live_build` is correct and unreadable; this is that, named.
 var _remembered_build := false
+var _remembered_off := Vector2i.ZERO   # the zone's offset from the live one, for _fires_allowed
 var _noting := true             # whether _note records (off during dynamic-only rebuilds)
 var _live_build := false        # true only while building the LIVE zone's static (its
                                 # torches register for the _process flicker; neighbours don't)
@@ -1130,7 +1131,8 @@ func _place_cell(cell: Dictionary, offset: Vector2i, wall_cells: Dictionary, ski
 		# ever reach the dynamic pass (both _build_zone callers pass skip_creatures true), so what
 		# this actually fixes is the STATIC glow-emitters: a glowpad wearing a lightRadius got a
 		# sconce's pool and flame stacked on top of its own bloom.
-		if o.has("lightRadius") and not (skip_creatures and _is_creature(o)) and not _should_glow(o):
+		if o.has("lightRadius") and not (skip_creatures and _is_creature(o)) and not _should_glow(o) \
+				and _fires_allowed():
 			_place_light(cx, cy, float(o["lightRadius"]), not _is_creature(o), bool(o.get("onFire", false)))
 		idx += 1
 
@@ -1861,6 +1863,21 @@ func _reset_static_light() -> void:
 ## that would delete every trace of light from the 3D view, night included, and the cavern falloff
 ## this ramp was tuned for is somebody's aesthetic decision, not a bug. Qud's binary would still
 ## darken an unlit cavern, because an unlit cell is Lit=None and never reaches this line at all.
+## USER-MODE SETTING fire_zone_radius: how many zones out fires stay LIT (pools + flames).
+## 0 (the default) = only the live zone burns — a departed zone's flames are a memory, and a
+## memory does not burn, the same rule that already stops its particles. Distance is Chebyshev
+## in ZONES, from the offset the remembered build is running at; evaluated at build time, so a
+## raised radius takes effect as zones re-bake on the next crossing.
+func _fires_allowed() -> bool:
+	if not _remembered_build:
+		return true
+	var r := int(Settings.get_value("fire_zone_radius", 0))
+	if r <= 0:
+		return false
+	var zd: int = maxi(int(ceil(absf(_remembered_off.x) / maxf(float(_live_w), 1.0))),
+		int(ceil(absf(_remembered_off.y) / maxf(float(_live_h), 1.0))))
+	return zd <= r
+
 func _light_frac(cell: Dictionary) -> float:
 	var lv := int(cell.get("light", 200))   # default full: surface, or an older mod w/o the field
 	if lv <= LIGHT_NONE:
@@ -2966,6 +2983,7 @@ func _sync_neighbors(neighbors: Array) -> void:
 			_bank = sub
 			_noting = false     # neighbours aren't inspected; don't touch _placed
 			_remembered_build = true    # ...and its art is drawn in Qud's memory pair
+			_remembered_off = Vector2i(nb.get("offset", Vector2i.ZERO))
 			var wt := {}
 			Profiler.begin("remembered.art")
 			_build_zone(nb.get("cells", []), Vector2i.ZERO, true, wt)   # local coords
