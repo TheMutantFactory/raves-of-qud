@@ -7838,6 +7838,26 @@ func _place_nonwall(obj: Dictionary, cx: int, cy: int, idx: int, in_wall: bool, 
 			_note(cx, cy, idx, "connector panels [%s] h=%.2f %s (user verdict)" % [axis, vh, _connector_note(tile)], vh * 0.5)
 			return
 
+	# HAND-AUTHORED VOXEL PROPS: any object whose EXACT tile has a 24-layer model at
+	# <support>/vox/prop-<flat-name>.vox renders as that model instead of a billboard — the walls'
+	# opt-in, for everything else. Daniel, arriving with a hand-built Resheph: "They're such a
+	# central part of the story, I think they deserve some 3d love." Keyed on the exact flat tile
+	# name and NOT the family, because sw_statue1..6 share a family and are six different figures —
+	# a family key would put one statue's model on all of them.
+	if not _flat_2d and not _one_to_one:
+		var prop := _prop_vox_model(tile)
+		if not prop.is_empty():
+			var pmesh := _wall_vox_mesh(prop, {})
+			if pmesh != null:
+				var pmi := _vox_prop_mesh(pmesh, cx, cy, light_frac)
+				# _wall_vox_mesh emits LOCAL vertices (the wall path positions its node); the
+				# tent-era builders _vox_prop_mesh grew up with bake world coords into the
+				# vertices and it never sets position — left unset, every statue in the zone
+				# rendered at cell (0,0), placed, visible, and in the wrong place entirely.
+				pmi.position = Vector3(cx, 0, cy)
+				_note(cx, cy, idx, "voxel prop (prop-%s.vox)" % _flat_tile_name(tile), WALL_H * 0.5)
+				return
+
 	if verdict == "signpost" and not _flat_2d and not _one_to_one:
 		if _place_signpost(obj, tile, cx, cy, light_frac):
 			_note(cx, cy, idx, "signpost(voxel: board 4 deep, lettering carved, posts in the core, user verdict)", 0.5)
@@ -8820,6 +8840,22 @@ var _wall_vox_cache := {}
 ## answer by walking to a wall and squinting at it in the dark.
 var _wall_vox_placed := 0
 var _wall_vox_files := {}
+
+## A tile's flattened export name, without extension: 'Terrain/sw_statue1.bmp' -> 'Terrain_sw_statue1'.
+func _flat_tile_name(tile: String) -> String:
+	return tile.replace("/", "_").replace("\\", "_").replace(":", "_").get_basename()
+
+## The hand-authored PROP model for an exact tile, or {}. Same reader, same 24-layer opt-in and
+## the same zonereport bookkeeping as the walls — a prop that is looked up and missing is a line,
+## not a silence.
+func _prop_vox_model(tile: String) -> Dictionary:
+	if _tiles_dir == "":
+		return {}
+	var path := _tiles_dir.get_base_dir().path_join("vox").path_join(
+		"prop-%s.vox" % _flat_tile_name(tile))
+	if not _wall_vox_cache.has(path):
+		_wall_vox_cache[path] = _read_wall_vox(path)
+	return _wall_vox_cache[path]
 
 ## `<support>/vox/<family>-<bits>.vox` for a wall variant tile, or "" if the name does not parse.
 func _wall_vox_path(variant_tile: String) -> String:
