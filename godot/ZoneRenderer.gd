@@ -419,6 +419,7 @@ var _pool_tex := {}     # "<n>|<mask>" -> its tiled texture
 ## neighbour zone is built at an offset and a lit set keyed in local coords would silently mask
 ## every one of its pools against the wrong cells.
 var _build_lit := {}
+var _fence_cells := {}   # cells holding fences this build — gates orient by their run
 var _flame_tex: Texture2D
 var _fire_tex: Texture2D          # a drawn flame SHAPE (alpha-blended) for on-fire objects (campfires) — reads by day
 var _smoke_pm: ParticleProcessMaterial   # shared across every sconce's smoke emitter
@@ -937,9 +938,17 @@ func render_snapshot(data: Dictionary, neighbors: Array = []) -> void:
 func _build_zone(cells: Array, offset: Vector2i, skip_creatures: bool, wall_types: Dictionary) -> void:
 	# The lit set FIRST, before anything places a light: _place_light masks its pool against it.
 	_build_lit.clear()
+	_fence_cells.clear()
 	for lc in cells:
+		var lk := Vector2i(int(lc.get("x", 0)) + offset.x, int(lc.get("y", 0)) + offset.y)
 		if int(lc.get("light", LIGHT_LIT)) >= LIGHT_LIT:
-			_build_lit[Vector2i(int(lc.get("x", 0)) + offset.x, int(lc.get("y", 0)) + offset.y)] = true
+			_build_lit[lk] = true
+		# ...and which cells hold FENCES, so a gate can orient itself by the run it sits in —
+		# the gate tile carries no _ew/_ns suffix; its neighbours are the only signpost.
+		for lo in lc.get("objs", []):
+			var lt := String(lo.get("tile", ""))
+			if lt.contains("fence") and not lt.contains("fence_gate"):
+				_fence_cells[lk] = true
 	var wall_cells := {}
 	_group_wall_cells(cells, offset, wall_types, wall_cells)   # pass 1
 	for cell in cells:                                         # pass 2
@@ -3885,6 +3894,76 @@ func _make_smoke() -> GPUParticles3D:
 	return p
 
 # --- glowfish orbiters ("bugs") ---------------------------------------------
+
+const GATE_OPEN_DEG := 88.0     # the doors' swing, reused
+const GATE_DEPTH_PX := 2.0      # leaf thickness in art pixels — the fences' own depth
+
+## One gate leaf as a voxel slab, LOCAL about its hinge: the hinge edge is x=0 and the leaf
+## extends toward +x, so the parent node's rotation.y IS the swing. Art columns col0..col1 of the
+## OPEN tile, band = the art's opaque rows, one block per opaque pixel, GATE_DEPTH_PX deep.
+func _gate_leaf_mesh(img: Image, col0: int, col1: int, flip: bool, lf: float) -> ArrayMesh:
+	var w := img.get_width()
+	var h := img.get_height()
+	var sx: float = float(img.get_width()) / 16.0    # art may be upscaled; sample by art px
+	var ps := PIXEL_SIZE
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var top := -1
+	var bot := -1
+	for r in 24:
+		for c in range(col0, col1 + 1):
+			var px := img.get_pixel(int((c + 0.5) * sx), int((r + 0.5) * (h / 24.0)))
+			if px.a >= 0.5:
+				bot = r
+				if top < 0: top = r
+	if top < 0:
+		return null
+	var d := GATE_DEPTH_PX * ps
+	for r in range(top, bot + 1):
+		for c in range(col0, col1 + 1):
+			var px2 := img.get_pixel(int((c + 0.5) * sx), int((r + 0.5) * (h / 24.0)))
+			if px2.a < 0.5:
+				continue
+			# hinge-relative column: 0 at the hinge whichever side the leaf came from
+			var hc: float = float(c - col0) if not flip else float(col1 - c)
+			var wc := Color(px2.r * lf, px2.g * lf, px2.b * lf)
+			_vox_block(st, Vector3(hc * ps, float(bot - r) * ps, -d * 0.5),
+				Vector3(ps, ps, d), wc, [true, true, true, true, true, true])
+	var mesh := ArrayMesh.new()
+	st.commit(mesh)
+	return mesh
+
+## Place a fence gate: two hinged leaves oriented by the fence run around them.
+func _place_fence_gate(obj: Dictionary, tile: String, cx: int, cy: int, light_frac: float) -> bool:
+	# the leaves' surface is always the OPEN art — the closed tile draws only the posts
+	var leaf_tile := tile.replace("gates_closed", "gates_2_open")
+	var tex := _colored_tex(leaf_tile, _pick_color_string(obj), String(obj.get("detail", "")))
+	if tex == null:
+		return false
+	var img := tex.get_image()
+	# The pose tracks PASSABILITY, not the tile name: Qud's brinestalk gate is solid=false and
+	# never swaps its art (its "closed" tile has a walk-through gap drawn in) — a gate you can
+	# stroll through renders swung open; only a genuinely solid one would bar the way closed.
+	var is_open: bool = tile.contains("open") or not bool(obj.get("solid", false))
+	var ns: bool = (_fence_cells.has(Vector2i(cx, cy - 1)) or _fence_cells.has(Vector2i(cx, cy + 1))) \
+		and not (_fence_cells.has(Vector2i(cx - 1, cy)) or _fence_cells.has(Vector2i(cx + 1, cy)))
+	var lf := clampf(light_frac, 0.0, 1.0)
+	# west/north leaf: art columns 0..7; east/south: 8..15 (flipped so its hinge column is 0)
+	for side in [0, 1]:
+		var mesh := _gate_leaf_mesh(img, 0 if side == 0 else 8, 7 if side == 0 else 15, side == 1, lf)
+		if mesh == null:
+			continue
+		var mi := _vox_prop_mesh(mesh, cx, cy, 1.0)   # light baked into vertices, as the fences do
+		var swing := deg_to_rad(GATE_OPEN_DEG) if is_open else 0.0
+		if ns:
+			# hinges at the north/south edges; the closed plane runs along z; swing toward +x
+			mi.position = Vector3(cx, 0, cy + (-0.5 if side == 0 else 0.5))
+			mi.rotation.y = (PI / 2 if side == 0 else -PI / 2) + (swing if side == 0 else -swing)
+		else:
+			# hinges at the west/east edges; the closed plane runs along x; swing toward +z (south)
+			mi.position = Vector3(cx + (-0.5 if side == 0 else 0.5), 0, cy)
+			mi.rotation.y = (0.0 if side == 0 else PI) + (-swing if side == 0 else swing)
+	return true
 
 const ORBIT_COUNT := 4          # motes per glowfish
 const ORBIT_CENTER_Y := 0.5     # orbit centre height above the cell floor
@@ -7857,6 +7936,17 @@ func _place_nonwall(obj: Dictionary, cx: int, cy: int, idx: int, in_wall: bool, 
 				pmi.position = Vector3(cx, 0, cy)
 				_note(cx, cy, idx, "voxel prop (prop-%s.vox)" % _flat_tile_name(tile), WALL_H * 0.5)
 				return
+
+	# FENCE GATES: "let's treat the closed gate like the fence and swing the doors open."
+	# The CLOSED art is just the two posts (the gate edge-on); the OPEN art carries both lattice
+	# leaves face-on — so the leaves' SURFACE always comes from the open art, and the object's
+	# state only picks the POSE: closed lays both leaves flat in the fence plane (a fence panel,
+	# as asked), open swings each ~88 degrees on its own hinge post, doors-fashion.
+	if tile.contains("fence_gates") and not _flat_2d and not _one_to_one:
+		if _place_fence_gate(obj, tile, cx, cy, light_frac):
+			_note(cx, cy, idx, "fence gate (voxel leaves, %s)" %
+				("closed" if bool(obj.get("solid", false)) and not tile.contains("open") else "open"), FENCE_H * 0.5)
+			return
 
 	if verdict == "signpost" and not _flat_2d and not _one_to_one:
 		if _place_signpost(obj, tile, cx, cy, light_frac):
