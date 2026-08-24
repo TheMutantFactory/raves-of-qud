@@ -8593,7 +8593,7 @@ func _place_nonwall(obj: Dictionary, cx: int, cy: int, idx: int, in_wall: bool, 
 			if btex == null:
 				btex = tex
 			var s := _take_sprite()
-			s.pixel_size = PIXEL_SIZE * _tree_scale(tile)
+			s.pixel_size = PIXEL_SIZE * _tree_scale(tile, obj)
 			s.texture = btex
 			s.flip_h = bool(obj.get("hflip", false))
 			s.flip_v = bool(obj.get("vflip", false))
@@ -11213,10 +11213,16 @@ func set_top_down(on: bool) -> void:
 ## sinking half its trunk.
 const TREE_SCALE := 2.0
 
-func _tree_scale(tile: String) -> float:
+func _tree_scale(tile: String, obj: Dictionary = {}) -> float:
 	if _one_to_one or _flat_2d or _world_map:
 		return 1.0
-	if not tile.to_lower().contains("tree"):
+	# BLOCKERS COUNT AS TREES. A dandy cap is a WALL — it stops you and it stops your line of
+	# sight — but it wears plant art and rendered at plant size, so nothing said "you cannot
+	# come through here." Daniel: "make them 2x in size like trees... it also accentuates the
+	# depth of line-of-sight interruption." Keyed on the wire's wall/occluding flags, so it is
+	# the OBJECT's blocking nature, not a tile-name list, that earns the size.
+	var blocker: bool = bool(obj.get("wall", false)) or bool(obj.get("occluding", false))
+	if not blocker and not tile.to_lower().contains("tree"):
 		return 1.0
 	return TREE_SCALE if Settings.qol_on("bigtrees") else 1.0
 
