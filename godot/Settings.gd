@@ -145,10 +145,35 @@ func qol_on(feature: String) -> bool:
 		return false
 	return bool(get_value("qol_" + feature, bool(QOL_FEATURES[feature][1])))
 
+var _instance_lock: TCPServer = null   # held for the process lifetime — see _ready
 var _data: Dictionary = {}
 var _rect_mtime := -1.0
 
 func _ready() -> void:
+	# ── SINGLE INSTANCE, enforced by the app itself ──────────────────────────────────────
+	# Two Raves viewers (a dev run beside the exported app, or a double hv launch) both render
+	# the same bridge traffic and fight over Metal buffers — measured 2026-08-24 as paired
+	# SIGBUS _platform_memmove crashes, one per instance window. The lock is a localhost port:
+	# first instance binds it and lives; any later one sees the bind fail and quits before it
+	# creates a renderer. The port is arbitrary and private; the server accepts nothing.
+	# NOT a bind test: Godot's TCPServer uses SO_REUSEPORT on macOS, so a second listener
+	# binds happily beside the first (measured — the bind "lock" never failed). Instead the
+	# newcomer CONNECTS to the port: a live connection means a live holder, and the newcomer
+	# quits before it creates a renderer. The holder never accepts; probes just disconnect.
+	var probe := StreamPeerTCP.new()
+	if probe.connect_to_host("127.0.0.1", 17893) == OK:
+		for i in 30:
+			probe.poll()
+			if probe.get_status() != StreamPeerTCP.STATUS_CONNECTING:
+				break
+			OS.delay_msec(10)
+		if probe.get_status() == StreamPeerTCP.STATUS_CONNECTED:
+			probe.disconnect_from_host()
+			print("[instance-lock] another Raves viewer is already running — quitting this one")
+			get_tree().quit()
+			return
+	_instance_lock = TCPServer.new()
+	_instance_lock.listen(17893, "127.0.0.1")
 	for a in Array(OS.get_cmdline_args()) + Array(OS.get_cmdline_user_args()):
 		if a == "--one-to-one" or a == "--1to1":
 			one_to_one_only = true
