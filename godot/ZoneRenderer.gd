@@ -1959,26 +1959,44 @@ func _dim_frozen_node(n: Node, f: float) -> void:
 		sp.modulate = Color(b.r * k, b.g * k, b.b * k, b.a)
 		return
 	if n is MeshInstance3D:
+		# A DIM WAS NEVER THE MEMORY LOOK FOR A MESH. This branch used to scale the albedo by
+		# 0.85 — over a bake that carries the zone's STALE light, so a wall lit at departure
+		# stayed near-full brightness a zone away. Daniel, one zone south of Joppa: "the voxels
+		# are all lit as if they were in-zone and line of sight." Meshes now get what the live
+		# zone's own out-of-sight walls get: the K/k ghost. Vertex-coloured art swaps to its
+		# _ghost_wall_mesh variant (albedo WHITE — the mesh IS the memory look); textured art
+		# (fence panels) takes MEMORY_TINT as its albedo, the _lit_meshes rule. Both idempotent.
 		var mi := n as MeshInstance3D
 		var mat := mi.material_override
 		if mat == null:
 			# No override means it draws with the MESH's own material, which is shared with every
-			# other instance of that mesh — dimming it in place would dim them all. Take a private
-			# copy ONCE (the zalb meta below makes this idempotent) rather than leave the thing
-			# undimmed, which is the failure being fixed here.
+			# other instance of that mesh — writing it in place would repaint them all. Take a
+			# private copy ONCE rather than leave the thing at full colour.
 			var act := mi.get_active_material(0)
 			if act is StandardMaterial3D:
 				mat = (act as StandardMaterial3D).duplicate()
 				mi.material_override = mat
 		if mat == null or not (mat is StandardMaterial3D):
-			return          # not a standard material (shader/vertex-only): nothing safe to scale
-		if not mi.has_meta("zalb"):
-			# duplicate ONCE, or every zone sharing this material would dim together
-			mi.material_override = (mat as StandardMaterial3D).duplicate()
-			mi.set_meta("zalb", (mat as StandardMaterial3D).albedo_color)
-		var a: Color = mi.get_meta("zalb")
-		(mi.material_override as StandardMaterial3D).albedo_color = \
-			Color(a.r * k, a.g * k, a.b * k, a.a)
+			return          # not a standard material (shader/vertex-only): nothing safe to write
+		var sm := mat as StandardMaterial3D
+		# PRIVATE COPY before any write: an existing override is often a CACHED material shared
+		# across zones (_wallmat_cache and friends) — painting it in place would repaint every
+		# wall everywhere, the exact failure the old zalb duplicate existed to prevent.
+		if not mi.has_meta("zpriv"):
+			mi.material_override = sm.duplicate()
+			mi.set_meta("zpriv", true)
+			sm = mi.material_override as StandardMaterial3D
+		if sm.vertex_color_use_as_albedo and mi.mesh != null:
+			if not mi.has_meta("live_mesh"):
+				mi.set_meta("live_mesh", mi.mesh)
+			if not mi.has_meta("ghost_mesh"):
+				mi.set_meta("ghost_mesh", _ghost_wall_mesh(mi.get_meta("live_mesh")))
+			var gm: Mesh = mi.get_meta("ghost_mesh")
+			if mi.mesh != gm:
+				mi.mesh = gm
+			sm.albedo_color = Color.WHITE
+		else:
+			sm.albedo_color = MEMORY_TINT
 
 ## Per-cell darkness overlay (cavern lighting). ONE vertex-coloured MIX-black mesh: a quad
 ## over each cell's floor (and its roof, for wall cells) whose ALPHA is how DARK the cell is
@@ -6409,7 +6427,11 @@ func _place_waterwheel(obj: Dictionary, tile: String, cx: int, cy: int, light_fr
 		# because the vertex colours were clean. Registering the MESH (not `root`: the relight
 		# writes material_override and swaps in a ghost mesh, and root is a bare Node3D that owns
 		# neither) also earns it the memory ghost when the mill goes out of sight.
-		_lit_meshes.append({"mi": mi, "cell": Vector2i(cx, cy)})
+		# LIVE BUILDS ONLY, like every other registration site: a remembered zone's mill in
+		# this registry collides with the live zone's cell keys and the per-turn relight
+		# would re-light it with the wrong zone's sight.
+		if _live_build:
+			_lit_meshes.append({"mi": mi, "cell": Vector2i(cx, cy)})
 	_track(root)
 	return true
 
