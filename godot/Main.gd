@@ -701,6 +701,37 @@ func _exec_godot_cmd(cmd: String) -> void:
 					"zoom": _multiview.pane_zoom(pi, float(parts[3]))
 		"dbg":
 			_dbg_menu.toggle()    # the ` debug menu (for headless UI checks)
+		"spritedump":
+			# `spritedump CX CY` — print every visual node whose footprint covers the cell:
+			# type, position, modulate/albedo, texture id, visibility. The inspector reports
+			# what was MEANT to render; this reports what the scene graph actually holds —
+			# the difference is where the all-black-sprite class of bug lives.
+			if parts.size() >= 3:
+				var dcx := int(parts[1])
+				var dcy := int(parts[2])
+				var found := 0
+				for nd in _walk_all(renderer):
+					if not (nd is Node3D) or not (nd as Node3D).is_visible_in_tree():
+						continue
+					var cell2 := renderer._node_cell(nd)
+					if cell2.x != dcx or cell2.y != dcy:
+						continue
+					found += 1
+					var extra := ""
+					if nd is SpriteBase3D:
+						var sb := nd as SpriteBase3D
+						var tx: Texture2D = sb.texture
+						extra = "modulate=%s tex=%s(%s)" % [sb.modulate,
+							(tx.get_size() if tx != null else Vector2.ZERO),
+							(str(tx.get_instance_id()).right(6) if tx != null else "nil")]
+					elif nd is MeshInstance3D:
+						var mo2 := (nd as MeshInstance3D).material_override
+						if mo2 is StandardMaterial3D:
+							extra = "albedo=%s" % (mo2 as StandardMaterial3D).albedo_color
+					print("[spritedump] %s %s pos=%s %s  path=%s" % [nd.get_class(), nd.name,
+						(nd as Node3D).global_position, extra,
+						str(nd.get_path()).replace(str(renderer.get_path()), "~")])
+				print("[spritedump] %d node(s) over (%d,%d)" % [found, dcx, dcy])
 		"fph":
 			if parts.size() > 1:
 				_cam_rig._fp_height = clampf(float(parts[1]), 0.15, 3.0)
@@ -890,6 +921,16 @@ var _picker                     # DirectionPicker (Node, loaded); created in _re
 ## Public entry point — MainFrame calls this on the Holodeck when an ability prompts for a direction.
 func start_direction_picker(icon: Texture2D) -> void:
 	_picker.start(icon)
+
+func _walk_all(root: Node) -> Array:
+	var out: Array = []
+	var stack: Array = [root]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		out.append(n)
+		for c in n.get_children():
+			stack.append(c)
+	return out
 
 func _set_mode(m: int, force := false) -> void:
 	# 1:1 (parity) mode locks the camera to the Qud-faithful top-down view — user camera

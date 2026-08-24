@@ -1487,6 +1487,25 @@ func _rebuild_dynamics(cells: Array) -> void:
 				idx += 1
 				continue
 			if not _is_prism(od) and _is_creature(od):
+				# USER-MODE FOG FOR CREATURES — the rule that never existed. Out of sight, a
+				# creature was simply multiplied by _light_frac, which is 0.0 at light<=None:
+				# an ordinary (hideDark) creature became an invisible black blob on dark ground
+				# — accidentally close to Qud's "not drawn" — but a RenderIfDark one stood as a
+				# SOLID BLACK SILHOUETTE. Report 80580bbc, brooding azurepuff at Joppa (63,3):
+				# "Sprite is all-black." Mirror Qud: unseen + hideDark (or never explored) is
+				# NOT DRAWN; unseen + RenderIfDark draws the flat-K ghost, undimmed — the swap
+				# is the memory, same as the static plants beside it.
+				if not _cell_seen(cell):
+					if bool(od.get("hideDark", false)) or not _cell_explored(cell):
+						continue
+					var gh: Dictionary = od.duplicate()
+					var kx := _qud_color("K").to_html(false)
+					gh["fgHex"] = "#" + kx
+					gh["detailHex"] = "#" + kx
+					_occupied[Vector2i(cx, cy)] = true
+					_place_nonwall(gh, cx, cy, idx, false, sink, wet, false, false, 1.0)
+					idx += 1
+					continue   # and no render programs: a memory does not flicker or brood
 				_occupied[Vector2i(cx, cy)] = true
 				_place_nonwall(od, cx, cy, idx, false, sink, wet, false, false, lf)
 				# QUD'S PER-FRAME RENDER PROGRAMS, IN USER MODE TOO. What a thing DOES is part
@@ -1635,6 +1654,10 @@ func _relight_static_sprites(cells: Array) -> void:
 				if s.texture != want:
 					s.texture = want
 				ghosted = not vis
+			# the glow BLOOM is a child with its own material — parent modulate and the ghost
+			# texture swap never touch it, so it kept shining out of the fog on its own
+			for gc in s.get_children():
+				gc.visible = vis
 			if ghosted:
 				# THE GHOST TEXTURE IS THE WHOLE MEMORY LOOK — do not then dim it by the cell's
 				# light. Qud's memory is a PALETTE SWAP and it does not follow the time of day
@@ -1651,6 +1674,8 @@ func _relight_static_sprites(cells: Array) -> void:
 				# _wall_cutaway follows by swapping a ghost MESH and never modulating it. This
 				# path was the one that still multiplied.
 				s.modulate = Color.WHITE
+			elif bool(e.get("glow", false)):
+				s.modulate = Color.WHITE   # self-lit: never dimmed by the cell's byte
 			else:
 				var lf: float = float(lit.get(k1, 1.0))
 				s.modulate = Color(lf, lf, lf) if lf < 0.999 else Color.WHITE
@@ -8309,7 +8334,24 @@ func _place_nonwall(obj: Dictionary, cx: int, cy: int, idx: int, in_wall: bool, 
 			# light (the floor overlay can't cover a standing sprite). Sprite3D.modulate
 			# works here since there's no material_override — unless it glows, and a
 			# bioluminescent thing should stay bright anyway.
-			s.modulate = Color(light_frac, light_frac, light_frac) if light_frac < 0.999 else Color.WHITE
+			#
+			# THE GLOW EXCEPTION IS REAL NOW. This comment always promised it; the code below
+			# never implemented it, and the glow gate further down also SKIPPED registering
+			# glowing sprites for the per-turn relight — so a glowing thing in a cell whose
+			# light byte was None at build time baked modulate (0,0,0,1) and STAYED black
+			# forever. Report 80580bbc, a brooding azurepuff at Joppa (63,3): "Sprite is
+			# all-black." _light_frac returns 0.0 for light <= None; the bake was the bug.
+			var glowing: bool = _should_glow(obj)
+			if glowing or _remembered_build:
+				# Glowing: it emits its own light; the cell's byte is irrelevant. REMEMBERED:
+				# the K/K ghost texture (_art_colors) is the whole memory look and the frozen
+				# dim supplies the level — baking the remembered light byte here instead put
+				# modulate (0,0,0,1) on every sprite whose cell was unlit at departure, the
+				# frozen-zone half of the all-black-sprite family (found beside 80580bbc:
+				# departed-zone brinestalks standing pure black at Joppa's north edge).
+				s.modulate = Color.WHITE
+			else:
+				s.modulate = Color(light_frac, light_frac, light_frac) if light_frac < 0.999 else Color.WHITE
 			var submerged: bool = sink > 0.0 and bool(obj.get("sinks", false))
 			_seat(s, btex, tile, cx, cy, sink if submerged else 0.0, position_for(tile) == "float")
 			# FLYING CREATURES ACTUALLY FLY. Filed by Daniel against a giant dragonfly: "make
@@ -8373,7 +8415,6 @@ func _place_nonwall(obj: Dictionary, cx: int, cy: int, idx: int, in_wall: bool, 
 				# change on the per-turn player sprite is a (long-shot) suspect; off = plain sprite.
 				s.no_depth_test = true
 				s.render_priority = 20
-			var glowing: bool = _should_glow(obj)
 			if glowing:
 				_add_glow(s, btex, tile)        # crisp bioluminescent bloom (glowfish, glowpad, tagged tiles)
 			_track(s)
@@ -8393,7 +8434,10 @@ func _place_nonwall(obj: Dictionary, cx: int, cy: int, idx: int, in_wall: bool, 
 			# it emits its own light, but you are not standing in this zone to see it glow.
 			# (A neighbour's sprite is ALREADY ghosted — its texture was built from the memory
 			# pair at the choke point above — so there is nothing to register or swap here.)
-			if _live_build and not glowing:
+			# GLOWING INCLUDED in the relight registry now: out of sight, a glowing thing
+			# ghosts like everything else (you are not there to see it glow — same call the
+			# frozen-zone path already made); in sight it stays WHITE via the glow flag below.
+			if _live_build:
 				# QUD'S MEMORY IS A PALETTE SWAP, not a dim: out of sight it redraws the tile in
 				# K/k (#155352 / #0f3b3a), the same pair _ghost_obj uses for 1:1 and the same
 				# one the wire reports as memColor for every painted-ground cell. A modulate can
@@ -8412,7 +8456,7 @@ func _place_nonwall(obj: Dictionary, cx: int, cy: int, idx: int, in_wall: bool, 
 					_color_key(obj) + "~ghost", _fill_for(tile, Fill.INTERIOR), _cutout_for(tile), true)
 				_lit_sprites.append({"s": s, "cell": Vector2i(cx, cy),
 					"hide_dark": bool(obj.get("hideDark", false)),
-					"live": btex, "ghost": gtex})
+					"live": btex, "ghost": gtex, "glow": glowing})
 			var fmode := _fill_for(tile, Fill.INTERIOR)
 			var gaps := tile_fill_px(tile, fmode)
 			var kind := "billboard"
