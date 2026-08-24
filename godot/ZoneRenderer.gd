@@ -1346,6 +1346,7 @@ func _ib_abort() -> void:
 var _anim_sprites: Array = []
 
 var _occupied := {}   # creature cells this turn (Vector2i -> true), for the winner rule
+var _asleep_posed: Array = []   # cells whose creature lay down asleep this turn (zonereport)
 
 func _rebuild_dynamics(cells: Array) -> void:
 	# THE LIT SET, AGAIN. _build_zone fills this for the static pass, but a carried torch moves and
@@ -1357,6 +1358,7 @@ func _rebuild_dynamics(cells: Array) -> void:
 	for lc in cells:
 		if int(lc.get("light", LIGHT_LIT)) >= LIGHT_LIT:
 			_build_lit[Vector2i(int(lc.get("x", 0)), int(lc.get("y", 0)))] = true
+	_asleep_posed.clear()       # per-turn: which cells hold a creature lying asleep
 	_occupied.clear()
 	for c in _dynamic_root.get_children():
 		c.free()
@@ -3293,18 +3295,25 @@ func _override_for(tile: String) -> String:
 const FIRE_BG_FLASH := "W"      # the flash
 const FIRE_BG_BASE := "K"       # ...and what it flashes back to (matched case-insensitively)
 
-## Is this creature ASLEEP, read off the same render sweep as burning? Asleep is the OTHER
-## colour-only schedule: Qud floods the cell background CYAN and back while a creature sleeps —
-## real capture (kept as the burning audit's false-positive case): 60|0=;&c^c;|10=;;|20=;&c^c;
-## Daniel: "get rid of the sleep animation. Some sort of blue flashing." Same contract as
-## _is_burning: colour-only (any tile swap is some other animation), the ^c flood on at least two
-## distinct frames, and no wire flag or mod rebuild needed.
+## Is this creature ASLEEP, read off the same render sweep as burning? Asleep is Qud's cyan
+## program: a ^c background flood, and — on the LIVE shape — a frame swapping the whole tile to a
+## Text/ glyph, the floating "z". Two real captures, and they do not agree:
+##
+##     60|0=;&c^c;|10=;;|20=;&c^c;                        (archived; two floods, colour-only)
+##     60|0=;;|11=;&C^c;|25=;;|36=Text/95.bmp;&c;|45=;;   (live farmer, in his bed, 2026-08-23)
+##
+## The first cut of this detector was written to the archived shape alone and a real sleeper
+## walked straight through it: the Text/ frame tripped the "any tile swap is some other
+## animation" rule, and one flood failed a two-flood minimum. Daniel: "He's standing and
+## flashing." So: a Text/ swap is the SLEEP GLYPH, not another animation (any other art swap
+## still disqualifies), and the bar is two floods OR one flood plus the glyph. Burning wins ties.
 func _is_asleep(obj: Dictionary) -> bool:
 	var spec := String(obj.get("animSched", ""))
 	if spec == "" or spec.find("^") < 0 or _is_burning(obj):
 		return false
 	var parts := spec.split("|")
 	var floods := 0
+	var zglyphs := 0
 	for i in range(1, parts.size()):
 		var kv := parts[i].split("=")
 		if kv.size() != 2:
@@ -3313,12 +3322,15 @@ func _is_asleep(obj: Dictionary) -> bool:
 		if axes.size() != 3:
 			continue
 		if axes[0] != "":
-			return false          # a tile swap: some other animation
+			if axes[0].begins_with("Text/"):
+				zglyphs += 1      # the floating "z" frame
+			else:
+				return false      # a real art swap: some other animation
 		var col := String(axes[1])
 		var up := col.find("^")
 		if up >= 0 and up + 1 < col.length() and col.substr(up + 1, 1).to_lower() == "c":
 			floods += 1
-	return floods >= 2
+	return floods >= 2 or (floods >= 1 and zglyphs >= 1)
 func _is_burning(obj: Dictionary) -> bool:
 	var spec := String(obj.get("animSched", ""))
 	if spec == "" or spec.find("^") < 0:
@@ -8064,6 +8076,7 @@ func _place_nonwall(obj: Dictionary, cx: int, cy: int, idx: int, in_wall: bool, 
 				s.billboard = BaseMaterial3D.BILLBOARD_DISABLED
 				s.rotation_degrees = Vector3(-90, 0, 0)
 				s.position = Vector3(cx, FLOOR_Y + 0.06, cy)
+				_asleep_posed.append(Vector2i(cx, cy))
 			var float_scale := 0.0
 			if asleep:
 				pass                    # no flight lift, no swim stir — it is asleep

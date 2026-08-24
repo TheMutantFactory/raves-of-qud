@@ -1889,6 +1889,11 @@ func _write_zone_report() -> void:
 	# cannot show: a viewport holds a handful of lights, and the ones standing against buildings
 	# are rarely among them (two probe runs found 192 lit cells on screen and five unlit ones).
 	# So the renderer reports its own masks and the check stops depending on where you are stood.
+	# Sleepers are hard to verify by pixel: they sleep at night, often at range, in the camera's
+	# depth-of-field blur — the first detector shipped wrong and the miss was only visible because
+	# Daniel happened to look. The renderer says outright who it laid down.
+	lines.append("ASLEEP: %d creature(s) lying down this turn %s"
+		% [renderer._asleep_posed.size(), str(renderer._asleep_posed)])
 	lines.append("VOXEL WALLS (.vox meshed at runtime; %d layers is the opt-in)"
 		% renderer.WALL_VOX_LAYERS)
 	if renderer._wall_vox_files.is_empty():

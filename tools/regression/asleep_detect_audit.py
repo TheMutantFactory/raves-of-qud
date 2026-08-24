@@ -45,22 +45,31 @@ def is_burning(spec):
 def is_asleep(spec):
     if not spec or "^" not in spec or is_burning(spec):
         return False
-    floods = 0
+    floods = zglyphs = 0
     for axes in _entries(spec):
         if axes[0] != "":
-            return False
+            if axes[0].startswith("Text/"):
+                zglyphs += 1        # the floating "z" frame
+            else:
+                return False        # a real art swap: some other animation
         col = axes[1]
         i = col.find("^")
         if i >= 0 and i + 1 < len(col) and col[i + 1].lower() == "c":
             floods += 1
-    return floods >= 2
+    return floods >= 2 or (floods >= 1 and zglyphs >= 1)
 
 
 CASES = [
-    ("the real Asleep capture", "60|0=;&c^c;|10=;;|20=;&c^c;", True),
+    # The LIVE capture — a watervine farmer asleep in his bed, 2026-08-23. The detector's first
+    # cut was written to the archived shape below and this one walked straight through it:
+    # "He's standing and flashing."
+    ("the LIVE farmer capture (one flood + z glyph)",
+     "60|0=;;|11=;&C^c;|25=;;|36=Text/95.bmp;&c;|45=;;", True),
+    ("the archived Asleep capture", "60|0=;&c^c;|10=;;|20=;&c^c;", True),
     ("burning is burning, not sleeping", "60|0=;&r^k;|7=;&r^W;|12=;&r^k;", False),
     ("a single steady cyan tint", "60|0=;&c^c;", False),
-    ("a tile swap with ^c colours (some other program)", "60|0=zz.bmp;&c^c;|20=;&c^c;", False),
+    ("a NON-Text tile swap with ^c colours", "60|0=zz.bmp;&c^c;|20=;&c^c;", False),
+    ("a Text glyph alone, no flood (not sleep)", "60|0=;;|36=Text/95.bmp;&c;", False),
     ("^C uppercase floods still count", "60|0=;&y^C;|30=;&y^C;", True),
     ("hologram fg cycle, no backgrounds", "60|0=;&C;|15=;&b;|30=;&c;", False),
     ("empty schedule", "", False),
