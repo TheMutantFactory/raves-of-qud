@@ -3941,10 +3941,12 @@ func _place_fence_gate(obj: Dictionary, tile: String, cx: int, cy: int, light_fr
 	if tex == null:
 		return false
 	var img := tex.get_image()
-	# The pose tracks PASSABILITY, not the tile name: Qud's brinestalk gate is solid=false and
-	# never swaps its art (its "closed" tile has a walk-through gap drawn in) — a gate you can
-	# stroll through renders swung open; only a genuinely solid one would bar the way closed.
-	var is_open: bool = tile.contains("open") or not bool(obj.get("solid", false))
+	# The pose tracks PASSABILITY and ONLY passability. Qud's gate tile names are inverted from
+	# their function — the walk-through gate wears "gates_closed" (two posts, gap drawn in) and
+	# the barred gate wears "gates_2_open" (the full lattice a closed gate shows face-on) — so a
+	# tile-name check renders every state backwards. solid is the truth: measured 2026-08-23 at
+	# Joppa's brinestalk gate, open = closed.bmp/solid=false, shut = 2_open.bmp/solid=true.
+	var is_open: bool = not bool(obj.get("solid", false))
 	var ns: bool = (_fence_cells.has(Vector2i(cx, cy - 1)) or _fence_cells.has(Vector2i(cx, cy + 1))) \
 		and not (_fence_cells.has(Vector2i(cx - 1, cy)) or _fence_cells.has(Vector2i(cx + 1, cy)))
 	var lf := clampf(light_frac, 0.0, 1.0)
@@ -7945,7 +7947,7 @@ func _place_nonwall(obj: Dictionary, cx: int, cy: int, idx: int, in_wall: bool, 
 	if tile.contains("fence_gates") and not _flat_2d and not _one_to_one:
 		if _place_fence_gate(obj, tile, cx, cy, light_frac):
 			_note(cx, cy, idx, "fence gate (voxel leaves, %s)" %
-				("closed" if bool(obj.get("solid", false)) and not tile.contains("open") else "open"), FENCE_H * 0.5)
+				("closed" if bool(obj.get("solid", false)) else "open"), FENCE_H * 0.5)
 			return
 
 	if verdict == "signpost" and not _flat_2d and not _one_to_one:
