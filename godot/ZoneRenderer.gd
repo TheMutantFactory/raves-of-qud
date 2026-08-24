@@ -2646,6 +2646,28 @@ func _ambient_step() -> int:
 ## just narrowed from the whole boundary to a quarter of it. Walking the edge (rather than giving
 ## up, or reaching into the zone's interior) keeps the substitute a cell the boundary actually runs
 ## through, so it is the same terrain the gap is in.
+var _body_color_cache := {}
+## The art's average opaque colour — the "body" a repeated tile should sit on so its
+## transparent margins read as more of the same stuff rather than as grout.
+func _tile_body_color(tex: ImageTexture) -> Color:
+	if tex == null:
+		return _world_bg
+	if _body_color_cache.has(tex):
+		return _body_color_cache[tex]
+	var img := tex.get_image()
+	var r := 0.0
+	var g := 0.0
+	var b := 0.0
+	var n := 0
+	for yy in range(0, img.get_height(), 2):
+		for xx in range(0, img.get_width(), 2):
+			var px := img.get_pixel(xx, yy)
+			if px.a >= 0.5:
+				r += px.r; g += px.g; b += px.b; n += 1
+	var c := Color(r / maxi(n, 1), g / maxi(n, 1), b / maxi(n, 1)) if n > 0 else _world_bg
+	_body_color_cache[tex] = c
+	return c
+
 func _edge_floor_for(src: Vector2i) -> Array:
 	if _edge_floor.has(src):
 		return _edge_floor[src]
@@ -2777,6 +2799,8 @@ func _build_unexplored(parent: Node) -> void:
 					n_bare += 1
 					continue
 				if not fe.is_empty():
+					if fe.size() > 3 and fe[3] != null:
+						_floor_batch_add(fe[3], Transform3D(Basis(), Vector3(wx, float(fe[2]) - 0.012, wy)))
 					_floor_batch_add(fe[0], Transform3D(Basis().scaled(fe[1]), Vector3(wx, float(fe[2]), wy)))
 					n_ground += 1
 					if not _edge_floor.has(src):
@@ -8567,6 +8591,7 @@ func _place_nonwall(obj: Dictionary, cx: int, cy: int, idx: int, in_wall: bool, 
 		# end of the build): one draw call per tile type. Floors are static, so this is free.
 		var y := FLOOR_Y + layer * LAYER_LIFT + idx * TIEBREAK + _dyn_lift_1to1
 		var fmat: Material
+		var fback: Material = null   # water's opaque under-plate; the edge ring stores it too
 		var fscale := Vector3.ONE
 		var fkind := "floor"
 		if tex != null:
@@ -8603,6 +8628,13 @@ func _place_nonwall(obj: Dictionary, cx: int, cy: int, idx: int, in_wall: bool, 
 				fmat = _water_surface_material(tile, main_c, detail_c, tex)
 				_floor_batch_add(_color_material(_world_bg),
 					Transform3D(Basis(), Vector3(cx, y - 0.012, cy)))
+				# The BAND's under-plate is WATER-coloured, not field-coloured: the edge ring's
+				# water wears its SHORE variant of the connection set (drawn edge, transparent
+				# margins), and repeating a shoreline tile outward reads as a grid of tiles over
+				# whatever lies beneath. Over a plate of the art's own body colour the repeats
+				# fuse into open water. Daniel, at the north shore: "the water in the next zone
+				# seems choppy instead of a solid block."
+				fback = _color_material(_tile_body_color(tex))
 				fkind = "floor(water surface, translucent over field-colour backing)"
 		else:
 			fmat = _color_material(_qud_color(String(obj.get("color", ""))))
@@ -8621,7 +8653,12 @@ func _place_nonwall(obj: Dictionary, cx: int, cy: int, idx: int, in_wall: bool, 
 		# bib: the band's base is the edge cell's own art, matched by construction rather than
 		# tallied and then found to be off by a different factor per channel.
 		if not _remembered_build and _on_edge_ring(cx, cy):
-			_edge_floor[Vector2i(cx, cy)] = [fmat, fscale, y]
+			# WITH the backing when there is one: the band repeats this entry outward, and a
+			# translucent water surface repeated WITHOUT its under-plate sits directly on the
+			# fog ground — the art's own transparent margins read as dark grout around every
+			# repeated tile. Daniel, at the north shore: "the water in the next zone seems
+			# choppy instead of a solid block."
+			_edge_floor[Vector2i(cx, cy)] = [fmat, fscale, y, fback]
 		_note(cx, cy, idx, fkind, y)
 	elif tex != null:
 		# DOORS become voxel slabs set into their wall run (Daniel's spec: a
