@@ -1815,6 +1815,36 @@ func _write_zone_report() -> void:
 		ho.append("%.3f" % renderer._band_alpha(d, 0.0))
 	lines.append("  hand-over d=1..%d at t0=0   %s" % [renderer.penumbra_radius + 1,
 		" ".join(PackedStringArray(ho))])
+	# READ THE BAKE BACK. The report used to print only the formulas; the memory-film change
+	# needs the actual vertex alphas each neighbour's darkness mesh carries, because a formula
+	# can be right while the mesh hanging in the scene is from an older bake (or another code
+	# path entirely). One line per zone: alpha -> quad-corner count, coarsened to 2dp.
+	for zid in renderer._static_zones:
+		var zn3: Node3D = renderer._static_zones[zid]
+		var hist := {}
+		var nmesh := 0
+		for chd in zn3.get_children():
+			if not chd.has_meta("is_darkness") or not (chd is MeshInstance3D):
+				continue
+			nmesh += 1
+			var am: ArrayMesh = (chd as MeshInstance3D).mesh
+			if am == null:
+				continue
+			for si in am.get_surface_count():
+				var arr := am.surface_get_arrays(si)
+				var cols = arr[Mesh.ARRAY_COLOR]
+				if cols == null:
+					continue
+				for cc in cols:
+					var key := "%.2f" % cc.a
+					hist[key] = int(hist.get(key, 0)) + 1
+		if nmesh > 0:
+			var ks: Array = hist.keys()
+			ks.sort()
+			var hh: Array = []
+			for hk in ks:
+				hh.append("%s:%d" % [hk, int(hist[hk])])
+			lines.append("  darkmesh %s  %s" % [str(zid), " ".join(PackedStringArray(hh))])
 	lines.append("")
 	# Whether the hand-authored model was found and understood. "no file" is normal; a file that
 	# loads with the wrong node names is the failure that otherwise just looks like nothing changed.

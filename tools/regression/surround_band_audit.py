@@ -28,9 +28,17 @@ def band_src(wx, wy):
     return (min(max(wx, 0), W - 1), min(max(wy, 0), H - 1))
 
 
-def band_alpha(d, t0):
+# Mirrors ZoneRenderer._band_alpha(d, t0, t1) after the extra-zone-view change: the ramp's
+# far end is a TARGET, not always black. The band and the frozen hand-over both pass
+# MEMORY_TARGET now ("outside the zone looks like the in-zone fog"); 1.0 remains the
+# signature's default for any caller that still wants the full-dark ramp.
+DARK_MAX = 0.94
+MEMORY_GROUND = 0.84
+MEMORY_TARGET = (1.0 - MEMORY_GROUND) * DARK_MAX
+
+def band_alpha(d, t0, t1=1.0):
     f = min(max((d - 1) / float(max(1, R)), 0.0), 1.0)
-    return min(max(t0 + (1.0 - t0) * f, 0.0), 1.0)
+    return min(max(t0 + (t1 - t0) * f, 0.0), 1.0)
 
 
 fails = []
@@ -47,7 +55,13 @@ for t0 in (0.0, 0.18, 0.37, 0.5, 0.82, 0.94, 1.0):
     a = band_alpha(1, t0)
     check(abs(a - t0) < 1e-9, "d=1 alpha %.6f != edge tone %.6f" % (a, t0))
 
-# 2. The ramp reaches full darkness exactly at the band's outer row, never before.
+# 2. The ramp reaches its TARGET exactly at the band's outer row: the band (and the frozen
+#    hand-over) land on MEMORY_TARGET — the fog level — never on black, and never overshoot.
+for t0 in (0.0, 0.18, 0.37, 0.5, 0.82, 0.94, 1.0):
+    a = band_alpha(BAND, t0, MEMORY_TARGET)
+    check(abs(a - MEMORY_TARGET) < 1e-9,
+          "fog ramp missed its target at the outer row: t0=%.2f -> %.4f" % (t0, a))
+# ...and the LEGACY full-dark form (the default target) still behaves as it always did:
 for t0 in (0.0, 0.5, 0.94):
     check(abs(band_alpha(BAND, t0) - 1.0) < 1e-9,
           "d=%d not fully dark for t0=%.2f" % (BAND, t0))
@@ -135,8 +149,7 @@ for (wx, wy), want in (((-1, -1), (0, 0)), ((W, -1), (W - 1, 0)),
 #    Before this, the frozen side was a flat 1 - MEMORY_GROUND = 0.16 while the live zone could
 #    be at 0.0, so the north edge stepped twice -- zone, then neighbour, then black. Daniel: "the
 #    eastern edge of the zone is correct. The northern edge is not." East was a band; north was a
-#    loaded neighbour.
-MEMORY_GROUND = 0.84
+#    loaded neighbour. (MEMORY_GROUND is defined up top with the mirror now.)
 for t0 in (0.0, 0.16, 0.5, 0.94):
     check(abs(band_alpha(1, t0) - t0) < 1e-9,
           "frozen hand-over at d=1 is %.4f, not the live edge's %.4f" % (band_alpha(1, t0), t0))

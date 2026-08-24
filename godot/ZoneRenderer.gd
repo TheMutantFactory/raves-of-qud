@@ -2614,7 +2614,9 @@ func _build_unexplored(parent: Node) -> void:
 					continue
 				var src := _band_src(wx, wy)
 				var t0: float = float(_edge_tone.get(src, 1.0 - FOG_GROUND))
-				var a := _band_alpha(d, t0)
+				# The ramp's far end is the FOG, not black: outside the zone reads like the live
+				# zone's own out-of-sight ground now, visited or not (see MEMORY_TARGET).
+				var a := _band_alpha(d, t0, MEMORY_TARGET)
 				# Repeat the edge cell's ground under the ramp, but only where the ramp is not
 				# already opaque -- under full darkness the quad cannot be seen and is pure fill.
 				n_band += 1
@@ -2625,8 +2627,8 @@ func _build_unexplored(parent: Node) -> void:
 					# translucent ramp with no ground under it is a ramp over the BARE FIELD PLANE,
 					# which is the exact failure this band was built to end. Past a cave wall you
 					# see nothing, so draw nothing: opaque, immediately, no gradient.
-					_dark_quad(sto, wx, wy, DARK_SOLID_Y, 1.0)
-					any_solid = true
+					_fog_rect(st, wx, wy, 1, 1, DARK_SOLID_Y)
+					any_blend = true
 					n_bare += 1
 					continue
 				if not fe.is_empty():
@@ -2648,18 +2650,19 @@ func _build_unexplored(parent: Node) -> void:
 			if taken.has(Vector2i(sx, sy)):
 				continue
 			if SURROUND_BAND_ON:
-				_dark_rect_minus(sto, sx * zw, sy * zh, zw, zh, bx0, by0, bx1, by1, DARK_SOLID_Y)
+				_fog_rect_minus(st, sx * zw, sy * zh, zw, zh, bx0, by0, bx1, by1, DARK_SOLID_Y)
 			else:
-				_dark_rect(sto, sx * zw, sy * zh, zw, zh, DARK_SOLID_Y)
-			any_solid = true
+				_fog_rect(st, sx * zw, sy * zh, zw, zh, DARK_SOLID_Y)
+			any_blend = true
 	# ...and the frame beyond the 3x3, reaching past the neighbour cull so a culled zone never
-	# uncovers bare ground plane at the horizon.
+	# uncovers bare ground plane at the horizon. Fog too — the depth cue and the night grade
+	# supply the distance falloff; an opaque black skirt was the old "NO" region.
 	var far := int(NEIGHBOR_CULL_DIST) + maxi(zw, zh) + 40
-	_dark_rect(sto, -far, -far, far * 2 + zw, far - zh, DARK_SOLID_Y)
-	_dark_rect(sto, -far, 2 * zh, far * 2 + zw, far, DARK_SOLID_Y)
-	_dark_rect(sto, -far, -zh, far - zw, 3 * zh, DARK_SOLID_Y)
-	_dark_rect(sto, 2 * zw, -zh, far, 3 * zh, DARK_SOLID_Y)
-	any_solid = true
+	_fog_rect(st, -far, -far, far * 2 + zw, far - zh, DARK_SOLID_Y)
+	_fog_rect(st, -far, 2 * zh, far * 2 + zw, far, DARK_SOLID_Y)
+	_fog_rect(st, -far, -zh, far - zw, 3 * zh, DARK_SOLID_Y)
+	_fog_rect(st, 2 * zw, -zh, far, 3 * zh, DARK_SOLID_Y)
+	any_blend = true
 	if any_solid:
 		var mo := MeshInstance3D.new()
 		mo.mesh = sto.commit()
@@ -2690,6 +2693,44 @@ func _slot(v: int, size: int) -> int:
 	return int(floor(float(v) / float(size)))
 
 ## One solid quad over a rect of cells, in cell coordinates (x,y = its corner cell).
+## The outside-the-world FOG: one field-colour wash rect + one MEMORY_TARGET film rect — the
+## exact recipe an explored out-of-sight cell wears in the live zone, emitted as region-sized
+## rects (Daniel, pointing at the in-zone fog: "I want the area outside of this zone to look
+## like the area circled in green"). BLENDED, so it goes in the band's `st`, never `sto`.
+func _fog_rect(st: SurfaceTool, x: int, y: int, w: int, h: int, yy: float) -> void:
+	if w <= 0 or h <= 0:
+		return
+	var l := float(x) - 0.5
+	var rr := float(x + w) - 0.5
+	var t := float(y) - 0.5
+	var b := float(y + h) - 0.5
+	var wc := Color(_world_bg.r, _world_bg.g, _world_bg.b, REMEMBER_COVER)
+	for p in [Vector3(l, yy - 0.005, t), Vector3(rr, yy - 0.005, t), Vector3(rr, yy - 0.005, b),
+			Vector3(l, yy - 0.005, t), Vector3(rr, yy - 0.005, b), Vector3(l, yy - 0.005, b)]:
+		st.set_color(wc)
+		st.add_vertex(p)
+	var fc := Color(0, 0, 0, MEMORY_TARGET)
+	for p in [Vector3(l, yy, t), Vector3(rr, yy, t), Vector3(rr, yy, b),
+			Vector3(l, yy, t), Vector3(rr, yy, b), Vector3(l, yy, b)]:
+		st.set_color(fc)
+		st.add_vertex(p)
+
+func _fog_rect_minus(st: SurfaceTool, x: int, y: int, w: int, h: int,
+		ex0: int, ey0: int, ex1: int, ey1: int, yy: float) -> void:
+	var x1 := x + w
+	var y1 := y + h
+	if x >= ex1 or x1 <= ex0 or y >= ey1 or y1 <= ey0:
+		_fog_rect(st, x, y, w, h, yy)
+		return
+	var mx0: int = maxi(x, ex0)
+	var mx1: int = mini(x1, ex1)
+	_fog_rect(st, x, y, mx0 - x, h, yy)
+	_fog_rect(st, mx1, y, x1 - mx1, h, yy)
+	var my0: int = maxi(y, ey0)
+	var my1: int = mini(y1, ey1)
+	_fog_rect(st, mx0, y, mx1 - mx0, my0 - y, yy)
+	_fog_rect(st, mx0, my1, mx1 - mx0, y1 - my1, yy)
+
 func _dark_rect(st: SurfaceTool, x: int, y: int, w: int, h: int, yy: float) -> void:
 	if w <= 0 or h <= 0:
 		return
