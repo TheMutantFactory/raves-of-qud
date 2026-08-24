@@ -95,16 +95,27 @@ def build(tile, main_l="y", detail_l="g"):
                 for y in range(y0, y1 + 1):
                     vox.append((x + dx, y, z, c))
 
+    # STRAIGHT indexing, deliberately and unambiguously: colour index i lives at RGBA position i,
+    # and every unused slot is TRANSPARENT black. The first cut copied wall2vox's writer, which
+    # stores the first colour at position 0 while assigning it index 1 (spec indexing) and pads
+    # with OPAQUE black — so the game's convention scorer, which counts voxels landing on
+    # full-alpha entries, TIED... and ties resolve to straight, misreading every file this tool
+    # wrote. The contact-sheet renderer (same scorer) caught it as black-shouldered statues
+    # before the game ever loaded one. Transparent filler makes the score decisive, not just the
+    # convention correct.
     palette, index, out = [], {}, []
     for (x, y, z, c) in vox:
         if c not in index:
             palette.append(c)
-            index[c] = len(palette)     # 1-based, written straight
+            index[c] = len(palette)     # 1-based
         out.append((x, y, z, index[c]))
-    rgba = bytearray()
-    for i in range(256):
-        c = palette[i] if i < len(palette) else (0, 0, 0)
-        rgba += bytes((c[0], c[1], c[2], 255))
+    rgba = bytearray(b"\x00\x00\x00\x00")          # position 0: never referenced, transparent
+    for i in range(255):
+        if i < len(palette):
+            c = palette[i]
+            rgba += bytes((c[0], c[1], c[2], 255))   # position i+1 = index i+1
+        else:
+            rgba += b"\x00\x00\x00\x00"
     return (16, 16, 24), out, bytes(rgba), dict(rows=n_rows, head=head_rows, dx=dx)
 
 
