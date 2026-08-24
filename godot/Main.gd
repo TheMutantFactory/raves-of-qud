@@ -1855,6 +1855,21 @@ func _write_zone_report() -> void:
 			row.append("d%+d (%d,%d)@%d,%d" % [d, c.x, c.y, int(sp.x), int(sp.y)])
 		lines.append("  %s: %s" % [edge, "  ".join(PackedStringArray(row))])
 	lines.append("")
+	var n_ghosted := 0
+	var n_hidden := 0
+	var n_livespr := 0
+	for se in renderer._lit_sprites:
+		var sn = se["s"]
+		if not is_instance_valid(sn):
+			continue
+		if sn.modulate.a <= 0.001:
+			n_hidden += 1        # unexplored (or hideDark out of sight): alpha-zeroed, texture untouched
+		elif se.get("ghost") != null and sn.texture == se["ghost"]:
+			n_ghosted += 1
+		else:
+			n_livespr += 1
+	lines.append("SPRITES  lit=%d ghosted=%d hidden=%d (of %d registered)" % [n_livespr,
+		n_ghosted, n_hidden, renderer._lit_sprites.size()])
 	lines.append("LIGHTS  daylight=%.3f  glow_mul=%.3f  fire_glow_mul=%.3f  n=%d" % [
 		renderer._daylight, renderer._glow_mul(), renderer._fire_glow_mul(), renderer._lights.size()])
 	for li in range(mini(4, renderer._lights.size())):

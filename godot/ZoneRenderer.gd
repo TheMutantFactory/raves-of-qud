@@ -1418,13 +1418,20 @@ func _ib_step() -> void:
 	if _ib_idx >= _ib_cells.size():
 		_rebuild_walls(_ib_wall_types)   # walls last; empty/cheap on the world map
 		_ib_active = false
-		_ib_cells = []                   # release the snapshot cells
 		# THE RING IS ONLY COMPLETE NOW, and the band was built from whatever part of it existed
 		# when the turn landed. A big zone builds across ~20 frames while _build_unexplored runs
 		# ONCE per turn, so on the first turn in a zone the band drew from a partly-filled ring and
 		# then stood, wrong, until the player moved again. Rebuild it against the finished ring.
 		_ring_complete = true
 		_rebuild_band()
+		# THE SPRITES ARE ALSO ONLY ALL PLACED NOW — same story as the ring, one line up. The
+		# relight ran once, on the turn's snapshot, against the few chunks that existed then;
+		# everything placed in later frames kept its full-colour live texture until the
+		# player's NEXT step swept it. Daniel: "when you enter a new zone it loads quickly and
+		# then applies the fog of war." Re-run the relight against the build's own cells.
+		if not _one_to_one:
+			_relight_static_sprites(_ib_cells)
+		_ib_cells = []                   # release the snapshot cells (after the relight above)
 	_bank = null
 	_live_build = false
 	_noting = false
