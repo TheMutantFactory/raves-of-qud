@@ -27,6 +27,8 @@ const RAVES_ITEMS := [
 	{"key": "font_scale", "label": "Font scale", "type": "slider", "min": 0.7, "max": 1.5, "step": 0.05},
 	{"key": "fire_zone_radius", "label": "Lit fires: zone radius (0 = this zone only)",
 		"type": "slider", "min": 0, "max": 3, "step": 1},
+	{"key": "remember_radius", "label": "Remember radius (zones kept built while away)",
+		"type": "slider", "min": 1, "max": 6, "step": 1},
 	{"key": "fullscreen", "label": "Fullscreen", "type": "toggle"},
 	{"key": "full_info", "label": "Show full info by default", "type": "toggle"},
 	# 1:1 test — visual effects, minimal by default; turn on to build up toward Qud (apply on relaunch).

@@ -33,6 +33,10 @@ const DEFAULTS := {
 	# burn (Daniel, from a zone south of Joppa: "there are flames on. They are out-zone").
 	# Evaluated when a remembered zone builds, so raising it takes effect on the next crossing.
 	"fire_zone_radius": 0,
+	# How many zones out a departed zone's BUILT GEOMETRY stays banked (hidden, warm for
+	# return). Beyond it the subtree is freed — the store keeps the data and walking back
+	# rebuilds it. 1 = just the 3x3 ring; higher trades memory for fewer rebuilds.
+	"remember_radius": 2,
 	"penumbra_divisions": 1,
 	# SHADOW SHOWS ON THE ART, NOT ON THE GROUND. With this on, a remembered cell's ground keeps
 	# its LIT colour and only the things standing on it carry the memory palette. Daniel, at night

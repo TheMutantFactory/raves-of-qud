@@ -885,6 +885,13 @@ func render_snapshot(data: Dictionary, neighbors: Array = []) -> void:
 		# the departing zone's subtree is complete (a valid remembered neighbour) before we move on.
 		if _ib_active:
 			_ib_finish()
+		# FREEZE FIRST, CLEAR SECOND. The freeze converts the departing zone through the
+		# registries — sprites' ghost pointers, walls' cutaway list, the light nodes — so it
+		# must run while they are still populated. It sat below the clears at first and
+		# silently converted nothing: the west zone kept live textures and burning fires,
+		# dimmed just enough by the darkness bake to pass at night and glare at dawn.
+		if zone_changed and _live_static_id != "" and _live_static_id != live_id:
+			_freeze_departed()
 		_static_retry_pending = false
 		_placed.clear()
 		_lights.clear()                # the old live zone's torches stop flickering
@@ -893,17 +900,15 @@ func render_snapshot(data: Dictionary, neighbors: Array = []) -> void:
 		                               # _build_static follows immediately and re-registers them
 		_lit_meshes.clear()            # and its connector panels (fences/pipes)
 		_wall_cutaway.clear()          # and its wall nodes tracked for camera cutaway
-		# DROP THE ZONE WE ARE LEAVING, so it is rebuilt as a REMEMBERED one. Its subtree was
-		# built with _live_build true — full colour, because you were standing in it — and
-		# _sync_neighbors only builds a zone it does not already have, so left in place it stayed
-		# at full brightness for as long as it remained a neighbour. Daniel: "the zone I moved out
-		# of (north) shows most of the sprites at full brightness."
-		#
-		# The ramp hides this at first glance: the rows nearest the boundary are only 18% dark, so
-		# a full-colour zone reads as merely bright rather than as wrong, which is why it survived
-		# several crossings before it was obvious.
-		if _live_static_id != "" and _live_static_id != live_id:
-			_drop_static(_live_static_id)
+		# FREEZE THE ZONE WE ARE LEAVING IN PLACE — do not drop it. It used to be dropped and
+		# rebuilt from scratch as a remembered zone ("the zone I moved out of shows most of the
+		# sprites at full brightness" — a live-built subtree left untouched WAS wrong), but the
+		# rebuild was ~280ms of the crossing pareto and every conversion it performs is a swap
+		# the registries can do in place before they are cleared: sprites to their ghost
+		# texture (built at registration), walls to their memoised ghost mesh, fires freed
+		# (fire_zone_radius), and everything else — fences, props, statues, doors — is
+		# ghosted by the darkness bake's _dim_frozen_node exactly as a fresh build would be.
+		# (frozen above, before the registries cleared — nothing further to do for it here)
 		_drop_static(live_id)          # replace any stale (neighbour-built) copy
 		_noting = true
 		_static_saw_missing = false
@@ -2932,6 +2937,55 @@ func _dark_material() -> StandardMaterial3D:
 	_dark_mat = m
 	return m
 
+## Convert the live-built subtree of the zone being LEFT into its remembered form, using the
+## still-populated registries (called before they clear). Out of a zone, every cell is out of
+## sight — so this is the relight's not-visible treatment applied once, everywhere, plus the
+## teardown a remembered build would simply never have built (fires, cutaway fades).
+func _freeze_departed() -> void:
+	var n_spr := 0
+	var n_wall := 0
+	var n_fire := 0
+	for e in _lit_sprites:
+		var sp = e["s"]
+		if not is_instance_valid(sp):
+			continue
+		if bool(e.get("hide_dark", false)):
+			sp.modulate = Color(0, 0, 0, 0)   # Qud never draws these out of sight
+			continue
+		var gt = e.get("ghost", null)
+		if gt != null and sp.texture != gt:
+			sp.texture = gt
+		sp.modulate = Color.WHITE             # the swap is the memory; never dimmed
+		n_spr += 1
+		for gc in sp.get_children():
+			gc.visible = false                # glow blooms don't shine out of the fog
+	for wk in _wall_cutaway:
+		for wmi in _wall_cutaway[wk]:
+			if not is_instance_valid(wmi):
+				continue
+			wmi.transparency = 0.0            # a camera-cutaway fade must not freeze half-faded
+			if wmi.mesh != null:
+				if not wmi.has_meta("live_mesh"):
+					wmi.set_meta("live_mesh", wmi.mesh)
+				var gm: Mesh = _ghost_wall_mesh_cached(wmi.get_meta("live_mesh"))
+				wmi.set_meta("ghost_mesh", gm)
+				if wmi.mesh != gm:
+					wmi.mesh = gm
+				n_wall += 1
+	# a memory does not burn: free the pools, flames and smoke unless the radius keeps them
+	if int(Settings.get_value("fire_zone_radius", 0)) < 1:
+		for L in _lights:
+			for lk in ["glow", "flame", "smoke"]:
+				var ln = L.get(lk)
+				if ln != null and is_instance_valid(ln):
+					ln.queue_free()
+					n_fire += 1
+	# _lit_meshes need nothing here: the darkness bake's _dim_frozen_node ghosts them.
+	# ONE LINE PER FREEZE — the reorder bug (freeze after the clears, converting nothing)
+	# was invisible precisely because nothing said how much work was done.
+	print("[freeze] %s: %d sprites ghosted, %d wall meshes ghosted, %d fire nodes freed"
+		% [_live_static_id, n_spr, n_wall, n_fire])
+
 func _drop_static(id: String) -> void:
 	if _ib_active and id == _ib_id:
 		_ib_abort()             # its subtree is about to be freed; don't build into a dangling node
@@ -2980,7 +3034,19 @@ func _sync_neighbors(neighbors: Array) -> void:
 		# builds then, which is also why the node stays in _static_zones once created.
 		if int(nb.get("dz", 0)) == 0 and _zone_beyond_ramp(Vector2i(nb.get("offset", Vector2i.ZERO))):
 			if _static_zones.has(id):
-				_static_zones[id].visible = false
+				# REMEMBER RADIUS (user setting): a hidden subtree is still resident geometry,
+				# and before this they accumulated for every zone ever walked — the "load
+				# everything and fail" end of the trade. Beyond the radius the subtree is
+				# FREED (the store keeps the data; walking back rebuilds it, which the mesh
+				# caches made cheap); within it, it stays banked and hidden, warm for return.
+				var roff := Vector2i(nb.get("offset", Vector2i.ZERO))
+				var rzd: int = maxi(int(ceil(absf(roff.x) / maxf(float(_live_w), 1.0))),
+					int(ceil(absf(roff.y) / maxf(float(_live_h), 1.0))))
+				if rzd > int(Settings.get_value("remember_radius", 2)):
+					_static_zones[id].queue_free()
+					_static_zones.erase(id)
+				else:
+					_static_zones[id].visible = false
 			continue
 		if not _static_zones.has(id):
 			var sub := Node3D.new()
