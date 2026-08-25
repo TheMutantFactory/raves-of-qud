@@ -213,6 +213,15 @@ func _refresh() -> void:
 	_foot.text = "[center][color=#%s]Points Remaining: %d  [/color][color=#%s][lb]Delete[rb][/color][color=#%s] Reset Selection[/color][/center]" % [
 		MUTED.to_html(false), _points, SEL_GOLD.to_html(false), MUTED.to_html(false)]
 
+## The picks go to the flow BEFORE the advance — the click box calls this too, so a mouse
+## Next can no longer drop them (see the parent's note on _nav_next).
+func _nav_next() -> void:
+	var picks: Array = []
+	for nm in _picks:
+		picks.append({"name": str(nm), "count": int(_picks[nm])})
+	chose_mutations.emit(picks, _base_points - _points)
+	advance_page.emit()
+
 func _step(d: int) -> void:
 	var i := _row + d
 	while i >= 0 and i < _rows.size() and str(_rows[i]["kind"]) != "mut":
@@ -233,10 +242,6 @@ func _unhandled_input(e: InputEvent) -> void:
 			KEY_DELETE, KEY_BACKSPACE:
 				_reset(); accept_event(); return
 			KEY_9, KEY_KP_9:
-				var picks: Array = []
-				for nm in _picks:
-					picks.append({"name": str(nm), "count": int(_picks[nm])})
-				chose_mutations.emit(picks, _base_points - _points)
-				advance_page.emit(); accept_event(); return
+				_nav_next(); accept_event(); return
 	if e.is_action_pressed("ui_cancel"):
 		closed.emit(); accept_event(); return

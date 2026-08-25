@@ -246,6 +246,16 @@ func _roll() -> void:
 		_points -= c
 	_refresh()
 
+## Back/Next for this screen — the click box and [9] both land here (see the parent's note).
+func _nav_next() -> void:
+	if _points > 0:
+		_ask_unspent()
+	else:
+		_advance()
+
+func _nav_back() -> void:
+	closed.emit()
+
 func _advance() -> void:
 	chose_attributes.emit(_val.duplicate(), _base_points - _points)
 	advance_page.emit()
@@ -318,10 +328,6 @@ func _unhandled_input(e: InputEvent) -> void:
 			KEY_DELETE, KEY_BACKSPACE:
 				_reset(); accept_event(); return
 			KEY_9, KEY_KP_9:
-				if _points > 0:
-					_ask_unspent()
-				else:
-					_advance()
-				accept_event(); return
+				_nav_next(); accept_event(); return
 	if e.is_action_pressed("ui_cancel"):
 		closed.emit(); accept_event(); return

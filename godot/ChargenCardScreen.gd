@@ -126,6 +126,16 @@ var _sel_frame: NinePatchRect          # Qud's big solid-yellow selection frame 
 
 # ══ SUBCLASS HOOKS — override these ════════════════════════════════════════════════
 
+## WHAT BACK AND NEXT DO — one path, so the key and the click cannot diverge. A screen that
+## must hand its build to the flow before advancing (attributes, mutations, cybernetics all
+## emit their picks first) overrides _nav_next rather than only handling the key, which is
+## exactly how a click would otherwise drop the player's choices on the floor.
+func _nav_back() -> void:
+	closed.emit()
+
+func _nav_next() -> void:
+	advance_page.emit()
+
 ## Node name (debug/inspection only).
 func _screen_node_name() -> String: return "ChargenCardScreen"
 
@@ -387,9 +397,35 @@ func _crumb_frame(box: Control, frame: Texture2D) -> void:
 
 # ══ layout: left/right page nav ════════════════════════════════════════════════════
 
+## ONE CLICK TARGET PER SIDE, spanning the chevron AND its caption — Daniel: "the arrow, the
+## keyboard shortcut and the word Back. Just draw one whole clicktarget box around it." The
+## box is added BEFORE the art it covers, which still draws on top; the chevron and the
+## caption both ignore the mouse, so the click lands here. Clicking Back is Esc and clicking
+## Next is [9], emitted through the same signals the keys use, so every screen that already
+## handles those keys is clickable for free.
+func _nav_hit(rect: Rect2, on_click: Callable, enabled := true) -> Control:
+	var c := Control.new()
+	c.position = rect.position
+	c.size = rect.size
+	c.mouse_filter = Control.MOUSE_FILTER_STOP if enabled else Control.MOUSE_FILTER_IGNORE
+	if enabled:
+		c.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+		c.gui_input.connect(func(e: InputEvent):
+			if e is InputEventMouseButton and e.pressed \
+					and e.button_index == MOUSE_BUTTON_LEFT:
+				on_click.call()
+				c.accept_event())
+	add_child(c)
+	return c
+
 func _build_side_nav() -> void:
 	var vp := get_viewport_rect().size
 	var ah: int = int(round(vp.y * 0.0306))   # 33px at 1080 — Qud's chevron height
+	# the two hit boxes go down FIRST so the chevrons and captions draw over them
+	_nav_hit(Rect2(vp.x * 0.012, vp.y * 0.470, vp.x * 0.098, vp.y * 0.086),
+		func(): _nav_back())
+	_nav_hit(Rect2(vp.x * 0.888, vp.y * 0.470, vp.x * 0.100, vp.y * 0.086),
+		func(): _nav_next(), _next_enabled())
 	var la := _make_arrow(true, NAV_ARROW, ah)
 	la.position = Vector2(vp.x * 0.033, vp.y * 0.485)
 	add_child(la)
@@ -1020,7 +1056,7 @@ func _confirm() -> void:
 
 func _unhandled_input(e: InputEvent) -> void:
 	if e.is_action_pressed("ui_cancel"):
-		closed.emit(); accept_event()
+		_nav_back(); accept_event()
 	elif e.is_action_pressed("ui_right"):
 		_engage(); _select(mini(_sel + 1, _cards.size() - 1)); accept_event()
 	elif e.is_action_pressed("ui_left"):
@@ -1034,7 +1070,7 @@ func _unhandled_input(e: InputEvent) -> void:
 		# THE NEXT AFFORDANCE, wired at last: the side nav has drawn "[9] Next" since the first
 		# card screen, and the signal existed, but nothing ever emitted it — found the moment a
 		# screen (the summary) actually needed it. Subclasses opt in via _next_enabled().
-		advance_page.emit(); accept_event()
+		_nav_next(); accept_event()
 
 # ══ extracted-sprite chrome ════════════════════════════════════════════════════════
 

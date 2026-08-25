@@ -166,6 +166,16 @@ func _toggle() -> void:
 	_points -= cost
 	_refresh()
 
+## Implants to the flow, then advance — shared by [9] and the click box.
+func _nav_next() -> void:
+	var picks: Array = []
+	for slot in _picks:
+		var m: Dictionary = _all[int(_picks[slot])]
+		picks.append({"blueprint": str(m.get("blueprint", "")),
+			"display": QudText.strip(str(m.get("display", ""))), "slot": str(slot)})
+	chose_cybernetics.emit(picks)
+	advance_page.emit()
+
 func _refresh() -> void:
 	var total := _all.size() + 1            # + the <none> row
 	var lo: int = clampi(_row - VISIBLE_ROWS / 2, 0, maxi(0, total - VISIBLE_ROWS))
@@ -219,12 +229,6 @@ func _unhandled_input(e: InputEvent) -> void:
 			KEY_DELETE, KEY_BACKSPACE:
 				_picks.clear(); _points = _base_points; _refresh(); accept_event(); return
 			KEY_9, KEY_KP_9:
-				var picks: Array = []
-				for slot in _picks:
-					var m: Dictionary = _all[int(_picks[slot])]
-					picks.append({"blueprint": str(m.get("blueprint", "")),
-						"display": QudText.strip(str(m.get("display", ""))), "slot": str(slot)})
-				chose_cybernetics.emit(picks)
-				advance_page.emit(); accept_event(); return
+				_nav_next(); accept_event(); return
 	if e.is_action_pressed("ui_cancel"):
 		closed.emit(); accept_event(); return
