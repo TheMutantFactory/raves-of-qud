@@ -68,33 +68,35 @@ func _build_body(vp: Vector2) -> void:
 	_points = _base_points
 	_all = d.get("cybernetics", [])
 	# left panel: the catalog
-	_panel_rule(vp, 0.252, 0.512, 0.213, "Cybernetics")
+	# ROW-PROFILED (parity_rows.py): Qud's panel header inks at 0.4843 and its first list row
+	# at 0.5083 (1920x1080). Raves' panel sat 23px low and its list 27px low; both lift here.
+	_panel_rule(vp, 0.252, 0.4909, 0.213, "Cybernetics")
 	_list_lbl = _rich("", "body")
-	_list_lbl.position = Vector2(vp.x * 0.255, vp.y * 0.527)
+	_list_lbl.position = Vector2(vp.x * 0.255, vp.y * 0.5019)
 	_list_lbl.size = Vector2(vp.x * 0.21, vp.y * 0.38)
 	_list_lbl.custom_minimum_size = _list_lbl.size
 	add_child(_list_lbl)
 	# right panel: the selected implant
 	_title_lbl = _rich("", "body")
-	_title_lbl.position = Vector2(vp.x * 0.478, vp.y * 0.503)
+	_title_lbl.position = Vector2(vp.x * 0.478, vp.y * 0.482)
 	_title_lbl.size = Vector2(vp.x * 0.30, vp.y * 0.03)
 	add_child(_title_lbl)
 	_icon = TextureRect.new()
 	_icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	_icon.stretch_mode = TextureRect.STRETCH_SCALE
 	_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_icon.position = Vector2(vp.x * 0.478, vp.y * 0.545)
+	_icon.position = Vector2(vp.x * 0.478, vp.y * 0.524)
 	_icon.size = Vector2(vp.y * 0.052, vp.y * 0.052)
 	add_child(_icon)
 	_detail_lbl = _rich("", "body")
 	_detail_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_detail_lbl.position = Vector2(vp.x * 0.521, vp.y * 0.532)
+	_detail_lbl.position = Vector2(vp.x * 0.521, vp.y * 0.511)
 	_detail_lbl.size = Vector2(vp.x * 0.245, vp.y * 0.07)
 	_detail_lbl.custom_minimum_size = _detail_lbl.size
 	add_child(_detail_lbl)
 	_behav_lbl = _rich("", "body")
 	_behav_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_behav_lbl.position = Vector2(vp.x * 0.521, vp.y * 0.605)
+	_behav_lbl.position = Vector2(vp.x * 0.521, vp.y * 0.584)
 	_behav_lbl.size = Vector2(vp.x * 0.245, vp.y * 0.08)
 	_behav_lbl.custom_minimum_size = _behav_lbl.size
 	add_child(_behav_lbl)

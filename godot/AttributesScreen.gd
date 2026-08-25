@@ -85,8 +85,10 @@ func _build_body(vp: Vector2) -> void:
 		_stats.append({"name": n, "min": int(st.get("min", 10)), "max": int(st.get("max", 24)),
 			"desc": str(st.get("desc", ""))})
 		_val[n] = int(st.get("min", 10))
+	# ROW-PROFILED against Qud's capture (parity_rows.py): its stat cards ink 527-656 at
+	# 1920x1080 — top 0.488, height 0.1194. Raves sat 11px low and 17px short.
 	var cw := vp.x * 0.068
-	var ch := vp.y * 0.105
+	var ch := vp.y * 0.1194
 	# the frame textures live in the parent's DEFAULT body, which this screen replaces —
 	# build them here or every card draws frameless
 	_border_tex = _dashed_border_tex(int(cw), int(ch))
@@ -97,7 +99,7 @@ func _build_body(vp: Vector2) -> void:
 	var x := vp.x * 0.5 - total * 0.5
 	for i in _stats.size():
 		var card := Control.new()
-		card.position = Vector2(x + i * (cw + gap), vp.y * 0.497)
+		card.position = Vector2(x + i * (cw + gap), vp.y * 0.488)
 		card.size = Vector2(cw, ch)
 		add_child(card)
 		var np := NinePatchRect.new()
@@ -138,7 +140,7 @@ func _build_body(vp: Vector2) -> void:
 		_cards_ui.append({"card": card, "np": np, "name": nm, "val": vl,
 			"mod": md, "cost": cst, "plus": plus, "minus": minus})
 	_desc_lbl = _rich("", "body")
-	_desc_lbl.position = Vector2(vp.x * 0.36, vp.y * 0.645)
+	_desc_lbl.position = Vector2(vp.x * 0.36, vp.y * 0.6137)   # Qud's desc inks at 0.6185
 	# _rich defaults to AUTOWRAP_OFF (the card screens' one-line descriptions want that), so a
 	# paragraph column has to ask for wrapping AND a width to wrap into
 	_desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

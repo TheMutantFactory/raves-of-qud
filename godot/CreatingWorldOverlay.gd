@@ -47,7 +47,11 @@ func _ready() -> void:
 		er.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		var eh := int(vp.y * 0.042)
 		er.size = Vector2(eh * em.get_width() / float(em.get_height()), eh)
-		er.position = Vector2(vp.x * 0.5 - er.size.x * 0.5, vp.y * 0.215)
+		# ROW-PROFILED against Qud's own Creating World capture (parity_rows.py): its emblem
+		# inks at 0.2093, its title at 0.2481 and its dot strip at 0.3981 (1920x1080). Below
+		# that the two screens carry different content — Qud's world-map art has no
+		# counterpart here — so only these three landmarks are matched, deliberately.
+		er.position = Vector2(vp.x * 0.5 - er.size.x * 0.5, vp.y * 0.2014)
 		_root.add_child(er)
 	var title := Label.new()
 	title.text = "Creating World"
@@ -58,10 +62,10 @@ func _ready() -> void:
 	title.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.anchor_left = 0.0; title.anchor_right = 1.0
-	title.position.y = vp.y * 0.258
+	title.position.y = vp.y * 0.2401
 	_root.add_child(title)
 	# the dotted progress strip: dots with square milestones, an arrowhead at the far end
-	var y := vp.y * 0.42
+	var y := vp.y * 0.402
 	var x0 := vp.x * 0.175
 	var x1 := vp.x * 0.825
 	var n := 56

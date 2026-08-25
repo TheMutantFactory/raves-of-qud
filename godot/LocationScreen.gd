@@ -23,6 +23,11 @@ func _subtitle() -> String: return ":choose starting location:"
 ## across, plus the dashed frame's breathing room.
 func _card_w_frac() -> float: return 0.094
 func _card_gap_frac() -> float: return 0.020
+## ROW-PROFILED (parity_rows.py): Qud's location cards ink from 0.4843 at 1920x1080 —
+## HIGHER than the figure-card screens' shared 0.483 lands them, because these cards are
+## twice as tall and Qud lifts the row to keep the description beneath it in place. The
+## chrome above (emblem, title, subtitle) needs no override; it measured within 1px.
+func _y_cards() -> float: return 0.4655
 
 func _breadcrumb_crumbs() -> Array:
 	var out: Array = []
