@@ -725,12 +725,20 @@ func _make_radial(n: int, tint: Color, power: float) -> Texture2D:
 ##
 ## `lit` is a Dictionary of Vector2i -> true. An ABSENT entry means unlit, so a cell the wire never
 ## sent (outside the zone) is dark, which is the right answer for a pool at the zone edge.
+var _pool_walls := {}   # the LIVE zone's wall cells, for the pool mask below
+
 func _pool_mask(lit: Dictionary, cx: int, cy: int, n: int) -> String:
 	var half := (n - 1) / 2
 	var out := ""
 	for j in n:
 		for i in n:
-			out += "1" if lit.has(Vector2i(cx - half + i, cy - half + j)) else "0"
+			var k := Vector2i(cx - half + i, cy - half + j)
+			# LIT AND NOT ROCK. Qud's light map marks a wall cell lit when its FACE is lit, so
+			# the mask alone painted glow onto wall cells' floors — visible through the carved
+			# voxel bases as light under the rock. Daniel: "I'm seeing the torchlight underneath
+			# a wall." The wall's lit face is the wall art's own business; the ground pool stops
+			# at the jamb.
+			out += "1" if lit.has(k) and not _pool_walls.has(k) else "0"
 	return out
 
 ## The tiled ground pool: the radial falloff, MULTIPLIED BY WHAT QUD SAYS IS LIT.
@@ -1040,6 +1048,9 @@ func _build_zone(cells: Array, offset: Vector2i, skip_creatures: bool, wall_type
 				_fence_cells[lk] = true
 	var wall_cells := {}
 	_group_wall_cells(cells, offset, wall_types, wall_cells)   # pass 1
+	if not _remembered_build:
+		_pool_walls = wall_cells   # the pool mask excludes rock (see _pool_mask); LIVE set only —
+		                           # _zone_wall_cells gets clobbered by every neighbour build
 	for cell in cells:                                         # pass 2
 		if not _remembered_build:
 			# WATCH WHAT THE CELL SPAWNS, so every voxel prop is fog-gated without each builder
@@ -1366,6 +1377,7 @@ func _build_static(id: String, cells: Array) -> void:
 		_bank = sub
 		_live_build = true
 		_group_wall_cells(cells, Vector2i.ZERO, _ib_wall_types, _ib_wall_cells)  # pass 1 (no GPU)
+		_pool_walls = _ib_wall_cells   # same capture as _build_zone's — the ib path IS the live path
 		_bank = null
 		_live_build = false
 		_ib_active = true
