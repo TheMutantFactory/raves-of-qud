@@ -12,7 +12,7 @@ extends Node3D
 ## CAMERA MODES (see Main's header for the key bindings):
 ##   COMPASS (default, cardinal-locked), FOLLOW, FIRST_PERSON, CINEMATIC, MOUSE, KEYBOARD, TOP_FOLLOW.
 
-enum CamMode { COMPASS, FOLLOW, FIRST_PERSON, CINEMATIC, MOUSE, KEYBOARD, TOP_FOLLOW }
+enum CamMode { COMPASS, FOLLOW, FIRST_PERSON, CINEMATIC, MOUSE, KEYBOARD, TOP_FOLLOW, ADVENTURE }
 var _mode: int = int(Settings.get_value("camera", CamMode.COMPASS))   # default from Options; COMPASS = cardinal-locked
 
 # Top-down (Qud-classic): orthographic, straight down, NORTH locked to screen-top, tracking the player.
@@ -194,7 +194,8 @@ func process(dt: float, multiview_on: bool, typing := false) -> void:
 	var _td_zoom := _mode == CamMode.TOP_FOLLOW and not _one_to_one   # 1:1 zooms in Qud's quarter
 	if _td_zoom and not Input.is_key_pressed(KEY_SHIFT):              # steps (wheel), not continuous R
 		if Input.is_key_pressed(KEY_R): _top_zoom = clampf(_top_zoom * (1.0 - dt), TOP_ZOOM_MIN, TOP_ZOOM_MAX)
-	elif (_mode == CamMode.COMPASS or _mode == CamMode.FOLLOW or _mode == CamMode.FIRST_PERSON) \
+	elif (_mode == CamMode.COMPASS or _mode == CamMode.FOLLOW or _mode == CamMode.FIRST_PERSON \
+			or _mode == CamMode.ADVENTURE) \
 			and not Input.is_key_pressed(KEY_SHIFT):
 		if Input.is_key_pressed(KEY_R): _dist = clampf(_dist * (1.0 - dt), DIST_MIN, DIST_MAX)
 	_update_camera(dt)
@@ -241,7 +242,7 @@ func _compass_dir(yaw_off := 0.0) -> Vector3:
 ## heading; FOLLOW the player's facing; else the current view direction flattened to horizontal.
 func cam_forward() -> Vector3:
 	match _mode:
-		CamMode.COMPASS, CamMode.FIRST_PERSON:
+		CamMode.COMPASS, CamMode.FIRST_PERSON, CamMode.ADVENTURE:
 			return _compass_dir()
 		CamMode.FOLLOW:
 			return _facing3()
@@ -256,6 +257,15 @@ func _compass_eye(yaw_off := 0.0, zoom := 1.0) -> Vector3:
 	var d := _dist * zoom
 	var back := TILES_BEHIND + d * cos(p)
 	return _player - _compass_dir(yaw_off) * back + Vector3(0, d * sin(p), 0)
+
+## ADVENTURE: the compass eye with its geometry on Options sliders instead of constants.
+func _adventure_eye(yaw_off := 0.0, zoom := 1.0) -> Vector3:
+	var d: float = maxf(1.0, float(Settings.get_value("adventure_distance", 14.0))) * zoom
+	var pdeg: float = clampf(float(Settings.get_value("adventure_angle", 35.0)), 2.0, 88.0)
+	var h: float = float(Settings.get_value("adventure_height", 0.0))
+	var pr := deg_to_rad(pdeg)
+	var back := TILES_BEHIND + d * cos(pr)
+	return _player - _compass_dir(yaw_off) * back + Vector3(0, h + d * sin(pr), 0)
 
 ## COMPASS pitch varies with zoom: shallow (COMPASS_PITCH) from COMPASS_CLOSE_DIST outward, steepening to
 ## COMPASS_PITCH_NEAR (overhead) as you zoom inside it. Smoothstepped so it arcs up-and-over at the close end.
@@ -314,7 +324,7 @@ var _mode_yaw := {}
 func adopt_pane_yaw(mode: int, deg: float) -> void:
 	if is_zero_approx(deg):
 		return
-	if mode == CamMode.COMPASS or mode == CamMode.FIRST_PERSON:
+	if mode == CamMode.COMPASS or mode == CamMode.FIRST_PERSON or mode == CamMode.ADVENTURE:
 		_compass_yaw = fposmod(_compass_yaw + deg_to_rad(deg), TAU)
 	else:
 		_mode_yaw[mode] = fposmod(float(_mode_yaw.get(mode, 0.0)) + deg_to_rad(deg), TAU)
@@ -347,6 +357,11 @@ func eye_look_for(mode: int, st: Dictionary = {}) -> Array:
 				var c := _one_to_one_center()
 				return [c + Vector3(0, TOP_H, 0), c]
 			return [_player + Vector3(0, TOP_H, 0), _player]
+		CamMode.ADVENTURE:
+			# COMPASS duplicated with the geometry on SLIDERS (Options): height, distance and
+			# angle are Settings values read per frame, so dialing a slider moves the camera
+			# live. Daniel: "duplicate Compass to Adventure mode... I'll try and dial it in."
+			return [_adventure_eye(yaw_off, zoom), _player + Vector3(0, look_h(), 0)]
 		_:  # COMPASS — the default, stable, cardinal-locked view
 			return [_compass_eye(yaw_off, zoom), _player + Vector3(0, look_h(), 0)]
 
@@ -645,7 +660,10 @@ func turn_follow(a: float) -> void:
 	_facing = Vector2(f.x, f.z).normalized()
 
 func set_player(pos: Vector3, facing: Vector2, update_facing: bool) -> void:
-	if update_facing and facing.length() > 0.0:
+	# 3RD-PERSON (FOLLOW) heading changes ONLY by the turn keys now, like first-person's yaw:
+	# a backward step used to update facing to the move direction and swing the whole camera
+	# 180. Daniel: "change the down key to move backwards instead of rotating 180 degrees."
+	if update_facing and facing.length() > 0.0 and _mode != CamMode.FOLLOW:
 		_facing = facing.normalized()
 	_player = pos
 	if not _seeded:

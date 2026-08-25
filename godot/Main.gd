@@ -73,7 +73,7 @@ const LEVEL_KEEP_DOWN := 2
 # The camera rig (nodes + modes + placement math) lives in CameraRig.gd, created in _ready. Main keeps
 # this enum as a MIRROR so its mode checks (input, snapshot, multiview) read `CamMode.X`; the values match
 # CameraRig.CamMode exactly. `_cam_rig._mode` is the live mode. (Stage 1 of the Main.gd decomposition.)
-enum CamMode { COMPASS, FOLLOW, FIRST_PERSON, CINEMATIC, MOUSE, KEYBOARD, TOP_FOLLOW }
+enum CamMode { COMPASS, FOLLOW, FIRST_PERSON, CINEMATIC, MOUSE, KEYBOARD, TOP_FOLLOW, ADVENTURE }
 var _cam_rig                    # CameraRig (Node3D, loaded); created in _ready. Untyped so the headless
 								# --check-only stays deterministic (a class_name's cache is flaky there);
 								# locals off _cam_rig.* therefore need explicit types, not `:=`.
@@ -1195,7 +1195,8 @@ func _build_mode_label() -> void:
 
 const _MODE_NAMES := {
 	CamMode.COMPASS: "COMPASS — cardinal-locked · arrows move (↑=fwd) · Q/E rotate · R/F zoom · S/D height · W/X dolly",
-	CamMode.FOLLOW: "FOLLOW — ↑↓ move · ←→ turn · Ctrl+Shift+←→ strafe · R/F zoom · S/D height · W/X dolly",
+	CamMode.FOLLOW: "3RD-PERSON — ↑↓ move (↓ backs up) · ←→ turn · Ctrl+Shift+←→ strafe · R/F zoom · S/D height · W/X dolly",
+	CamMode.ADVENTURE: "ADVENTURE — compass-locked · height/distance/angle sliders in Options · Q/E rotate",
 	CamMode.FIRST_PERSON: "FIRST-PERSON — ↑↓ move · ←→ turn · Ctrl+Shift+←→ strafe · Shift+arrows diagonal",
 	CamMode.CINEMATIC: "CINEMATIC — frames you + selected tile",
 	# Named as the ENUM and the Options "Default camera" list name them. These heads are the
@@ -1540,6 +1541,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		if event.keycode == KEY_5: _set_mode(CamMode.MOUSE); return
 		if event.keycode == KEY_6: _set_mode(CamMode.KEYBOARD); return
 		if event.keycode == KEY_7: _set_mode(CamMode.TOP_FOLLOW); return
+		if event.keycode == KEY_8: _set_mode(CamMode.ADVENTURE); return
 		if event.keycode == KEY_0 and not _cam_locked(): _multiview.toggle(); return   # 0 = all-views grid (a camera feature)
 		if event.keycode == KEY_QUOTELEFT:      # ` toggles the debug menu
 			_dbg_menu.toggle(); return
@@ -1552,9 +1554,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		if event.keycode == KEY_O:
 			_toggle_flat_2d(); return
 		# Q/E rotate the locked compass heading (COMPASS mode only), 45° or 90° per _compass_45
-		if _cam_rig._mode == CamMode.COMPASS and event.keycode == KEY_Q:
+		if (_cam_rig._mode == CamMode.COMPASS or _cam_rig._mode == CamMode.ADVENTURE) \
+				and event.keycode == KEY_Q:
 			_cam_rig._compass_yaw += _cam_rig.compass_step(); return
-		if _cam_rig._mode == CamMode.COMPASS and event.keycode == KEY_E:
+		if (_cam_rig._mode == CamMode.COMPASS or _cam_rig._mode == CamMode.ADVENTURE) \
+				and event.keycode == KEY_E:
 			_cam_rig._compass_yaw -= _cam_rig.compass_step(); return
 		# W / X dolly the camera one tile forward / back along its heading — move the
 		# camera like the player. Discrete per press; pairs with S/D vertical pan. Not

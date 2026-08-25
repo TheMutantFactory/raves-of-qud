@@ -37,6 +37,12 @@ const DEFAULTS := {
 	# return). Beyond it the subtree is freed — the store keeps the data and walking back
 	# rebuilds it. 1 = just the 3x3 ring; higher trades memory for fewer rebuilds.
 	"remember_radius": 2,
+	# ADVENTURE camera (mode 8): COMPASS duplicated with its geometry on Options sliders —
+	# defaults chosen to match COMPASS at its default zoom (dist 14, pitch ~35deg) so the
+	# mode starts as a faithful copy and Daniel dials it from there.
+	"adventure_height": 0.0,
+	"adventure_distance": 14.0,
+	"adventure_angle": 35.0,
 	"penumbra_divisions": 1,
 	# SHADOW SHOWS ON THE ART, NOT ON THE GROUND. With this on, a remembered cell's ground keeps
 	# its LIT colour and only the things standing on it carry the memory palette. Daniel, at night
