@@ -726,6 +726,7 @@ func _make_radial(n: int, tint: Color, power: float) -> Texture2D:
 ## `lit` is a Dictionary of Vector2i -> true. An ABSENT entry means unlit, so a cell the wire never
 ## sent (outside the zone) is dark, which is the right answer for a pool at the zone edge.
 var _pool_walls := {}   # the LIVE zone's wall cells, for the pool mask below
+var _bubble_r_now := 0.0   # eased cutout radius (see apply_cutaway)
 
 func _pool_mask(lit: Dictionary, cx: int, cy: int, n: int) -> String:
 	var half := (n - 1) / 2
@@ -9337,13 +9338,18 @@ func apply_cutaway(eye: Vector3, focus: Vector3, dt: float, enabled := true, bub
 	# them, stays solid — a bubble that opened everything read as the world dissolving.
 	var bubble: float = float(Settings.get_value("cutaway_bubble", 2.5))
 	var to_eye := (e2 - p2).normalized()
+	# The bubble is a SHADER CUTOUT now (see WALL_CUTOUT_SHADER), not a per-node fade — the
+	# fade kept every busy pixel of the wall art at low contrast; the cutout removes them.
+	# Radius eases toward its target so the hole melts open/shut like the fade used to.
+	if _voxel_shader_live != null:
+		var r_target: float = bubble if bubble_ok else 0.0
+		_bubble_r_now = lerpf(_bubble_r_now, r_target, ease)
+		_voxel_shader_live.set_shader_parameter("bubble_r", _bubble_r_now)
+		_voxel_shader_live.set_shader_parameter("bubble_pos", Vector3(p2.x, 0.0, p2.y))
+		_voxel_shader_live.set_shader_parameter("bubble_to_eye", Vector3(to_eye.x, 0.0, to_eye.y))
 	for cell in _wall_cutaway:
 		var target := 0.0
-		if bubble_ok and bubble > 0.0:
-			var rel := Vector2(cell.x, cell.y) - p2
-			if rel.length_squared() <= bubble * bubble and rel.dot(to_eye) > -0.75:
-				target = CUTAWAY_MAX
-		if target == 0.0 and enabled \
+		if enabled \
 				and (Vector2(cell.x, cell.y) - p2).length_squared() <= CUTAWAY_RADIUS * CUTAWAY_RADIUS \
 				and _wall_lit(cell):
 			var wd := (Vector2(cell.x, cell.y) - e2).length()
@@ -10356,16 +10362,57 @@ func _voxel_material() -> StandardMaterial3D:
 ## transparency 0 the depth pre-pass keeps it sorting like solid opaque; as it rises it blends out.
 ## Neighbour zones use the plain OPAQUE _voxel_material — they never fade, and there are MANY of them
 ## on the surface, so routing them through the transparent pipeline was what made the overworld crawl.
-var _voxel_mat_live: StandardMaterial3D
-func _voxel_material_live() -> StandardMaterial3D:
-	if _voxel_mat_live == null:
-		_voxel_mat_live = _voxel_material().duplicate()
-		_voxel_mat_live.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_DEPTH_PRE_PASS
-	return _voxel_mat_live
+## THE OCCLUDER CUTOUT (the isometric-RPG standard — Divinity/BG3/Diablo — replacing the
+## alpha fade Daniel called "very busy, because the wall is very busy"): fragments of live
+## walls inside a world-space cylinder around the player, on the camera side, are DISCARDED —
+## a hole, not a ghost — with a Bayer-dithered rim so the hole feathers instead of popping.
+## Uniforms are driven per frame by apply_cutaway; radius eases so rock melts open and shut.
+## Vertex colours are sRGB (the _voxel_material comment tells the tan-brick story) — converted
+## exactly, not by pow(2.2), so the wall reds measure identical to the StandardMaterial path.
+const WALL_CUTOUT_SHADER := "
+shader_type spatial;
+render_mode cull_disabled;
+uniform vec3 bubble_pos = vec3(100000.0, 0.0, 100000.0);
+uniform vec3 bubble_to_eye = vec3(0.0, 0.0, -1.0);
+uniform float bubble_r = 0.0;
+varying vec3 wpos;
+varying vec4 vcol;
+const float BAYER[16] = float[](
+	0.5, 8.5, 2.5, 10.5, 12.5, 4.5, 14.5, 6.5,
+	3.5, 11.5, 1.5, 9.5, 15.5, 7.5, 13.5, 5.5);
+vec3 srgb_to_linear(vec3 c) {
+	return mix(c / 12.92, pow((c + vec3(0.055)) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
+}
+void vertex() {
+	wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+	vcol = COLOR;
+}
+void fragment() {
+	if (bubble_r > 0.01) {
+		vec2 rel = wpos.xz - bubble_pos.xz;
+		float cut = clamp((bubble_r - length(rel)) / 0.9, 0.0, 1.0);
+		cut *= clamp((dot(rel, bubble_to_eye.xz) + 0.75) / 0.75, 0.0, 1.0);
+		if (cut > 0.001) {
+			int bi = (int(FRAGCOORD.y) % 4) * 4 + int(FRAGCOORD.x) % 4;
+			if (cut > BAYER[bi] / 16.0) { discard; }
+		}
+	}
+	ALBEDO = srgb_to_linear(vcol.rgb);
+	ROUGHNESS = 0.85;
+}
+"
+var _voxel_shader_live: ShaderMaterial = null
+func _voxel_material_live() -> Material:
+	if _voxel_shader_live == null:
+		var sh := Shader.new()
+		sh.code = WALL_CUTOUT_SHADER
+		_voxel_shader_live = ShaderMaterial.new()
+		_voxel_shader_live.shader = sh
+	return _voxel_shader_live
 
 ## The skin material for the wall currently being built: the fade-capable one for the live zone,
 ## plain opaque for neighbours (keyed off _live_build, set only during the live static build).
-func _wall_skin_material() -> StandardMaterial3D:
+func _wall_skin_material() -> Material:
 	return _voxel_material_live() if _live_build else _voxel_material()
 
 
