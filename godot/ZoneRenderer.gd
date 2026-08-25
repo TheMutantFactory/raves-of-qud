@@ -727,6 +727,10 @@ func _make_radial(n: int, tint: Color, power: float) -> Texture2D:
 ## sent (outside the zone) is dark, which is the right answer for a pool at the zone edge.
 var _pool_walls := {}   # the LIVE zone's wall cells, for the pool mask below
 var _bubble_r_now := 0.0   # eased cutout radius (see apply_cutaway)
+var _cursor_r_now := 0.0   # eased radius of the look cursor's cutout
+var _cursor_bubble := Vector2(-99999.0, -99999.0)   # look cursor cell, or the sentinel when look is off
+func set_cursor_bubble(p: Vector2) -> void:
+	_cursor_bubble = p
 
 func _pool_mask(lit: Dictionary, cx: int, cy: int, n: int) -> String:
 	var half := (n - 1) / 2
@@ -9342,11 +9346,23 @@ func apply_cutaway(eye: Vector3, focus: Vector3, dt: float, enabled := true, bub
 	# fade kept every busy pixel of the wall art at low contrast; the cutout removes them.
 	# Radius eases toward its target so the hole melts open/shut like the fade used to.
 	if _voxel_shader_live != null:
-		var r_target: float = bubble if bubble_ok else 0.0
+		var on: bool = bool(Settings.get_value("cutaway_bubble_on", true))
+		var r_target: float = bubble if (bubble_ok and on) else 0.0
 		_bubble_r_now = lerpf(_bubble_r_now, r_target, ease)
 		_voxel_shader_live.set_shader_parameter("bubble_r", _bubble_r_now)
 		_voxel_shader_live.set_shader_parameter("bubble_pos", Vector3(p2.x, 0.0, p2.y))
 		_voxel_shader_live.set_shader_parameter("bubble_to_eye", Vector3(to_eye.x, 0.0, to_eye.y))
+		# THE LOOK CURSOR'S OWN CUTOUT: while look mode is on, a second hole follows the cursor
+		# so you can see what stands behind occluding rock. It reveals GEOMETRY only — the cells
+		# behind keep whatever fog state they have (unexplored draws nothing, unseen draws the
+		# ghost), so looking never lights or explores anything. Daniel: "it will show something
+		# as if it's blocked by line-of-sight fog-of-war."
+		var c_target: float = bubble if (bubble_ok and on and _cursor_bubble.x > -90000.0) else 0.0
+		_cursor_r_now = lerpf(_cursor_r_now, c_target, ease)
+		_voxel_shader_live.set_shader_parameter("cursor_r", _cursor_r_now)
+		if _cursor_bubble.x > -90000.0:
+			_voxel_shader_live.set_shader_parameter("cursor_pos",
+				Vector3(_cursor_bubble.x, 0.0, _cursor_bubble.y))
 	for cell in _wall_cutaway:
 		var target := 0.0
 		if enabled \
@@ -10375,6 +10391,8 @@ render_mode cull_disabled;
 uniform vec3 bubble_pos = vec3(100000.0, 0.0, 100000.0);
 uniform vec3 bubble_to_eye = vec3(0.0, 0.0, -1.0);
 uniform float bubble_r = 0.0;
+uniform vec3 cursor_pos = vec3(100000.0, 0.0, 100000.0);
+uniform float cursor_r = 0.0;
 varying vec3 wpos;
 varying vec4 vcol;
 const float BAYER[16] = float[](
@@ -10388,14 +10406,22 @@ void vertex() {
 	vcol = COLOR;
 }
 void fragment() {
+	float cut = 0.0;
 	if (bubble_r > 0.01) {
 		vec2 rel = wpos.xz - bubble_pos.xz;
-		float cut = clamp((bubble_r - length(rel)) / 0.9, 0.0, 1.0);
-		cut *= clamp((dot(rel, bubble_to_eye.xz) + 0.75) / 0.75, 0.0, 1.0);
-		if (cut > 0.001) {
-			int bi = (int(FRAGCOORD.y) % 4) * 4 + int(FRAGCOORD.x) % 4;
-			if (cut > BAYER[bi] / 16.0) { discard; }
-		}
+		float c1 = clamp((bubble_r - length(rel)) / 0.9, 0.0, 1.0);
+		c1 *= clamp((dot(rel, bubble_to_eye.xz) + 0.75) / 0.75, 0.0, 1.0);
+		cut = c1;
+	}
+	if (cursor_r > 0.01) {
+		vec2 rel2 = wpos.xz - cursor_pos.xz;
+		float c2 = clamp((cursor_r - length(rel2)) / 0.9, 0.0, 1.0);
+		c2 *= clamp((dot(rel2, bubble_to_eye.xz) + 0.75) / 0.75, 0.0, 1.0);
+		cut = max(cut, c2);
+	}
+	if (cut > 0.001) {
+		int bi = (int(FRAGCOORD.y) % 4) * 4 + int(FRAGCOORD.x) % 4;
+		if (cut > BAYER[bi] / 16.0) { discard; }
 	}
 	ALBEDO = srgb_to_linear(vcol.rgb);
 	ROUGHNESS = 0.85;

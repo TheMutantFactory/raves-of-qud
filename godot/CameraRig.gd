@@ -210,6 +210,12 @@ func process(dt: float, multiview_on: bool, typing := false) -> void:
 		var mode_ok := not multiview_on and _mode != CamMode.TOP_FOLLOW \
 			and _mode != CamMode.FIRST_PERSON and _mode != CamMode.KEYBOARD
 		var cut := mode_ok and not Settings.qud_shape("cutaway")
+		# the look cursor's reveal bubble rides along: cell when look mode is live, sentinel off
+		if _inspector != null and _inspector.has_method("look_on") and _inspector.look_on():
+			var lc: Vector2i = _inspector.look_cell()
+			_renderer.set_cursor_bubble(Vector2(lc.x, lc.y))
+		else:
+			_renderer.set_cursor_bubble(Vector2(-99999.0, -99999.0))
 		_renderer.apply_cutaway(_cam.global_position, _player + Vector3(0, look_h(), 0), dt,
 			cut, mode_ok)
 
