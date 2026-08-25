@@ -1,6 +1,7 @@
-# Raves of Mud — a Godot 3D / 2.5D viewer for Caves of Qud
+# Raves of Mud — a Caves of Qud modpack (Godot 3D / 2.5D viewer)
 
-A **2.5D / 3D augmentation layer for [Caves of Qud](https://www.cavesofqud.com/)**. It does
+**Raves of Mud** (formerly *Raves of Qud*) is a **modpack for
+[Caves of Qud](https://www.cavesofqud.com/)** — a 2.5D / 3D augmentation layer for it. It does
 *not* reimplement the game. A real, paid, modded copy of Qud runs as the authoritative
 simulation; an in-game C# mod publishes what the player sees each turn over a localhost
 socket, and a Godot 4 client renders it as a lit 3D scene (greedy-meshed walls, billboarded
