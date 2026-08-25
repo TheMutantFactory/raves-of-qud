@@ -24,10 +24,14 @@ func _screen_node_name() -> String: return "CustomizeScreen"
 func _subtitle() -> String: return ":customize character:"
 func _load_items() -> Array: return []
 func _next_enabled() -> bool: return true
-## The form sits tight under the subtitle (the capture shows the title block ~0.03 higher
-## than the card screens'), so lift the whole centre column the way the caste screen does.
-func _y_title() -> float: return 0.400
-func _y_subtitle() -> float: return 0.424
+## ROW-PROFILED against Qud's own capture (tools/capture/parity_rows.py), not eyeballed —
+## the method ChargenCardScreen's layout notes set out. Qud's customize screen inks at
+## 1920x1080: title 423-440, subtitle 448-459, Name 478-488, Pet 500-510, deco 527-539,
+## the [R] line 985-998. A Label's ink starts ~0.008 of viewport height below the y it is
+## positioned at (font ascent), so each hook below is Qud's ink fraction LESS that offset;
+## the deco is ColorRects and takes Qud's fraction directly.
+func _y_title() -> float: return 0.3838     # ink 0.3917
+func _y_subtitle() -> float: return 0.4074  # ink 0.4148
 
 func _breadcrumb_crumbs() -> Array:
 	var out: Array = []
@@ -48,7 +52,7 @@ func _build_body(vp: Vector2) -> void:
 		var rl := _rich("", "body")
 		rl.anchor_left = 0.0
 		rl.anchor_right = 1.0
-		rl.position.y = vp.y * (0.448 + i * 0.020)
+		rl.position.y = vp.y * (0.4376 + i * 0.0204)   # ink 0.4426 / 0.4630 — Qud's own step
 		add_child(rl)
 		_row_labels.append(rl)
 	_refresh_rows()
@@ -60,13 +64,13 @@ func _build_body(vp: Vector2) -> void:
 		var k := ColorRect.new()
 		k.color = DECO_KNOB
 		k.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		k.position = Vector2(vp.x * 0.5 + off.x - ks * 0.5, vp.y * 0.512 + off.y - ks * 0.5)
+		k.position = Vector2(vp.x * 0.5 + off.x - ks * 0.5, vp.y * 0.4935 + off.y - ks * 0.5)
 		k.size = Vector2(ks, ks)
 		add_child(k)
 	var foot := _rich("[center][color=#%s][lb]R[rb][/color][color=#%s] Randomize Selection  [/color][color=#%s][lb]Delete[rb][/color][color=#%s] Reset Selection[/color][/center]" % [
 		SEL_GOLD.to_html(false), MUTED.to_html(false), SEL_GOLD.to_html(false), MUTED.to_html(false)], "body")
 	foot.anchor_left = 0.0; foot.anchor_right = 1.0
-	foot.position.y = vp.y * 0.905
+	foot.position.y = vp.y * 0.9073   # ink 0.9120
 	add_child(foot)
 	var hint := _rich("", "caption")
 	hint.anchor_left = 0.0; hint.anchor_right = 1.0

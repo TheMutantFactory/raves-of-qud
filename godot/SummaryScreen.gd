@@ -225,10 +225,13 @@ func _process(dt: float) -> void:
 func _build_body(vp: Vector2) -> void:
 	_summary_band(vp, 0.345, "Attributes")
 	_summary_band(vp, 0.6625, "Mutations" if bool(_genotype().get("isMutant", true)) else "Cybernetics")
-	var body_px := UiFont.px(get_viewport(), "body")
-	var step := body_px * 1.32
+	# ROW-PROFILED against Qud's capture (tools/capture/parity_rows.py): its attribute rows
+	# ink at 557, 576, 597 … at 1920x1080 — a 20px step, 0.0185 of viewport height. A step
+	# derived from the FONT (body_px * 1.32) drifted ~30% wider than Qud's, so the column
+	# came apart down the panel even when its first row was right.
+	var step := vp.y * 0.0185
 	# attributes, left column
-	var y0 := vp.y * 0.532
+	var y0 := vp.y * 0.5107   # ink 0.5157, Qud's first attribute row
 	var ax := vp.x * 0.298
 	var rows := _attribute_rows()
 	for i in rows.size():
@@ -307,7 +310,7 @@ func _build_body(vp: Vector2) -> void:
 ## refined against the capture in the parity pass.
 func _summary_band(vp: Vector2, cx: float, label: String) -> void:
 	var w := vp.x * SUMMARY_BAND_W
-	var y := vp.y * 0.508
+	var y := vp.y * 0.4932   # label ink 0.487, Qud's band header
 	var rule_h: int = maxi(1, int(round(vp.y * 0.0019)))
 	var lab := _text(label, CC_GOLD, "body")
 	lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
