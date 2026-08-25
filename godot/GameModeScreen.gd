@@ -25,10 +25,12 @@ func _default_index() -> int: return 1   # Classic, like Qud's default
 func _card_blocked(item_name: String) -> String:
 	if item_name != "Daily":
 		return ""
-	return "Daily runs are Caves of Qud only.\n" \
-		+ "Everyone plays one fixed character and world seed, and Raves' camera, lighting and " \
-		+ "look tools would not be the game the rest of the board played.\n" \
-		+ "Start a Daily in Qud's own window — Raves can attach to it afterwards."
+	# Daniel's wording, verbatim — including the joke. It says the same three things a longer
+	# note would (not here, why not, what to do instead) and sounds like the game does.
+	return "Daily runs are for vanilla Caves of Qud\n" \
+		+ "Raves of Qud does not support Daily mode\n" \
+		+ "It just wouldn't be fair to the other people running the Daily, for reasons\n" \
+		+ "Pobody's nerfect: you can create a Daily character in Vanilla Qud and load it with Raves of Qud."
 
 func _load_items() -> Array:
 	var path := InputModel.support_dir().path_join("chargen.json")

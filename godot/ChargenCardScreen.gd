@@ -573,8 +573,10 @@ func _build_body(vp: Vector2) -> void:
 	# warning off the right edge — a wrapped column needs it off and an explicit width.
 	_warn.fit_content = false
 	_warn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_warn.position = Vector2(vp.x * 0.28, vp.y * (_y_desc() + 0.075))
-	_warn.size = Vector2(vp.x * 0.44, vp.y * 0.14)
+	# WIDE ENOUGH TO CLEAR THE DECO. At 0.44 the last line wrapped and landed on the three-dot
+	# knob at 0.8333; the column is sized so a four-line warning finishes above it.
+	_warn.position = Vector2(vp.x * 0.225, vp.y * (_y_desc() + 0.075))
+	_warn.size = Vector2(vp.x * 0.55, vp.y * 0.14)
 	_warn.custom_minimum_size = _warn.size
 	add_child(_warn)
 
