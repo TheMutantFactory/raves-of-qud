@@ -36,6 +36,9 @@ Title screen
                 Same as classic
             Daily
                 Don't suupport for Raves. Qud classic only.
+                DONE (1100c8e): the card warns on hover/selection in amber and refuses
+                to start — Raves' camera, lighting and look tools would not be the game
+                the rest of the daily board played. Start it in Qud; attach Raves after.
             Tutorial
                 :choose genotype: force Mutations
                     :choose preset: force Marsh Taur
