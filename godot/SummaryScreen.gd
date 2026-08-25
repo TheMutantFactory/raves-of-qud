@@ -20,6 +20,9 @@ var subtype_name := ""
 ## The Presets lane (slice 5): the chosen pregen's record {name,tile,fg,detail,desc,code}.
 ## Non-empty flips the panels to the DECODED build — exact attributes and mutations.
 var pregen := {}
+## Explicit final values from the attributes screen (slice 7), stat -> value. Non-empty wins
+## over both the pregen decode and the genotype-minimum interim.
+var attributes := {}
 var _decoded := {}
 
 func _decoded_build() -> Dictionary:
@@ -80,6 +83,11 @@ func _subtype() -> Dictionary:
 ## Attribute rows: genotype minimum + this subtype's bonus, in Qud's canonical order.
 func _attribute_rows() -> Array:
 	var rows: Array = []
+	if not attributes.is_empty():
+		for st0 in _genotype().get("stats", []):
+			var n0 := str(st0.get("name", ""))
+			rows.append([n0, int(attributes.get(n0, int(st0.get("min", 10))))])
+		return rows
 	# a pregen's build code carries the EXACT purchase per stat: final = genotype min + points
 	var purchased: Dictionary = _decoded_build().get("attributes", {}) if not pregen.is_empty() else {}
 	var bonus := {}

@@ -1246,6 +1246,8 @@ var _cg_pet := ""         # pet blueprint (slice 3); empty = none
 var _cg_chartype := "New" # which chartype lane the flow is in ("New" / "Pregen" / ...)
 var _cg_pregen := ""      # pregen name (slice 5); non-empty = the driver's Pregen path
 var _cg_pregen_rec := {}  # ...and its full record, for the summary
+var _cg_attributes := {}  # stat -> final value, from the attributes screen (slice 7)
+var _cg_attr_spent := 0
 
 ## Qud's chargen opens on the GAME MODE step (Tutorial/Classic/Roleplay/Wander/Daily) before
 ## genotype; mirror that order — mode → genotype → subtype → embark.
@@ -1333,7 +1335,7 @@ func _reopen_summary() -> void:
 	elif _cg_chartype == "Pregen":
 		_open_summary("Presets", _cg_pregen_rec)
 	else:
-		_on_subtype_chosen(_cg_subtype)
+		_open_new_summary()
 
 ## Roll genotype + subtype out of the catalog and open the summary on them.
 func _roll_random() -> void:
@@ -1488,6 +1490,35 @@ func _on_genotype_chosen(genotype_name: String) -> void:
 func _on_subtype_chosen(subtype_name: String) -> void:
 	_cg_subtype = subtype_name
 	_close_overlay()
+	# THE NEW LANE'S POINT-BUY (slice 7): Qud runs the subtype into Attributes before the
+	# summary — the capture's breadcrumb, exactly ("... True Kin | Fuming God-Child |
+	# Attributes | ... | Summary"). Presets and Random skip it: their builds are already
+	# spent, which is why _open_summary is a separate path.
+	_open_attributes()
+	return
+
+## The stat steppers, then the summary carrying what was bought.
+func _open_attributes() -> void:
+	_close_overlay()
+	var att: Variant = load("res://AttributesScreen.gd").new()
+	UiState.set_scene("chargen_attributes")
+	att.mode_name = _cg_mode
+	att.chartype_title = "New"
+	att.genotype_name = _cg_genotype
+	att.subtype_name = _cg_subtype
+	_overlay = att
+	add_child(att)
+	att.closed.connect(func():
+		_close_overlay()
+		_on_genotype_chosen(_cg_genotype))
+	att.chose_attributes.connect(func(values: Dictionary, spent: int):
+		_cg_attributes = values
+		_cg_attr_spent = spent)
+	att.advance_page.connect(_open_new_summary)
+
+## The New lane's summary — the attributes just bought ride along.
+func _open_new_summary() -> void:
+	_close_overlay()
 	# BUILD SUMMARY (docs/new-game-plan.md slice 1): the hub every lane funnels into. Its
 	# Next embarks; its Back reopens the subtype screen so the build is never dropped by an
 	# accidental Esc. (Location / Customize / Creating World slot in AFTER this screen as
@@ -1497,12 +1528,13 @@ func _on_subtype_chosen(subtype_name: String) -> void:
 	sum.mode_name = _cg_mode
 	sum.chartype_title = "New"
 	sum.genotype_name = _cg_genotype
-	sum.subtype_name = subtype_name
+	sum.subtype_name = _cg_subtype
+	sum.attributes = _cg_attributes    # what the stepper screen bought
 	_overlay = sum
 	add_child(sum)
 	sum.closed.connect(func():
 		_close_overlay()
-		_on_genotype_chosen(_cg_genotype))
+		_open_attributes())
 	sum.advance_page.connect(_open_customize)
 
 ## CUSTOMIZE CHARACTER (slice 3), between the summary and the location pick — Qud's order,
