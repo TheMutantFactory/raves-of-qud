@@ -1,0 +1,137 @@
+extends "res://ChargenCardScreen.gd"
+
+## CHARACTER CREATION — CUSTOMIZE CHARACTER (docs/new-game-plan.md slice 3): Qud's two-row form
+## on the shared chrome. "Name: <random>" edits inline (empty = Qud rolls a name at embark);
+## "Pet: <none>" is a cycle row whose only option is <none> until a pets export exists (the pet
+## list lives in code, not EmbarkModules.xml — the mod side already honours a pet blueprint, so
+## the row lights up the moment the export lands). [R] rerolls to <random>, [Delete] resets the
+## row, [9] advances to Choose Starting Location.
+
+signal customized(cname: String, pet: String)
+
+var mode_name := ""
+var chartype_title := ""
+var genotype_name := ""
+var subtype_name := ""
+
+var _row := 0                 # 0 = Name, 1 = Pet
+var _cname := ""              # empty = <random>
+var _pet := ""                # empty = <none>
+var _row_labels: Array = []
+var _edit: LineEdit = null
+
+func _screen_node_name() -> String: return "CustomizeScreen"
+func _subtitle() -> String: return ":customize character:"
+func _load_items() -> Array: return []
+func _next_enabled() -> bool: return true
+## The form sits tight under the subtitle (the capture shows the title block ~0.03 higher
+## than the card screens'), so lift the whole centre column the way the caste screen does.
+func _y_title() -> float: return 0.400
+func _y_subtitle() -> float: return 0.424
+
+func _breadcrumb_crumbs() -> Array:
+	var out: Array = []
+	if mode_name != "":
+		out.append({"label": mode_name, "current": false,
+			"tile": _chargen_tile("gameModes", mode_name)})
+	if chartype_title != "":
+		out.append({"label": chartype_title, "current": false})
+	if genotype_name != "":
+		out.append({"label": genotype_name, "current": false,
+			"tile": _chargen_tile("genotypes", genotype_name)})
+	out.append({"label": "Customize", "current": true})
+	return out
+
+func _build_body(vp: Vector2) -> void:
+	_row_labels.clear()
+	for i in 2:
+		var rl := _rich("", "body")
+		rl.anchor_left = 0.0
+		rl.anchor_right = 1.0
+		rl.position.y = vp.y * (0.448 + i * 0.020)
+		add_child(rl)
+		_row_labels.append(rl)
+	_refresh_rows()
+	# the three-dot deco, close under the form (capture: ~0.505)
+	var ks: int = maxi(3, int(round(vp.y * 0.0046)))
+	var dx: int = maxi(2, int(round(vp.x * 0.0047)))
+	var dy: int = maxi(1, int(round(vp.y * 0.0037)))
+	for off in [Vector2(0, -dy), Vector2(-dx, dy), Vector2(dx, dy)]:
+		var k := ColorRect.new()
+		k.color = DECO_KNOB
+		k.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		k.position = Vector2(vp.x * 0.5 + off.x - ks * 0.5, vp.y * 0.512 + off.y - ks * 0.5)
+		k.size = Vector2(ks, ks)
+		add_child(k)
+	var foot := _rich("[center][color=#%s][lb]R[rb][/color][color=#%s] Randomize Selection  [/color][color=#%s][lb]Delete[rb][/color][color=#%s] Reset Selection[/color][/center]" % [
+		SEL_GOLD.to_html(false), MUTED.to_html(false), SEL_GOLD.to_html(false), MUTED.to_html(false)], "body")
+	foot.anchor_left = 0.0; foot.anchor_right = 1.0
+	foot.position.y = vp.y * 0.905
+	add_child(foot)
+	var hint := _rich("", "caption")
+	hint.anchor_left = 0.0; hint.anchor_right = 1.0
+	hint.position.y = vp.y * 0.965
+	var ih := int(round(UiFont.px(get_viewport(), "caption") * 1.15))
+	hint.push_paragraph(HORIZONTAL_ALIGNMENT_CENTER)
+	var icon := QudChrome.nav_icon(ih, SEL_GOLD)
+	hint.add_image(icon, icon.get_width(), icon.get_height())
+	hint.append_text("[color=#%s] navigate      [/color][color=#%s][lb]Space[rb][/color][color=#%s] select[/color]" % [
+		MUTED.to_html(false), SEL_GOLD.to_html(false), MUTED.to_html(false)])
+	hint.pop()
+	add_child(hint)
+
+func _refresh_rows() -> void:
+	var vals := ["<random>" if _cname == "" else _cname, "<none>" if _pet == "" else _pet]
+	var names := ["Name", "Pet"]
+	for i in 2:
+		var caret := "[color=#%s]›[/color]" % SEL_GOLD.to_html(false) if i == _row else " "
+		var col := NAME_SEL if i == _row else MUTED
+		_row_labels[i].text = "[center]%s[color=#%s]%s: %s[/color][/center]" % [
+			caret, col.to_html(false), names[i], vals[i]]
+
+func _begin_name_edit() -> void:
+	var vp := get_viewport_rect().size
+	_edit = LineEdit.new()
+	_edit.text = _cname
+	_edit.max_length = 60
+	_edit.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_edit.position = Vector2(vp.x * 0.40, vp.y * 0.444)
+	_edit.size = Vector2(vp.x * 0.20, UiFont.px(get_viewport(), "body") * 1.6)
+	_edit.add_theme_color_override("font_color", NAME_SEL)
+	add_child(_edit)
+	_edit.grab_focus()
+	_edit.text_submitted.connect(func(t: String):
+		_cname = t.strip_edges()
+		_end_name_edit())
+	_edit.focus_exited.connect(_end_name_edit)
+
+func _end_name_edit() -> void:
+	if _edit != null and is_instance_valid(_edit):
+		_edit.queue_free()
+	_edit = null
+	_refresh_rows()
+	customized.emit(_cname, _pet)
+
+func _unhandled_input(e: InputEvent) -> void:
+	if _edit != null:
+		if e.is_action_pressed("ui_cancel"):
+			_end_name_edit(); accept_event()
+		return   # the LineEdit owns the keys while editing
+	if e.is_action_pressed("ui_down") or e.is_action_pressed("ui_up"):
+		_row = 1 - _row
+		_refresh_rows(); accept_event(); return
+	if e.is_action_pressed("ui_accept"):
+		if _row == 0:
+			_begin_name_edit()
+		# Pet: the one option is <none> until the pets export lands — nothing to cycle
+		accept_event(); return
+	if e is InputEventKey and e.pressed and not e.echo:
+		if e.keycode == KEY_R:
+			if _row == 0: _cname = ""
+			else: _pet = ""
+			_refresh_rows(); customized.emit(_cname, _pet); accept_event(); return
+		if e.keycode == KEY_DELETE or e.keycode == KEY_BACKSPACE:
+			if _row == 0: _cname = ""
+			else: _pet = ""
+			_refresh_rows(); customized.emit(_cname, _pet); accept_event(); return
+	super._unhandled_input(e)   # Esc closes, 9 advances — the template's own handling

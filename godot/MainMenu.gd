@@ -1240,6 +1240,8 @@ var _cg_mode := ""
 var _cg_genotype := ""
 var _cg_subtype := ""
 var _cg_start := ""       # starting-location id (slice 2); empty = the driver's Joppa default
+var _cg_name := ""        # character name (slice 3); empty = Qud rolls one
+var _cg_pet := ""         # pet blueprint (slice 3); empty = none
 
 ## Qud's chargen opens on the GAME MODE step (Tutorial/Classic/Roleplay/Wander/Daily) before
 ## genotype; mirror that order — mode → genotype → subtype → embark.
@@ -1385,7 +1387,28 @@ func _on_subtype_chosen(subtype_name: String) -> void:
 	sum.closed.connect(func():
 		_close_overlay()
 		_on_genotype_chosen(_cg_genotype))
-	sum.advance_page.connect(_open_location)
+	sum.advance_page.connect(_open_customize)
+
+## CUSTOMIZE CHARACTER (slice 3), between the summary and the location pick — Qud's order,
+## straight off the capture's breadcrumb (... Summary > Customize > Joppa). Name empty means
+## Qud rolls one at embark; the pet row waits on a pets export.
+func _open_customize() -> void:
+	_close_overlay()
+	var cust: Variant = load("res://CustomizeScreen.gd").new()
+	UiState.set_scene("chargen_customize")
+	cust.mode_name = _cg_mode
+	cust.chartype_title = "New"
+	cust.genotype_name = _cg_genotype
+	cust.subtype_name = _cg_subtype
+	_overlay = cust
+	add_child(cust)
+	cust.closed.connect(func():
+		_close_overlay()
+		_on_subtype_chosen(_cg_subtype))
+	cust.customized.connect(func(cname: String, pet: String):
+		_cg_name = cname
+		_cg_pet = pet)
+	cust.advance_page.connect(_open_location)
 
 ## CHOOSE STARTING LOCATION (slice 2), after the summary. Its pick lands in _cg_start and
 ## embarks; Esc returns to the summary, same never-drop-the-build rule as everywhere.
@@ -1401,7 +1424,7 @@ func _open_location() -> void:
 	add_child(loc)
 	loc.closed.connect(func():
 		_close_overlay()
-		_on_subtype_chosen(_cg_subtype))
+		_open_customize())
 	loc.chose.connect(_on_location_chosen)
 
 func _on_location_chosen(location_id: String) -> void:
@@ -1426,6 +1449,10 @@ func _send_embark(genotype: String, subtype: String) -> void:
 		msg["gamemode"] = _cg_mode   # the driver honours it (PendingBuildSpec.Gamemode)
 	if _cg_start != "":
 		msg["start"] = _cg_start     # QudChooseStartingLocationModule id (slice 2)
+	if _cg_name != "":
+		msg["charname"] = _cg_name   # QudCustomizeCharacterModuleData.name (slice 3)
+	if _cg_pet != "":
+		msg["pet"] = _cg_pet         # ...and .pet, when a pets export exists
 	var payload := JSON.stringify(msg).to_utf8_buffer()
 	var n := payload.size()
 	var frame := PackedByteArray()

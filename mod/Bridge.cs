@@ -1527,6 +1527,10 @@ namespace RavesOfQud
                     if (!string.IsNullOrEmpty(gm)) spec.Gamemode = gm;
                     f.TryGetValue("start", out string sl);
                     if (!string.IsNullOrEmpty(sl)) spec.StartingLocation = sl;
+                    f.TryGetValue("charname", out string cn);
+                    if (!string.IsNullOrEmpty(cn)) spec.Name = cn;
+                    f.TryGetValue("pet", out string pt);
+                    if (!string.IsNullOrEmpty(pt)) spec.Pet = pt;
                     EmbarkDriver.RequestEmbark(spec);
                     return;
                 }

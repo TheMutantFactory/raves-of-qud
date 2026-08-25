@@ -42,6 +42,8 @@ namespace RavesOfQud
             public string Chartype = "New";            // "New" = custom; "Pregen" = a prebuilt character
             public string Pregen;                      // if set: boot this pregen (skips genotype/subtype build)
             public string StartingLocation = "Joppa";  // QudChooseStartingLocationModule id
+            public string Name;                        // character name; null/empty = Qud rolls one
+            public string Pet;                         // pet blueprint; null/empty = no pet
             public bool TutorialBoot = false;          // Tutorial: commit+boot in one shot (fallback path)
         }
 
@@ -174,6 +176,16 @@ namespace RavesOfQud
                 // null, so set it even though the player didn't pick it here.
                 SetData<QudChooseStartingLocationModule>(
                     eb, new QudChooseStartingLocationModuleData(spec.StartingLocation));
+                // CUSTOMIZE (name/pet), only when the player actually customized: the module
+                // tolerates absent data (every embark so far never set it), so absence stays
+                // the "all defaults, Qud rolls the name" path.
+                if (!string.IsNullOrEmpty(spec.Name) || !string.IsNullOrEmpty(spec.Pet))
+                {
+                    var cust = new QudCustomizeCharacterModuleData();
+                    if (!string.IsNullOrEmpty(spec.Name)) cust.name = spec.Name;
+                    if (!string.IsNullOrEmpty(spec.Pet)) cust.pet = spec.Pet;
+                    SetData<QudCustomizeCharacterModule>(eb, cust);
+                }
 
                 System.Console.WriteLine(
                     "[raves] embark: driving builder (genotype=" + spec.Genotype +
