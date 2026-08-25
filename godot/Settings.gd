@@ -43,6 +43,9 @@ const DEFAULTS := {
 	"adventure_height": 8.0,
 	"adventure_distance": 12.0,
 	"adventure_angle": 35.0,
+	# The see-through BUBBLE around the player: walls within this many cells, on the camera
+	# side, fade regardless of light — the narrow-cave answer. 0 turns it off.
+	"cutaway_bubble": 2.5,
 	"penumbra_divisions": 1,
 	# SHADOW SHOWS ON THE ART, NOT ON THE GROUND. With this on, a remembered cell's ground keeps
 	# its LIT colour and only the things standing on it carry the memory palette. Daniel, at night

@@ -9304,7 +9304,7 @@ func _wall_lit(cell: Vector2i) -> bool:
 ## of sight AND how clearly it sits BETWEEN the two; eased so it melts in/out. `enabled=false`
 ## eases everything back solid (top-down / first-person, where nothing is in the way). Called
 ## every frame by Main. Cheap: settled cells (the vast majority) skip the write.
-func apply_cutaway(eye: Vector3, focus: Vector3, dt: float, enabled := true) -> void:
+func apply_cutaway(eye: Vector3, focus: Vector3, dt: float, enabled := true, bubble_ok := true) -> void:
 	if _wall_cutaway.is_empty():
 		return
 	# A lit wall fades when it HIDES A LIT OPEN SPACE behind it (from the camera) — so you
@@ -9317,9 +9317,22 @@ func apply_cutaway(eye: Vector3, focus: Vector3, dt: float, enabled := true) -> 
 	var e2 := Vector2(eye.x, eye.z)
 	var p2 := Vector2(focus.x, focus.z)
 	var ease := clampf(dt * CUTAWAY_LERP, 0.0, 1.0)
+	# THE BUBBLE (Daniel: "a single area around the player that can be seen despite the walls
+	# being in front of it"): within cutaway_bubble cells of the player, any wall on the CAMERA
+	# side fades, lit or not. The beam rule below needs a LIT wall fronting a LIT open space —
+	# a dark narrow cave has neither, so caves got no cutaway at all ("we tried it before and
+	# it was so-so"). Camera-side only: rock BEHIND the player, the cave wall you see past
+	# them, stays solid — a bubble that opened everything read as the world dissolving.
+	var bubble: float = float(Settings.get_value("cutaway_bubble", 2.5))
+	var to_eye := (e2 - p2).normalized()
 	for cell in _wall_cutaway:
 		var target := 0.0
-		if enabled and (Vector2(cell.x, cell.y) - p2).length_squared() <= CUTAWAY_RADIUS * CUTAWAY_RADIUS \
+		if bubble_ok and bubble > 0.0:
+			var rel := Vector2(cell.x, cell.y) - p2
+			if rel.length_squared() <= bubble * bubble and rel.dot(to_eye) > -0.75:
+				target = CUTAWAY_MAX
+		if target == 0.0 and enabled \
+				and (Vector2(cell.x, cell.y) - p2).length_squared() <= CUTAWAY_RADIUS * CUTAWAY_RADIUS \
 				and _wall_lit(cell):
 			var wd := (Vector2(cell.x, cell.y) - e2).length()
 			for off in NEIGHBORS8:

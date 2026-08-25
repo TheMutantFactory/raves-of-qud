@@ -204,10 +204,14 @@ func process(dt: float, multiview_on: bool, typing := false) -> void:
 	# (you're inside it), free-fly, and the multi-view grid. When it turns off mid-fade,
 	# apply_cutaway still runs and eases every faded wall back to solid.
 	if _renderer != null:
-		var cut := not Settings.qud_shape("cutaway") \
-			and not multiview_on and _mode != CamMode.TOP_FOLLOW \
+		# The BUBBLE is gated by mode alone (its radius slider is its own on/off) — the beam
+		# cutaway keeps its QoL toggle. Daniel asked for the bubble with the QoL off, and a
+		# feature born disabled behind an unrelated switch reads as a feature that never shipped.
+		var mode_ok := not multiview_on and _mode != CamMode.TOP_FOLLOW \
 			and _mode != CamMode.FIRST_PERSON and _mode != CamMode.KEYBOARD
-		_renderer.apply_cutaway(_cam.global_position, _player + Vector3(0, look_h(), 0), dt, cut)
+		var cut := mode_ok and not Settings.qud_shape("cutaway")
+		_renderer.apply_cutaway(_cam.global_position, _player + Vector3(0, look_h(), 0), dt,
+			cut, mode_ok)
 
 # --- camera placement -------------------------------------------------------
 

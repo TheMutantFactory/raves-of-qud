@@ -35,6 +35,8 @@ const RAVES_ITEMS := [
 		"min": 0, "max": 30, "step": 0.5},
 	{"key": "adventure_angle", "label": "Adventure camera: angle (degrees down)", "type": "slider",
 		"min": 0, "max": 89, "step": 1},
+	{"key": "cutaway_bubble", "label": "See-through bubble around you (cells, 0 = off)",
+		"type": "slider", "min": 0, "max": 6, "step": 0.5},
 	{"key": "fullscreen", "label": "Fullscreen", "type": "toggle"},
 	{"key": "full_info", "label": "Show full info by default", "type": "toggle"},
 	# 1:1 test — visual effects, minimal by default; turn on to build up toward Qud (apply on relaunch).
