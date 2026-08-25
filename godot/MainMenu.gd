@@ -1369,9 +1369,22 @@ func _on_genotype_chosen(genotype_name: String) -> void:
 func _on_subtype_chosen(subtype_name: String) -> void:
 	_cg_subtype = subtype_name
 	_close_overlay()
-	# Vertical slice: genotype + subtype is enough to embark. (Attributes / Mutations /
-	# Cybernetics / Summary stages will slot in BEFORE this step as they're built.)
-	_embark()
+	# BUILD SUMMARY (docs/new-game-plan.md slice 1): the hub every lane funnels into. Its
+	# Next embarks; its Back reopens the subtype screen so the build is never dropped by an
+	# accidental Esc. (Location / Customize / Creating World slot in AFTER this screen as
+	# they are built — the summary's Next simply re-targets.)
+	var sum: Variant = load("res://SummaryScreen.gd").new()
+	UiState.set_scene("chargen_summary")
+	sum.mode_name = _cg_mode
+	sum.chartype_title = "New"
+	sum.genotype_name = _cg_genotype
+	sum.subtype_name = subtype_name
+	_overlay = sum
+	add_child(sum)
+	sum.closed.connect(func():
+		_close_overlay()
+		_on_genotype_chosen(_cg_genotype))
+	sum.advance_page.connect(_embark)
 
 ## Send the assembled build to the mod, which skips Qud's chargen and boots straight into a
 ## running game (see mod/EmbarkDriver.cs), then switch Raves to the Holodeck to watch it.

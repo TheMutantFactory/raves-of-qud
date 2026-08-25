@@ -462,6 +462,12 @@ func _build_center() -> void:
 	sub.position.y = vp.y * _y_subtitle()   # tighter under the title, as in Qud (was 0.468 — too low)
 	add_child(sub)
 
+	_build_body(vp)
+
+## THE BODY HOOK. The default body is the card row + description + deco + randomize line + nav
+## hint — every ":choose …:" screen. A summary-style screen (no cards, panel layout) overrides
+## this and keeps all the chrome above (emblem, title, subtitle, breadcrumb, side nav) for free.
+func _build_body(vp: Vector2) -> void:
 	var card_w := int(vp.x * _card_w_frac())
 	var card_h := int(vp.y * 0.086)
 	_border_tex = _dashed_border_tex(card_w, card_h)
@@ -886,6 +892,8 @@ func _engage() -> void:
 ## its neighbour, exactly as Qud draws it). Bright yellow while it's still the onboarding steer, the
 ## normal darker gold once the player has engaged. The card's own dotted frame stays dim underneath.
 func _ensure_sel_frame() -> void:
+	if _items.is_empty():
+		return
 	if _sel_frame != null:
 		return
 	var np := NinePatchRect.new()
@@ -907,6 +915,8 @@ func _ensure_sel_frame() -> void:
 	_sel_frame = np
 
 func _init_sel_frame_deferred() -> void:
+	if _items.is_empty():
+		return
 	await get_tree().process_frame
 	await get_tree().process_frame
 	_position_sel_frame()
@@ -970,6 +980,8 @@ func _sel_frame_tex() -> ImageTexture:
 	return ImageTexture.create_from_image(img)
 
 func _apply_selection() -> void:
+	if _items.is_empty():
+		return
 	for i in range(_cards.size()):
 		var on: bool = (i == _sel)
 		var c: Dictionary = _cards[i]
