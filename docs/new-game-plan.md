@@ -2,10 +2,19 @@
 
 ## STATUS: slices 1-9 all shipped (2026-08-25)
 
-Every screen in Daniel's flow tree exists and is wired. What remains is the
-MEASURED PARITY PASS — the layout fractions in each new screen are first-pass
-reads off the captures in `~/screenshots/new game/`, not row-profiled the way
-the card screens were (see ChargenCardScreen's layout notes for the method).
+Every screen in Daniel's flow tree exists and is wired.
+
+PARITY PASS, started 2026-08-25 with `tools/capture/parity_rows.py` (row-profile
+Qud's capture against Raves', pair bands by proximity, read the delta):
+  * Customize — DONE, title 0.0px, everything else within 3px
+  * Build summary — DONE, band headers + the whole attribute column within 1px
+  * Location, Attributes, Cybernetics, Mutations, Creating World — still
+    first-pass fractions; profile each against its capture the same way
+    (`--cols` to isolate the column that matters).
+
+Known and deliberately unchanged: the nav-hint line sits ~6px above Qud's on
+every card screen. It is the SHARED hook every already-parity-checked screen
+uses, so moving it is its own measured change, not a side effect of this pass.
 
 Pending externally: ONE Qud restart activates every export written for these
 slices — startingLocations, pregens, mutations, cybernetics — plus the
