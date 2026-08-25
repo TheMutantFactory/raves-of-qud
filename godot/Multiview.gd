@@ -9,9 +9,9 @@ extends Node
 ## are plain ints matching CameraRig.CamMode's order.
 
 const TOP_FOLLOW := 6              # CamMode.TOP_FOLLOW — the one orthographic mode (kept enum-free)
-const MODES := [0, 1, 2, 3, 4, 5, 6]
+const MODES := [0, 1, 2, 3, 4, 5, 6, 7]   # ...and 7 = ADVENTURE, the slider-tuned compass
 const PANE_ZOOM_MIN := 0.25
-const PANE_ZOOM_MAX := 4.0   # CamMode order: COMPASS, FOLLOW, FIRST_PERSON, CINEMATIC, MOUSE, KEYBOARD, TOP_FOLLOW
+const PANE_ZOOM_MAX := 4.0   # CamMode order: COMPASS, FOLLOW(3rd-person), FIRST_PERSON, CINEMATIC, MOUSE, KEYBOARD, TOP_FOLLOW, ADVENTURE
 
 var _cam_rig                       # CameraRig: per-pane eye/look math + shared cam fov
 var _mode_names: Dictionary        # mode int -> label string (Main's _MODE_NAMES), for the pane captions

@@ -58,6 +58,8 @@ const ACTIONS := {
 	"cam_cinematic":    {"label": "Cinematic", "desc": "Frames you + the selected tile", "cat": "Camera", "scheme": "any", "key": KEY_4, "legend": "4"},
 	"cam_mouse":        {"label": "Orbit camera", "desc": "Orbit/pan with the mouse", "cat": "Camera", "scheme": "any", "key": KEY_5, "legend": "5"},
 	"cam_keyboard":     {"label": "Fly camera", "desc": "Free flight (WASD move, arrows aim)", "cat": "Camera", "scheme": "any", "key": KEY_6, "legend": "6"},
+	"cam_top_follow":   {"label": "Top-down camera", "desc": "Straight down, north up", "cat": "Camera", "scheme": "any", "key": KEY_7, "legend": "7"},
+	"cam_adventure":    {"label": "Adventure camera", "desc": "Compass with height/distance/angle sliders (Options)", "cat": "Camera", "scheme": "any", "key": KEY_8, "legend": "8"},
 
 	# --- camera control -------------------------------------------------------
 	"rotate_left":  {"label": "Rotate left", "desc": "Turn the compass heading left 90°", "cat": "Camera", "scheme": "any", "key": KEY_Q, "legend": "Q"},

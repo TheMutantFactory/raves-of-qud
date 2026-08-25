@@ -350,13 +350,13 @@ func _build_numpad_grid() -> void:
 				grid.add_child(_cap(id))
 	_content.add_child(grid)
 	# camera + tools still apply under the numpad scheme
-	_add_cluster("Camera", ["cam_compass", "cam_follow", "cam_first_person", "cam_cinematic", "cam_mouse", "cam_keyboard"])
+	_add_cluster("Camera", ["cam_compass", "cam_follow", "cam_first_person", "cam_cinematic", "cam_mouse", "cam_keyboard", "cam_top_follow", "cam_adventure"])
 	_add_cluster("Camera control", ["rotate_left", "rotate_right", "debug_menu"])
 	_add_cluster("View & tools", ["inspect", "screenshot", "font_smaller", "font_larger", "cancel"])
 	_add_nav("‹ Back", "Next  ›")
 
 func _build_function_keys() -> void:
-	_add_cluster("Camera modes (number row)", ["cam_compass", "cam_follow", "cam_first_person", "cam_cinematic", "cam_mouse", "cam_keyboard"])
+	_add_cluster("Camera modes (number row)", ["cam_compass", "cam_follow", "cam_first_person", "cam_cinematic", "cam_mouse", "cam_keyboard", "cam_top_follow", "cam_adventure"])
 
 	# arrows as an inverted-T
 	_content.add_child(_section_label("Movement — relative to the camera"))
