@@ -11,6 +11,9 @@ var mode_name := ""
 var chartype_title := ""
 var genotype_name := ""
 var subtype_name := ""
+## Tutorial (slice 9): show only locations in this Set — "Tutorial" surfaces the sunken
+## caravanserai the normal lane hides. Empty = the ordinary, non-Tutorial roster.
+var force_set := ""
 
 var _grids := {}    # item name -> grid array, stashed by _load_items for _card_icon
 
@@ -44,7 +47,10 @@ func _load_items() -> Array:
 	var out: Array = []
 	var hotkeys := "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 	for loc in parsed.get("startingLocations", []):
-		if str(loc.get("set", "")) == "Tutorial":
+		if force_set != "":
+			if str(loc.get("set", "")) != force_set:
+				continue
+		elif str(loc.get("set", "")) == "Tutorial":
 			continue   # the Tutorial lane's forced start, never offered here (Qud hides it too)
 		var disp := QudText.strip(str(loc.get("display", loc.get("id", ""))))
 		# `tile` is a SENTINEL: _resolve_icons skips empty tiles entirely, and our icons come
