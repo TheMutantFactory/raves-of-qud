@@ -56,6 +56,53 @@ namespace RavesOfQud
             }
         }
 
+        /// <summary>
+        /// The Choose Starting Location stage (docs/new-game-plan.md slice 2): id, Qud-markup
+        /// display name, description, the Set flag (Tutorial locations excluded client-side),
+        /// and the 5x3 world-map tile grid each card renders. Read from EmbarkModules.xml via
+        /// DataManager.FilePath, so base + mods resolve exactly as Qud resolves them.
+        /// </summary>
+        private static void WriteStartingLocations(JsonWriter j)
+        {
+            j.Name("startingLocations").BeginArray();
+            try
+            {
+                var doc = new System.Xml.XmlDocument();
+                doc.Load(XRL.DataManager.FilePath("EmbarkModules.xml"));
+                var nodes = doc.SelectNodes("//locations/location");
+                if (nodes != null) foreach (System.Xml.XmlNode loc in nodes)
+                {
+                    var id = loc.Attributes?["ID"]?.Value ?? "";
+                    if (string.IsNullOrEmpty(id)) continue;
+                    j.BeginObject();
+                    j.Member("id", id);
+                    j.Member("display", loc.Attributes?["Name"]?.Value ?? id);
+                    j.Member("set", loc.Attributes?["Set"]?.Value ?? "");
+                    var desc = loc.SelectSingleNode("description");
+                    j.Member("desc", desc != null ? desc.InnerText.Trim() : "");
+                    j.Name("grid").BeginArray();
+                    var cells = loc.SelectNodes("grid");
+                    if (cells != null) foreach (System.Xml.XmlNode g in cells)
+                    {
+                        j.BeginObject();
+                        j.Member("pos", g.Attributes?["Position"]?.Value ?? "");
+                        j.Member("tile", g.Attributes?["Tile"]?.Value ?? "");
+                        j.Member("fg", g.Attributes?["Foreground"]?.Value ?? "y");
+                        j.Member("detail", g.Attributes?["Detail"]?.Value ?? "");
+                        j.EndObject();
+                        TileExporter.Ensure(g.Attributes?["Tile"]?.Value);
+                    }
+                    j.EndArray();
+                    j.EndObject();
+                }
+            }
+            catch (Exception e)
+            {
+                System.Console.WriteLine("[raves] startingLocations export failed: " + e.Message);
+            }
+            j.EndArray();
+        }
+
         private static void Export()
         {
             var j = new JsonWriter();
@@ -64,6 +111,7 @@ namespace RavesOfQud
             WriteSubtypes(j);
             WriteGameModes(j);
             WriteCharTypes(j);
+            WriteStartingLocations(j);
             j.EndObject();
             // Write ATOMICALLY: WriteAllText truncates-then-writes, so a Raves chargen screen reading the
             // file mid-write catches it empty ("No chargen data yet"). Write a temp then atomically swap

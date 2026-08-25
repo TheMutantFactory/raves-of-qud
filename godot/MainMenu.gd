@@ -1239,6 +1239,7 @@ func _close_overlay() -> void:
 var _cg_mode := ""
 var _cg_genotype := ""
 var _cg_subtype := ""
+var _cg_start := ""       # starting-location id (slice 2); empty = the driver's Joppa default
 
 ## Qud's chargen opens on the GAME MODE step (Tutorial/Classic/Roleplay/Wander/Daily) before
 ## genotype; mirror that order — mode → genotype → subtype → embark.
@@ -1384,7 +1385,29 @@ func _on_subtype_chosen(subtype_name: String) -> void:
 	sum.closed.connect(func():
 		_close_overlay()
 		_on_genotype_chosen(_cg_genotype))
-	sum.advance_page.connect(_embark)
+	sum.advance_page.connect(_open_location)
+
+## CHOOSE STARTING LOCATION (slice 2), after the summary. Its pick lands in _cg_start and
+## embarks; Esc returns to the summary, same never-drop-the-build rule as everywhere.
+func _open_location() -> void:
+	_close_overlay()
+	var loc: Variant = load("res://LocationScreen.gd").new()
+	UiState.set_scene("chargen_location")
+	loc.mode_name = _cg_mode
+	loc.chartype_title = "New"
+	loc.genotype_name = _cg_genotype
+	loc.subtype_name = _cg_subtype
+	_overlay = loc
+	add_child(loc)
+	loc.closed.connect(func():
+		_close_overlay()
+		_on_subtype_chosen(_cg_subtype))
+	loc.chose.connect(_on_location_chosen)
+
+func _on_location_chosen(location_id: String) -> void:
+	_cg_start = location_id
+	_close_overlay()
+	_embark()
 
 ## Send the assembled build to the mod, which skips Qud's chargen and boots straight into a
 ## running game (see mod/EmbarkDriver.cs), then switch Raves to the Holodeck to watch it.
@@ -1400,7 +1423,9 @@ func _embark() -> void:
 func _send_embark(genotype: String, subtype: String) -> void:
 	var msg := {"type": "command", "name": "embark", "genotype": genotype, "subtype": subtype}
 	if _cg_mode != "":
-		msg["mode"] = _cg_mode   # game mode (Classic/Roleplay/…); the driver may ignore it for now
+		msg["gamemode"] = _cg_mode   # the driver honours it (PendingBuildSpec.Gamemode)
+	if _cg_start != "":
+		msg["start"] = _cg_start     # QudChooseStartingLocationModule id (slice 2)
 	var payload := JSON.stringify(msg).to_utf8_buffer()
 	var n := payload.size()
 	var frame := PackedByteArray()

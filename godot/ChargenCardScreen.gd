@@ -1025,6 +1025,12 @@ func _unhandled_input(e: InputEvent) -> void:
 		_confirm(); accept_event()
 	elif e is InputEventKey and e.pressed and not e.echo and e.keycode == KEY_R:
 		_randomize(); accept_event()
+	elif e is InputEventKey and e.pressed and not e.echo \
+			and (e.keycode == KEY_9 or e.keycode == KEY_KP_9) and _next_enabled():
+		# THE NEXT AFFORDANCE, wired at last: the side nav has drawn "[9] Next" since the first
+		# card screen, and the signal existed, but nothing ever emitted it — found the moment a
+		# screen (the summary) actually needed it. Subclasses opt in via _next_enabled().
+		advance_page.emit(); accept_event()
 
 # ══ extracted-sprite chrome ════════════════════════════════════════════════════════
 
