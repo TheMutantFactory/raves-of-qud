@@ -867,6 +867,14 @@ func _build_version() -> void:
 	l.autowrap_mode = TextServer.AUTOWRAP_OFF
 	l.theme_type_variation = "Caption"
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# A DROP SHADOW IN QUD'S FIELD COLOUR ('k', #0f3b3a): the corner sits over the title art,
+	# where gold on pale stone and magenta on teal both lose their edges. The shadow is the
+	# colour Qud paints behind everything, so it reads as the text sitting ON the world rather
+	# than as an effect laid over it.
+	l.add_theme_color_override("font_shadow_color", QudPalette.COLORS["k"])
+	l.add_theme_constant_override("shadow_offset_x", 2)
+	l.add_theme_constant_override("shadow_offset_y", 2)
+	l.add_theme_constant_override("shadow_outline_size", 2)
 	l.text = ("[right][color=#%s]Caves of Qud %s Copyright Freehold Games.\n"
 		+ "All rights reserved.\n"
 		+ "Build %s[/color]\n"
@@ -877,7 +885,8 @@ func _build_version() -> void:
 		# colour of whoever it is about, so "who requires what of whom" is legible at a
 		# glance instead of having to be read. Daniel's split, to the clause.
 		+ "[color=#%s]Raves of Qud requires a [/color][color=#%s]legally installed copy of Caves of Qud.[/color]\n"
-		+ "[color=#%s]No Caves of Qud content or artwork is claimed, hosted, or distributed by [/color][color=#%s]Raves of Qud.[/color]\n"
+		+ "[color=#%s]No Caves of Qud content or artwork is claimed, hosted,\n"
+		+ "or distributed by [/color][color=#%s]Raves of Qud.[/color]\n"
 		+ "[color=#%s]Freehold Games content [/color][color=#%s]is loaded at runtime.[/color][/right]") % [
 		gold, Brand.QUD_VERSION, Brand.QUD_BUILD,
 		mag, Brand.RAVES_VERSION, Brand.LICENSE,
