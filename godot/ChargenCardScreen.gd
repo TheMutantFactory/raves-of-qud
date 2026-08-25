@@ -174,6 +174,10 @@ func _y_desc() -> float: return 0.665
 ## game modes by drawing them narrower and tighter, so a screen with a long row supplies its own
 ## measured pair rather than inheriting the five-card one.
 func _card_w_frac() -> float: return 0.049
+## Card HEIGHT as a fraction of viewport height. A hook for the same reason the width is one:
+## Qud's starting-location cards carry a 5x3 map thumbnail and are far taller than the figure
+## cards, and a screen with taller cards is not the figure row stretched.
+func _card_h_frac() -> float: return 0.086
 func _card_gap_frac() -> float: return 0.014
 
 ## How far ABOVE the selected card the big selection frame reaches, as a fraction of viewport height.
@@ -469,7 +473,7 @@ func _build_center() -> void:
 ## this and keeps all the chrome above (emblem, title, subtitle, breadcrumb, side nav) for free.
 func _build_body(vp: Vector2) -> void:
 	var card_w := int(vp.x * _card_w_frac())
-	var card_h := int(vp.y * 0.086)
+	var card_h := int(vp.y * _card_h_frac())
 	_border_tex = _dashed_border_tex(card_w, card_h)
 	_frame_tex = _load_card_frame()
 	_frame_extracted = _frame_tex != null

@@ -23,11 +23,13 @@ func _subtitle() -> String: return ":choose starting location:"
 ## across, plus the dashed frame's breathing room.
 func _card_w_frac() -> float: return 0.094
 func _card_gap_frac() -> float: return 0.020
-## ROW-PROFILED (parity_rows.py): Qud's location cards ink from 0.4843 at 1920x1080 —
-## HIGHER than the figure-card screens' shared 0.483 lands them, because these cards are
-## twice as tall and Qud lifts the row to keep the description beneath it in place. The
-## chrome above (emblem, title, subtitle) needs no override; it measured within 1px.
-func _y_cards() -> float: return 0.4655
+## MEASURED off the Joppa card's own map tiles, which are an unambiguous landmark where the
+## band profile was not: Qud inks them 0.5148..0.6270 of content height. That is a card far
+## TALLER than the figure screens' 0.086 (the tiles alone span 0.11), and a row starting
+## lower than the shared hook — the first pass read a band inside the card as the card top
+## and corrected the wrong way, which put the cards through the title.
+func _y_cards() -> float: return 0.4729
+func _card_h_frac() -> float: return 0.195
 
 func _breadcrumb_crumbs() -> Array:
 	var out: Array = []
@@ -74,8 +76,12 @@ func _card_icon(_tile: String, item_name: String) -> Dictionary:
 	var grid: Array = _grids.get(item_name, [])
 	if grid.is_empty():
 		return {"colored": null, "neutral": null}
-	var cell := 16
-	var img := Image.create(cell * 5, cell * 3, false, Image.FORMAT_RGBA8)
+	# QUD'S TERRAIN TILES ARE 16x24, NOT SQUARE. Compositing them into square cells squashed
+	# every map thumbnail to two thirds of its height — measured against Qud's own capture,
+	# whose tile block is the same WIDTH as ours but 1.5x taller, which is exactly 24/16.
+	var cw := 16
+	var chh := 24
+	var img := Image.create(cw * 5, chh * 3, false, Image.FORMAT_RGBA8)
 	img.fill(Color(0, 0, 0, 0))
 	for g in grid:
 		var pos := str(g.get("pos", ""))
@@ -92,9 +98,9 @@ func _card_icon(_tile: String, item_name: String) -> Dictionary:
 		if t == null:
 			continue
 		var ti := t.get_image()
-		if ti.get_width() != cell:
-			ti.resize(cell, cell, Image.INTERPOLATE_NEAREST)
-		img.blit_rect(ti, Rect2i(0, 0, cell, cell), Vector2i(cx * cell, cy * cell))
+		if ti.get_width() != cw or ti.get_height() != chh:
+			ti.resize(cw, chh, Image.INTERPOLATE_NEAREST)
+		img.blit_rect(ti, Rect2i(0, 0, cw, chh), Vector2i(cx * cw, cy * chh))
 	var colored := ImageTexture.create_from_image(img)
 	var dim := img.duplicate()
 	for y in dim.get_height():
