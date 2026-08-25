@@ -234,6 +234,30 @@ func _build_pane_ui(cell: Control, i: int, m: int) -> void:
 		var pi4: int = i
 		ss.value_changed.connect(func(v: float): _cams[pi4]["cine_speed"] = v)
 		col.add_child(ss)
+	# ADVENTURE gets its three crane sliders IN the pane, so Daniel dials the geometry while
+	# watching the result: horizontal distance, vertical height, downward angle. They write
+	# straight to Settings (saved), which the camera reads per frame — the pane AND the
+	# full-screen mode both move live. Daniel: "let's add those to the camera picker."
+	if m == 7:   # CamMode.ADVENTURE
+		for spec in [["adventure_distance", "dist", 0.0, 40.0, 0.5, "horizontal distance"],
+				["adventure_height", "high", 0.0, 30.0, 0.5, "vertical height"],
+				["adventure_angle", "angl", 0.0, 89.0, 1.0, "camera angle (degrees down)"]]:
+			var av := HSlider.new()
+			av.min_value = float(spec[2])
+			av.max_value = float(spec[3])
+			av.step = float(spec[4])
+			av.value = float(Settings.get_value(String(spec[0]), 0.0))
+			av.custom_minimum_size = Vector2(112, 14)
+			av.focus_mode = Control.FOCUS_NONE
+			av.tooltip_text = String(spec[5])
+			var akey := String(spec[0])
+			av.value_changed.connect(func(v: float):
+				Settings.set_value(akey, v)
+				Settings.save())
+			col.add_child(av)
+		# the col is bottom-right-anchored with a fixed offset sized for rotate+zoom;
+		# three more rows grow it downward past the pane edge unless the anchor rises
+		col.position.y -= 45.0
 	cell.add_child(col)
 	(_cams[i]["ui"] as Array).append(col)
 

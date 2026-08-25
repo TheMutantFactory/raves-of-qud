@@ -258,15 +258,6 @@ func _compass_eye(yaw_off := 0.0, zoom := 1.0) -> Vector3:
 	var back := TILES_BEHIND + d * cos(p)
 	return _player - _compass_dir(yaw_off) * back + Vector3(0, d * sin(p), 0)
 
-## ADVENTURE: the compass eye with its geometry on Options sliders instead of constants.
-func _adventure_eye(yaw_off := 0.0, zoom := 1.0) -> Vector3:
-	var d: float = maxf(1.0, float(Settings.get_value("adventure_distance", 14.0))) * zoom
-	var pdeg: float = clampf(float(Settings.get_value("adventure_angle", 35.0)), 2.0, 88.0)
-	var h: float = float(Settings.get_value("adventure_height", 0.0))
-	var pr := deg_to_rad(pdeg)
-	var back := TILES_BEHIND + d * cos(pr)
-	return _player - _compass_dir(yaw_off) * back + Vector3(0, h + d * sin(pr), 0)
-
 ## COMPASS pitch varies with zoom: shallow (COMPASS_PITCH) from COMPASS_CLOSE_DIST outward, steepening to
 ## COMPASS_PITCH_NEAR (overhead) as you zoom inside it. Smoothstepped so it arcs up-and-over at the close end.
 func _compass_pitch() -> float:
@@ -358,10 +349,19 @@ func eye_look_for(mode: int, st: Dictionary = {}) -> Array:
 				return [c + Vector3(0, TOP_H, 0), c]
 			return [_player + Vector3(0, TOP_H, 0), _player]
 		CamMode.ADVENTURE:
-			# COMPASS duplicated with the geometry on SLIDERS (Options): height, distance and
-			# angle are Settings values read per frame, so dialing a slider moves the camera
-			# live. Daniel: "duplicate Compass to Adventure mode... I'll try and dial it in."
-			return [_adventure_eye(yaw_off, zoom), _player + Vector3(0, look_h(), 0)]
+			# A CRANE CAMERA on three Options sliders, read per frame so dialing moves it live.
+			# Daniel's spec, his words: "horizontal distance, vertical height, camera angle" —
+			# position is ground-distance back along the heading plus straight-up height, and
+			# the ANGLE is a free downward pitch, not a forced look-at: matching angle to
+			# atan(height/distance) centres the player; anything else frames them high or low,
+			# which is the point of letting him dial it.
+			var hd: float = maxf(0.0, float(Settings.get_value("adventure_distance", 12.0))) * zoom
+			var vh: float = float(Settings.get_value("adventure_height", 8.0))
+			var adeg: float = clampf(float(Settings.get_value("adventure_angle", 35.0)), 0.0, 89.0)
+			var dirv := _compass_dir(yaw_off)
+			var aeye := _player - dirv * (TILES_BEHIND + hd) + Vector3(0, vh, 0)
+			var ar := deg_to_rad(adeg)
+			return [aeye, aeye + (dirv * cos(ar) + Vector3(0, -sin(ar), 0)) * 10.0]
 		_:  # COMPASS — the default, stable, cardinal-locked view
 			return [_compass_eye(yaw_off, zoom), _player + Vector3(0, look_h(), 0)]
 
