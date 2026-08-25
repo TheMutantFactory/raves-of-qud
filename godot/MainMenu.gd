@@ -850,13 +850,18 @@ func _build_version() -> void:
 	# the player's own installed copy through the modding API. The Qud release/build come from
 	# Brand (measured off a title capture; see the TODO there about sourcing them live), and
 	# the mod and viewer share RAVES_VERSION because this repo versions them together.
-	var l := _label(("Caves of Qud %s Copyright Freehold Games. All rights reserved.\n"
+	# BROKEN FOR READABILITY at Daniel's own line breaks (2026-08-25): the long lines are split
+	# where the sense splits, so the corner reads as short statements rather than one wall of
+	# right-aligned prose. The line breaks are his, not the label's wrapping.
+	var l := _label(("Caves of Qud %s Copyright Freehold Games.\n"
+		+ "All rights reserved.\n"
 		+ "Build %s\n"
-		+ "Raves of Qud mod %s %s License. Play. Hack. Distribute.\n"
+		+ "Raves of Qud mod %s %s License.\n"
+		+ "Play. Hack. Distribute.\n"
 		+ "Raves of Qud viewer %s %s License.\n"
-		+ "Raves of Qud requires a legally obtained license for Caves of Qud and a copy of the game installed.\n"
+		+ "Raves of Qud requires a legally installed copy of Caves of Qud.\n"
 		+ "No Qud content or artwork is claimed, hosted, or distributed.\n"
-		+ "All Freehold Games content is loaded from Caves of Qud via the modding API.") % [
+		+ "Freehold Games content is loaded at runtime.") % [
 		Brand.QUD_VERSION, Brand.QUD_BUILD,
 		Brand.RAVES_VERSION, Brand.LICENSE,
 		Brand.RAVES_VERSION, Brand.LICENSE], MUTED, "caption")
