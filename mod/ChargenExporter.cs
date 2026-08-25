@@ -103,6 +103,44 @@ namespace RavesOfQud
             j.EndArray();
         }
 
+        /// <summary>
+        /// The Presets lane (docs/new-game-plan.md slice 5): every pregen from EmbarkModules.xml —
+        /// name, genotype, card art + colours, description, and the BUILD CODE (base64+gzip JSON,
+        /// which the client decodes for the summary's exact attributes and mutations).
+        /// </summary>
+        private static void WritePregens(JsonWriter j)
+        {
+            j.Name("pregens").BeginArray();
+            try
+            {
+                var doc = new System.Xml.XmlDocument();
+                doc.Load(XRL.DataManager.FilePath("EmbarkModules.xml"));
+                var nodes = doc.SelectNodes("//pregens/pregen");
+                if (nodes != null) foreach (System.Xml.XmlNode pg in nodes)
+                {
+                    var name = pg.Attributes?["Name"]?.Value ?? "";
+                    if (string.IsNullOrEmpty(name)) continue;
+                    j.BeginObject();
+                    j.Member("name", name);
+                    j.Member("genotype", pg.Attributes?["Genotype"]?.Value ?? "");
+                    j.Member("tile", pg.Attributes?["Tile"]?.Value ?? "");
+                    j.Member("fg", pg.Attributes?["Foreground"]?.Value ?? "y");
+                    j.Member("detail", pg.Attributes?["Detail"]?.Value ?? "");
+                    var desc = pg.SelectSingleNode("description");
+                    j.Member("desc", desc != null ? desc.InnerText.Trim() : "");
+                    var code = pg.SelectSingleNode("code");
+                    j.Member("code", code != null ? code.InnerText.Trim() : "");
+                    j.EndObject();
+                    TileExporter.Ensure(pg.Attributes?["Tile"]?.Value);
+                }
+            }
+            catch (Exception e)
+            {
+                System.Console.WriteLine("[raves] pregens export failed: " + e.Message);
+            }
+            j.EndArray();
+        }
+
         private static void Export()
         {
             var j = new JsonWriter();
@@ -112,6 +150,7 @@ namespace RavesOfQud
             WriteGameModes(j);
             WriteCharTypes(j);
             WriteStartingLocations(j);
+            WritePregens(j);
             j.EndObject();
             // Write ATOMICALLY: WriteAllText truncates-then-writes, so a Raves chargen screen reading the
             // file mid-write catches it empty ("No chargen data yet"). Write a temp then atomically swap

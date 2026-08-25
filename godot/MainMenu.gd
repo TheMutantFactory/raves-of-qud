@@ -1,4 +1,5 @@
 extends Control
+const BuildCode := preload("res://BuildCode.gd")
 
 ## THE MAIN MENU — a 1:1 MIMIC of Caves of Qud's modern main menu.
 ##
@@ -1242,6 +1243,9 @@ var _cg_subtype := ""
 var _cg_start := ""       # starting-location id (slice 2); empty = the driver's Joppa default
 var _cg_name := ""        # character name (slice 3); empty = Qud rolls one
 var _cg_pet := ""         # pet blueprint (slice 3); empty = none
+var _cg_chartype := "New" # which chartype lane the flow is in ("New" / "Pregen" / ...)
+var _cg_pregen := ""      # pregen name (slice 5); non-empty = the driver's Pregen path
+var _cg_pregen_rec := {}  # ...and its full record, for the summary
 
 ## Qud's chargen opens on the GAME MODE step (Tutorial/Classic/Roleplay/Wander/Daily) before
 ## genotype; mirror that order — mode → genotype → subtype → embark.
@@ -1285,8 +1289,20 @@ func _open_chartype(notice := "") -> void:
 
 func _on_chartype_chosen(type_id: String) -> void:
 	_close_overlay()
+	_cg_chartype = type_id
+	if type_id == "Pregen":
+		# THE PRESETS LANE (slice 5): genotype first, then the pregen carousel — Qud's order.
+		var geno2: Variant = load("res://GenotypeScreen.gd").new()
+		geno2.mode_name = _cg_mode
+		geno2.chartype_title = "Presets"
+		_overlay = geno2
+		add_child(geno2)
+		geno2.closed.connect(_close_overlay)
+		geno2.chose.connect(_on_genotype_chosen_presets)
+		UiState.set_scene("chargen_genotype")
+		return
 	if type_id != "New":
-		# Presets / Random / Library / Last are real Qud flows whose Raves slices are not
+		# Random / Library / Last are real Qud flows whose Raves slices are not
 		# built yet. Reopen the step with the notice up rather than silently doing nothing.
 		var title := "Presets" if type_id == "Pregen" else type_id
 		# plain text — the guide body renders verbatim (no {{}} markup pass, see
@@ -1301,6 +1317,40 @@ func _on_chartype_chosen(type_id: String) -> void:
 	geno.closed.connect(_close_overlay)
 	geno.chose.connect(_on_genotype_chosen)
 	UiState.set_scene("chargen_genotype")
+
+func _on_genotype_chosen_presets(genotype_name: String) -> void:
+	_cg_genotype = genotype_name
+	_close_overlay()
+	var pgs: Variant = load("res://PregenScreen.gd").new()
+	UiState.set_scene("chargen_pregens")
+	pgs.mode_name = _cg_mode
+	pgs.genotype_name = genotype_name
+	_overlay = pgs
+	add_child(pgs)
+	pgs.closed.connect(func():
+		_close_overlay()
+		_on_chartype_chosen("Pregen"))
+	pgs.chose.connect(func(nm: String):
+		_cg_pregen_rec = pgs.pregen(nm)
+		_on_pregen_chosen(nm))
+
+func _on_pregen_chosen(nm: String) -> void:
+	_cg_pregen = nm
+	_close_overlay()
+	var sum: Variant = load("res://SummaryScreen.gd").new()
+	UiState.set_scene("chargen_summary")
+	sum.mode_name = _cg_mode
+	sum.chartype_title = "Presets"
+	sum.genotype_name = _cg_genotype
+	sum.pregen = _cg_pregen_rec
+	sum.subtype_name = str(BuildCode.decode(str(_cg_pregen_rec.get("code", ""))).get("subtype", ""))
+	_cg_subtype = sum.subtype_name   # the embark guard needs a subtype either way
+	_overlay = sum
+	add_child(sum)
+	sum.closed.connect(func():
+		_close_overlay()
+		_on_genotype_chosen_presets(_cg_genotype))
+	sum.advance_page.connect(_open_customize)
 
 ## Tutorial mode: walk the guided pre-game menus (Choose Genotype, onboarding to Mutated Human, with
 ## the Tutorial Guide popup) before booting. Reuses the shared card screen with the tutorial extras.
@@ -1457,6 +1507,8 @@ func _send_embark(genotype: String, subtype: String) -> void:
 		msg["charname"] = _cg_name   # QudCustomizeCharacterModuleData.name (slice 3)
 	if _cg_pet != "":
 		msg["pet"] = _cg_pet         # ...and .pet, when a pets export exists
+	if _cg_pregen != "":
+		msg["pregen"] = _cg_pregen   # the driver's Pregen boot path (slice 5)
 	var payload := JSON.stringify(msg).to_utf8_buffer()
 	var n := payload.size()
 	var frame := PackedByteArray()

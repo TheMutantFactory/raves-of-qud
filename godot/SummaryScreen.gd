@@ -1,4 +1,5 @@
 extends "res://ChargenCardScreen.gd"
+const BuildCode := preload("res://BuildCode.gd")
 
 ## CHARACTER CREATION — BUILD SUMMARY (docs/new-game-plan.md, slice 1): the hub every chargen
 ## lane funnels into before embarking. Three panels on the shared card-screen chrome — an
@@ -16,6 +17,15 @@ var mode_name := ""
 var chartype_title := ""
 var genotype_name := ""
 var subtype_name := ""
+## The Presets lane (slice 5): the chosen pregen's record {name,tile,fg,detail,desc,code}.
+## Non-empty flips the panels to the DECODED build — exact attributes and mutations.
+var pregen := {}
+var _decoded := {}
+
+func _decoded_build() -> Dictionary:
+	if not pregen.is_empty() and _decoded.is_empty():
+		_decoded = BuildCode.decode(str(pregen.get("code", "")))
+	return _decoded
 
 func _screen_node_name() -> String: return "SummaryScreen"
 func _subtitle() -> String: return ":build summary:"
@@ -32,7 +42,10 @@ func _breadcrumb_crumbs() -> Array:
 	if genotype_name != "":
 		out.append({"label": genotype_name, "current": false,
 			"tile": _chargen_tile("genotypes", genotype_name)})
-	if subtype_name != "":
+	if not pregen.is_empty():
+		out.append({"label": str(pregen.get("name", "")), "current": false,
+			"tile": str(pregen.get("tile", ""))})
+	elif subtype_name != "":
 		out.append({"label": subtype_name, "current": false, "tile": str(_subtype().get("tile", ""))})
 	out.append({"label": "Summary", "current": true})
 	return out
@@ -63,17 +76,31 @@ func _subtype() -> Dictionary:
 ## Attribute rows: genotype minimum + this subtype's bonus, in Qud's canonical order.
 func _attribute_rows() -> Array:
 	var rows: Array = []
+	# a pregen's build code carries the EXACT purchase per stat: final = genotype min + points
+	var purchased: Dictionary = _decoded_build().get("attributes", {}) if not pregen.is_empty() else {}
 	var bonus := {}
 	for b in _subtype().get("statBonuses", []):
 		bonus[str(b.get("name", ""))] = int(b.get("bonus", 0))
 	for st in _genotype().get("stats", []):
 		var n := str(st.get("name", ""))
-		rows.append([n, int(st.get("min", 10)) + int(bonus.get(n, 0))])
+		if not purchased.is_empty():
+			rows.append([n, int(st.get("min", 10)) + int(purchased.get(n, 0))])
+		else:
+			rows.append([n, int(st.get("min", 10)) + int(bonus.get(n, 0))])
 	return rows
 
 ## The right band's entries: the subtype's own grant lines, minus plain stat bonuses (the left
 ## panel already carries those numbers).
 func _grant_lines() -> Array:
+	# a pregen lists its DECODED mutations — the capture's right panel, exactly
+	if not pregen.is_empty():
+		var out2: Array = []
+		for m in _decoded_build().get("mutations", []):
+			var nm := str(m.get("name", ""))
+			if int(m.get("count", 1)) > 1:
+				nm += " x%d" % int(m.get("count", 1))
+			out2.append(nm)
+		return out2
 	var out: Array = []
 	var stats := {}
 	for st in _genotype().get("stats", []):
@@ -115,7 +142,7 @@ func _build_body(vp: Vector2) -> void:
 		rl.custom_minimum_size.x = vp.x * 0.24
 		add_child(rl)
 	# portrait + identity, centre column
-	var tile := str(_subtype().get("tile", ""))
+	var tile := str(pregen.get("tile", "")) if not pregen.is_empty() else str(_subtype().get("tile", ""))
 	if tile != "":
 		var icons := _card_icon(tile, subtype_name)
 		var tex: Texture2D = icons.get("colored")
@@ -130,7 +157,8 @@ func _build_body(vp: Vector2) -> void:
 			pr.position = Vector2(vp.x * 0.5 - pw * 0.5, vp.y * 0.502)
 			add_child(pr)
 	var idy := vp.y * 0.567
-	for line in [subtype_name, _genotype().get("display", genotype_name), "Humanoid"]:
+	var top_line := str(pregen.get("name", "")) if not pregen.is_empty() else subtype_name
+	for line in [top_line, _genotype().get("display", genotype_name), "Humanoid"]:
 		var il := _text(str(line), NAME_SEL, "body")
 		il.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		il.anchor_left = 0.0; il.anchor_right = 1.0

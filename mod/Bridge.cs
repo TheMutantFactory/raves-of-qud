@@ -1531,6 +1531,8 @@ namespace RavesOfQud
                     if (!string.IsNullOrEmpty(cn)) spec.Name = cn;
                     f.TryGetValue("pet", out string pt);
                     if (!string.IsNullOrEmpty(pt)) spec.Pet = pt;
+                    f.TryGetValue("pregen", out string pgn);
+                    if (!string.IsNullOrEmpty(pgn)) { spec.Pregen = pgn; spec.Chartype = "Pregen"; }
                     EmbarkDriver.RequestEmbark(spec);
                     return;
                 }
