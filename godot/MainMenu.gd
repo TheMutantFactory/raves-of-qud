@@ -1249,6 +1249,7 @@ var _cg_pregen_rec := {}  # ...and its full record, for the summary
 var _cg_attributes := {}  # stat -> final value, from the attributes screen (slice 7)
 var _cg_attr_spent := 0
 var _cg_mutations: Array = []   # [{name, count}] from the mutation picker (slice 7)
+var _cg_cybernetics: Array = []  # [{blueprint, display, slot}] from the implant picker (7c)
 
 ## Qud's chargen opens on the GAME MODE step (Tutorial/Classic/Roleplay/Wander/Daily) before
 ## genotype; mirror that order — mode → genotype → subtype → embark.
@@ -1554,7 +1555,43 @@ func _open_attributes() -> void:
 	att.chose_attributes.connect(func(values: Dictionary, spent: int):
 		_cg_attributes = values
 		_cg_attr_spent = spent)
-	att.advance_page.connect(_open_new_summary)
+	# True Kin buy implants after their attributes (the capture's order); mutants go straight on
+	att.advance_page.connect(func():
+		if _genotype_licenses(_cg_genotype) > 0:
+			_open_cybernetics()
+		else:
+			_open_new_summary())
+
+## How many cybernetics LICENCE points this genotype grants (0 = it has no implant stage).
+func _genotype_licenses(gname: String) -> int:
+	var path := InputModel.support_dir().path_join("chargen.json")
+	if not FileAccess.file_exists(path):
+		return 0
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if not (parsed is Dictionary):
+		return 0
+	for g in parsed.get("genotypes", []):
+		if str(g.get("name", "")) == gname:
+			return int(g.get("cyberLicensePoints", 0))
+	return 0
+
+## The implant picker (True Kin), between attributes and the summary.
+func _open_cybernetics() -> void:
+	_close_overlay()
+	var cyb: Variant = load("res://CyberneticsScreen.gd").new()
+	UiState.set_scene("chargen_cybernetics")
+	cyb.mode_name = _cg_mode
+	cyb.chartype_title = "New"
+	cyb.genotype_name = _cg_genotype
+	cyb.subtype_name = _cg_subtype
+	_overlay = cyb
+	add_child(cyb)
+	cyb.closed.connect(func():
+		_close_overlay()
+		_open_attributes())
+	cyb.chose_cybernetics.connect(func(picks: Array):
+		_cg_cybernetics = picks)
+	cyb.advance_page.connect(_open_new_summary)
 
 ## The New lane's summary — the attributes just bought ride along.
 func _open_new_summary() -> void:
@@ -1571,11 +1608,15 @@ func _open_new_summary() -> void:
 	sum.subtype_name = _cg_subtype
 	sum.attributes = _cg_attributes    # what the stepper screen bought
 	sum.mutations = _cg_mutations      # ...and what the mutation picker chose
+	sum.cybernetics = _cg_cybernetics  # ...or, for True Kin, the implants
 	_overlay = sum
 	add_child(sum)
 	sum.closed.connect(func():
 		_close_overlay()
-		_open_attributes())
+		if _genotype_licenses(_cg_genotype) > 0:
+			_open_cybernetics()
+		else:
+			_open_attributes())
 	sum.advance_page.connect(_open_customize)
 
 ## CUSTOMIZE CHARACTER (slice 3), between the summary and the location pick — Qud's order,

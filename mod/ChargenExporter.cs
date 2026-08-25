@@ -195,6 +195,65 @@ namespace RavesOfQud
             j.EndArray();
         }
 
+        /// <summary>
+        /// The chargen cybernetics catalog (docs/new-game-plan.md slice 7c): every blueprint
+        /// tagged StartingCybernetic — the flag Qud itself uses to decide what a True Kin may
+        /// pick at creation. Each SLOT gets its own row, because a blueprint listing
+        /// "Body,Head,Back" is offered once per slot on Qud's own screen (the capture shows
+        /// dermal insulation three times). Cost is in LICENCE points.
+        /// </summary>
+        private static void WriteCybernetics(JsonWriter j)
+        {
+            j.Name("cybernetics").BeginArray();
+            try
+            {
+                var factory = XRL.World.GameObjectFactory.Factory;
+                foreach (var kv in factory.Blueprints)
+                {
+                    var bp = kv.Value;
+                    if (bp?.Tags == null || bp.Parts == null) continue;
+                    bool starting = false;
+                    foreach (var t in bp.Tags)
+                        if (t.Key != null && t.Key.StartsWith("StartingCybernetic")) { starting = true; break; }
+                    if (!starting) continue;
+                    if (!bp.Parts.TryGetValue("CyberneticsBaseItem", out var cyber) || cyber == null) continue;
+                    string slots = cyber.GetParameterString("Slots") ?? "";
+                    string cost = cyber.GetParameterString("Cost") ?? "1";
+                    string behavior = cyber.GetParameterString("BehaviorDescription") ?? "";
+                    string disp = "", tile = "", detail = "";
+                    if (bp.Parts.TryGetValue("Render", out var render) && render != null)
+                    {
+                        disp = render.GetParameterString("DisplayName") ?? kv.Key;
+                        tile = render.GetParameterString("Tile") ?? "";
+                        detail = render.GetParameterString("DetailColor") ?? "";
+                    }
+                    string desc = "";
+                    if (bp.Parts.TryGetValue("Description", out var d) && d != null)
+                        desc = d.GetParameterString("Short") ?? "";
+                    foreach (var slot in (slots.Length > 0 ? slots.Split(',') : new[] { "" }))
+                    {
+                        j.BeginObject();
+                        j.Member("blueprint", kv.Key);
+                        j.Member("display", disp);
+                        j.Member("slot", slot.Trim());
+                        int c; int.TryParse(cost, out c);
+                        j.Member("cost", c <= 0 ? 1 : c);
+                        j.Member("tile", tile);
+                        j.Member("detail", detail);
+                        j.Member("desc", desc);
+                        j.Member("behavior", behavior);
+                        j.EndObject();
+                    }
+                    TileExporter.Ensure(tile);
+                }
+            }
+            catch (Exception e)
+            {
+                System.Console.WriteLine("[raves] cybernetics export failed: " + e.Message);
+            }
+            j.EndArray();
+        }
+
         private static void Export()
         {
             var j = new JsonWriter();
@@ -206,6 +265,7 @@ namespace RavesOfQud
             WriteStartingLocations(j);
             WritePregens(j);
             WriteMutations(j);
+            WriteCybernetics(j);
             j.EndObject();
             // Write ATOMICALLY: WriteAllText truncates-then-writes, so a Raves chargen screen reading the
             // file mid-write catches it empty ("No chargen data yet"). Write a temp then atomically swap

@@ -26,6 +26,8 @@ var attributes := {}
 ## Explicit picks from the mutations screen (slice 7): [{name, count}]. Non-empty wins over
 ## the subtype grant lines, the way the pregen decode does.
 var mutations: Array = []
+## True Kin's implants (slice 7c): [{blueprint, display, slot}].
+var cybernetics: Array = []
 var _decoded := {}
 
 func _decoded_build() -> Dictionary:
@@ -107,6 +109,11 @@ func _attribute_rows() -> Array:
 ## The right band's entries: the subtype's own grant lines, minus plain stat bonuses (the left
 ## panel already carries those numbers).
 func _grant_lines() -> Array:
+	if not cybernetics.is_empty():
+		var imp: Array = []
+		for c in cybernetics:
+			imp.append("%s (%s)" % [str(c.get("display", "")), str(c.get("slot", ""))])
+		return imp
 	if not mutations.is_empty():
 		var picked: Array = []
 		for m in mutations:
