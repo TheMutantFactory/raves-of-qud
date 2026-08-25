@@ -853,20 +853,34 @@ func _build_version() -> void:
 	# BROKEN FOR READABILITY at Daniel's own line breaks (2026-08-25): the long lines are split
 	# where the sense splits, so the corner reads as short statements rather than one wall of
 	# right-aligned prose. The line breaks are his, not the label's wrapping.
-	var l := _label(("Caves of Qud %s Copyright Freehold Games.\n"
+	#
+	# WHOSE STATEMENT IS WHOSE, BY COLOUR: Freehold's version and licence lines in Qud's gold
+	# ('W'), Raves' in its magenta ('M'), and the three disclaimers left muted because they are
+	# nobody's boast — they are the terms the whole thing stands on. Both colours are Qud's own
+	# palette entries, so the corner still belongs to the same eighteen colours as the rest.
+	var gold := QudPalette.COLORS["W"].to_html(false)
+	var mag := QudPalette.COLORS["M"].to_html(false)
+	var mut := MUTED.to_html(false)
+	var l := RichTextLabel.new()
+	l.bbcode_enabled = true
+	l.fit_content = true
+	l.scroll_active = false
+	l.autowrap_mode = TextServer.AUTOWRAP_OFF
+	l.theme_type_variation = "Caption"
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	l.text = ("[right][color=#%s]Caves of Qud %s Copyright Freehold Games.\n"
 		+ "All rights reserved.\n"
-		+ "Build %s\n"
-		+ "Raves of Qud mod %s %s License.\n"
+		+ "Build %s[/color]\n"
+		+ "[color=#%s]Raves of Qud mod %s %s License.\n"
 		+ "Play. Hack. Distribute.\n"
-		+ "Raves of Qud viewer %s %s License.\n"
-		+ "Raves of Qud requires a legally installed copy of Caves of Qud.\n"
+		+ "Raves of Qud viewer %s %s License.[/color]\n"
+		+ "[color=#%s]Raves of Qud requires a legally installed copy of Caves of Qud.\n"
 		+ "No Qud content or artwork is claimed, hosted, or distributed.\n"
-		+ "Freehold Games content is loaded at runtime.") % [
-		Brand.QUD_VERSION, Brand.QUD_BUILD,
+		+ "Freehold Games content is loaded at runtime.[/color][/right]") % [
+		gold, Brand.QUD_VERSION, Brand.QUD_BUILD,
+		mag, Brand.RAVES_VERSION, Brand.LICENSE,
 		Brand.RAVES_VERSION, Brand.LICENSE,
-		Brand.RAVES_VERSION, Brand.LICENSE], MUTED, "caption")
-	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	l.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
+		mut]
 	add_child(l)
 	_place(l, "version")
 	# The block outgrows the layout rect in BOTH axes: growth runs LEFT so the right edge stays
