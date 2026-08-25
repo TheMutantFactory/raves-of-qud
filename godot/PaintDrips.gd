@@ -22,6 +22,9 @@ const RUN_MAX := 0.55
 const RUNNER := 1.35        ## an occasional long runner, as a fraction of the height
 const RUNNER_ODDS := 0.16
 const BEAD_BULGE := 1.0     ## how many blocks wider the bead is than its run
+## Drips only start from the middle 80% of the patch edge. A drip right at the corner reads
+## as the patch having a ragged edge rather than as paint running out of the middle of it.
+const DRIP_WIDTH := 0.8
 const HOLD_MIN := 2.5       ## seconds the finished drip sits there before it starts to go
 const HOLD_MAX := 6.0
 const FADE_MIN := 1.5
@@ -42,8 +45,11 @@ func setup(block: float, paint: Color, a: Vector2, b: Vector2, span: float, coun
 		rng_seed: int) -> void:
 	_block = maxf(3.0, block)
 	_paint = paint
-	_a = a
-	_b = b
+	# shrink the start edge toward its own midpoint — still the same line, so a drip'"'"'s start
+	# height stays correct for the tilt, just no longer out at the corners
+	var mid: Vector2 = (a + b) * 0.5
+	_a = mid + (a - mid) * DRIP_WIDTH
+	_b = mid + (b - mid) * DRIP_WIDTH
 	_span = maxf(1.0, span)
 	_rng.seed = rng_seed
 	_drips.clear()
@@ -62,7 +68,7 @@ func _cycle(d: Dictionary) -> float:
 
 ## Everything random about one drip, re-rolled every time the slot comes around again.
 func _roll(d: Dictionary) -> void:
-	var at: Vector2 = _a.lerp(_b, _rng.randf_range(0.02, 0.98))
+	var at: Vector2 = _a.lerp(_b, _rng.randf())
 	var run: float = _span * (RUN_MIN + _rng.randf() * (RUN_MAX - RUN_MIN))
 	if _rng.randf() < RUNNER_ODDS:
 		run = _span * RUNNER * (0.8 + _rng.randf() * 0.4)
