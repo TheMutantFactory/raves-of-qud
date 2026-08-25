@@ -110,6 +110,11 @@ const QOL_FEATURES := {
 	# versions in place of Qud's release/build — you cannot pin a bug report to a build you
 	# were never shown. 1:1 keeps Qud's corner untouched, as with every QoL feature.
 	"versions": ["Title screen: Raves client + mod versions", true],
+	# ON by default. The title wordmark is Qud's own extracted art; this sprays OUR letters
+	# over two of its glyphs so it reads "RAVES OF MUD" — the modpack signing the poster it
+	# is standing on. 1:1 short-circuits every QoL feature, so parity mode keeps Qud's title
+	# untouched, which is the whole reason this is a feature and not an unconditional draw.
+	"overpaint": ["Title screen: spray RAVES OF MUD over the wordmark", true],
 	"nearby": ["Nearby objects: larger icons", true],
 }
 

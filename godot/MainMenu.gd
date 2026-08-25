@@ -311,6 +311,12 @@ func _build_logo() -> void:
 		r.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		add_child(r)
 		_place(r, "logo")
+		# ...and spray our letters over two of Qud's (see _build_overpaint). Deferred because
+		# the patch positions are derived from the wordmark's LAID-OUT rect, which does not
+		# exist until the layout pass has run.
+		if not Settings.qud_shape("overpaint"):
+			_logo_rect = r
+			_build_overpaint.call_deferred()
 		return
 	# fallback: wordmark as text (mod hasn't exported logo.png yet)
 	var l := _label("CAVES OF QUD", SEL, "big")
@@ -318,6 +324,112 @@ func _build_logo() -> void:
 	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	add_child(l)
 	_place(l, "logo")
+
+# ── the overpaint: RAVES OF MUD, sprayed over CAVES OF QUD ────────────────────────
+#
+# MEASURED off the wordmark itself (connected-component analysis of logo.png, 1178x160):
+# the C of CAVES occupies x 0.0034..0.1273 and the Q of QUD x 0.6587..0.7861, both spanning
+# almost the full glyph height. Fractions, not pixels, so the patches track the wordmark at
+# any window size and survive Qud shipping a differently-scaled logo.
+const OVERPAINT_C := Rect2(0.0034, 0.0187, 0.1239, 0.9188)   # the C of CAVES
+const OVERPAINT_Q := Rect2(0.6587, 0.0187, 0.1274, 0.9625)   # the Q of QUD
+## Chunky stencil letterforms — the pixelation IS the look, so they are authored as grids
+## rather than set in a font and blurred down.
+const GLYPH_R := ["11110", "10001", "10001", "11110", "10100", "10010", "10001"]
+const GLYPH_M := ["1000001", "1100011", "1010101", "1001001", "1000001", "1000001", "1000001"]
+var _logo_rect: TextureRect
+
+func _build_overpaint() -> void:
+	if _logo_rect == null or not is_instance_valid(_logo_rect):
+		return
+	var rect := _logo_rect.get_global_rect()
+	if rect.size.x <= 1.0 or rect.size.y <= 1.0:
+		return
+	# KEEP_ASPECT_CENTERED letterboxes the image inside the rect, so the glyph fractions are
+	# relative to the DISPLAYED image, not to the control.
+	var tex := _logo_rect.texture
+	if tex == null:
+		return
+	var iw := float(tex.get_width())
+	var ih := float(tex.get_height())
+	var scale: float = minf(rect.size.x / iw, rect.size.y / ih)
+	var disp := Vector2(iw * scale, ih * scale)
+	var origin := rect.position + (rect.size - disp) * 0.5
+	_spray_letter(GLYPH_R, OVERPAINT_C, origin, disp, -3.0)
+	_spray_letter(GLYPH_M, OVERPAINT_Q, origin, disp, 2.5)
+
+## One sprayed letter over one glyph box. `tilt` degrees, so neither patch sits perfectly
+## square — a stencil held by hand never does.
+func _spray_letter(glyph: Array, box: Rect2, origin: Vector2, disp: Vector2, tilt: float) -> void:
+	var rows := glyph.size()
+	var cols := String(glyph[0]).length()
+	var cell := 8                        # authored cell; NEAREST scaling keeps the blocks hard
+	var pad := 6                         # room for overspray around the painted patch
+	var w := cols * cell + pad * 2
+	var h := rows * cell + pad * 2
+	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	var paint: Color = QudPalette.COLORS["M"]
+	# Qud's wordmark cream, so the sprayed letter looks like the poster showing through the
+	# stencil rather than like a second colour introduced from nowhere.
+	var cream := Color8(224, 216, 189)
+	# THE PATCH GOES DOWN FIRST. Thin magenta strokes laid straight over Qud's heavy cream
+	# letterforms read as scribble, not as an R — the eye keeps seeing the C underneath. So
+	# the glyph is BLOTTED OUT with paint and the new letter knocked back out of it, which is
+	# what painting over a sign actually looks like.
+	var ragged := []
+	for y in h:
+		ragged.append([pad - 2 + (randi() % 3), w - pad + 1 - (randi() % 3)])
+	for y in range(pad - 2, h - pad + 2):
+		if y < 0 or y >= h:
+			continue
+		var span: Array = ragged[y]
+		for x in range(int(span[0]), int(span[1])):
+			if x < 0 or x >= w:
+				continue
+			img.set_pixel(x, y, Color(paint.r, paint.g, paint.b, 0.90 + randf() * 0.10))
+	for ry in rows:
+		var line := String(glyph[ry])
+		for cx in cols:
+			if line[cx] != "1":
+				continue
+			for py in cell:
+				for px in cell:
+					var a: float = 0.88 + randf() * 0.12
+					img.set_pixel(pad + cx * cell + px, pad + ry * cell + py,
+						Color(cream.r, cream.g, cream.b, a))
+	# OVERSPRAY: mist beyond the patch edge, which is what sells paint over tape. Only outside
+	# the patch — anything inside is already painted.
+	for i in int(w * h * 0.22):
+		var sx := randi() % w
+		var sy := randi() % h
+		if img.get_pixel(sx, sy).a > 0.05:
+			continue
+		var near := false
+		for dy in range(-3, 4):
+			for dx in range(-3, 4):
+				var nx := sx + dx
+				var ny := sy + dy
+				if nx >= 0 and ny >= 0 and nx < w and ny < h and img.get_pixel(nx, ny).a > 0.5:
+					near = true
+					break
+			if near:
+				break
+		if near:
+			img.set_pixel(sx, sy, Color(paint.r, paint.g, paint.b, 0.12 + randf() * 0.40))
+	var tr := TextureRect.new()
+	tr.texture = ImageTexture.create_from_image(img)
+	tr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	tr.stretch_mode = TextureRect.STRETCH_SCALE   # the patch SHOULD fill its glyph's box
+	tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	tr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# a little larger than the glyph it covers, so the original letter does not peek out
+	var grow := Vector2(disp.x * box.size.x * 0.20, disp.y * box.size.y * 0.09)
+	tr.size = Vector2(disp.x * box.size.x, disp.y * box.size.y) + grow * 2.0
+	tr.position = origin + Vector2(disp.x * box.position.x, disp.y * box.position.y) - grow
+	tr.pivot_offset = tr.size * 0.5
+	tr.rotation_degrees = tilt
+	add_child(tr)
 
 func _load_title_png(file: String) -> Texture2D:
 	var path := InputModel.support_dir().path_join("title").path_join(file)
