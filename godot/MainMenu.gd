@@ -430,6 +430,35 @@ func _spray_letter(glyph: Array, box: Rect2, origin: Vector2, disp: Vector2, til
 	tr.pivot_offset = tr.size * 0.5
 	tr.rotation_degrees = tilt
 	add_child(tr)
+	_drip_from(tr, float(w), float(h - pad + 2) / float(h), tilt, paint, cols)
+
+## Hang paint drips off the bottom edge of a sprayed patch.
+##
+## The edge has to be computed POST-ROTATION: the patch is tilted, so its bottom edge is a
+## slanted line, and the drips have to start on that line while still falling straight down.
+## `paint_bottom_frac` is where the ink actually ends inside the texture — the patch image
+## carries transparent padding for overspray, so the texture's bottom is not the paint'"'"'s.
+func _drip_from(tr: TextureRect, img_w: float, paint_bottom_frac: float, tilt: float,
+		paint: Color, glyph_cols: int) -> void:
+	# CHUNKIER than one authored pixel on purpose: at this size the patch pixel is ~3px, and
+	# drips built from it disappeared into a fringe. A drip in the world is a fraction of the
+	# stroke it runs off, so the block is sized off the stroke instead.
+	var block: float = clampf(tr.size.x / img_w * 1.6, 4.0, 9.0)
+	var centre: Vector2 = tr.position + tr.size * 0.5
+	var half := Vector2(tr.size.x * 0.5, tr.size.y * (paint_bottom_frac - 0.5))
+	var th := deg_to_rad(tilt)
+	var cs := cos(th)
+	var sn := sin(th)
+	var a := centre + Vector2(-half.x * cs - half.y * sn, -half.x * sn + half.y * cs)
+	var b := centre + Vector2(half.x * cs - half.y * sn, half.x * sn + half.y * cs)
+	var drips := preload("res://PaintDrips.gd").new()
+	drips.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	drips.position = Vector2.ZERO
+	drips.size = size
+	add_child(drips)
+	# one run per stencil column, give or take — enough to look like it ran, not like a curtain
+	drips.setup(block, paint, a, b, tr.size.y, maxi(5, glyph_cols),
+		int(a.x) * 7919 + int(tilt * 100.0))
 
 func _load_title_png(file: String) -> Texture2D:
 	var path := InputModel.support_dir().path_join("title").path_join(file)
