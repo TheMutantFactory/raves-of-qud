@@ -27,6 +27,10 @@ func _decoded_build() -> Dictionary:
 		_decoded = BuildCode.decode(str(pregen.get("code", "")))
 	return _decoded
 
+## The Random lane sets this so [R] can respin the build in place (Qud's own "[R] Randomize
+## Selection" affordance, which the summary otherwise has nothing to randomize).
+signal reroll
+
 func _screen_node_name() -> String: return "SummaryScreen"
 func _subtitle() -> String: return ":build summary:"
 func _load_items() -> Array: return []
@@ -120,6 +124,12 @@ func _grant_lines() -> Array:
 
 const SUMMARY_BAND_W := 0.156   # each band rule's width fraction (measured off the capture)
 
+func _unhandled_input(e: InputEvent) -> void:
+	if chartype_title == "Random" and e is InputEventKey and e.pressed and not e.echo \
+			and e.keycode == KEY_R:
+		reroll.emit(); accept_event(); return
+	super._unhandled_input(e)
+
 func _build_body(vp: Vector2) -> void:
 	_summary_band(vp, 0.345, "Attributes")
 	_summary_band(vp, 0.6625, "Mutations" if bool(_genotype().get("isMutant", true)) else "Cybernetics")
@@ -177,6 +187,12 @@ func _build_body(vp: Vector2) -> void:
 		k.size = Vector2(ks, ks)
 		add_child(k)
 	# footer affordances — stubs until the Library slice wires them
+	if chartype_title == "Random":
+		var rr := _rich("[center][color=#%s][lb]R[rb][/color][color=#%s] Randomize Selection[/color][/center]" % [
+			SEL_GOLD.to_html(false), MUTED.to_html(false)], "body")
+		rr.anchor_left = 0.0; rr.anchor_right = 1.0
+		rr.position.y = vp.y * 0.86
+		add_child(rr)
 	var foot := _text("Export Code to Clipboard  Save Build To Library", MUTED, "body")
 	foot.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	foot.anchor_left = 0.0; foot.anchor_right = 1.0

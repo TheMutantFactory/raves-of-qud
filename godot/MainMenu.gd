@@ -1301,8 +1301,15 @@ func _on_chartype_chosen(type_id: String) -> void:
 		geno2.chose.connect(_on_genotype_chosen_presets)
 		UiState.set_scene("chargen_genotype")
 		return
+	if type_id == "Random":
+		# RANDOM (slice 6): roll a full build from the catalog and land on the summary, which
+		# is where Qud's own Random drops you — every later step (customize, location) still
+		# yours to change. Rolled CLIENT-side from chargen.json: genotype, then one of that
+		# genotype's own subtypes, so an impossible pairing cannot be produced.
+		_roll_random()
+		return
 	if type_id != "New":
-		# Random / Library / Last are real Qud flows whose Raves slices are not
+		# Library / Last are real Qud flows whose Raves slices are not
 		# built yet. Reopen the step with the notice up rather than silently doing nothing.
 		var title := "Presets" if type_id == "Pregen" else type_id
 		# plain text — the guide body renders verbatim (no {{}} markup pass, see
@@ -1317,6 +1324,76 @@ func _on_chartype_chosen(type_id: String) -> void:
 	geno.closed.connect(_close_overlay)
 	geno.chose.connect(_on_genotype_chosen)
 	UiState.set_scene("chargen_genotype")
+
+## Reopen the build summary for the CURRENT lane (New / Presets / Random). One place, so
+## every Back that lands on the summary agrees about which lane it belongs to.
+func _reopen_summary() -> void:
+	if _cg_chartype == "Random":
+		_open_summary("Random", {})
+	elif _cg_chartype == "Pregen":
+		_open_summary("Presets", _cg_pregen_rec)
+	else:
+		_on_subtype_chosen(_cg_subtype)
+
+## Roll genotype + subtype out of the catalog and open the summary on them.
+func _roll_random() -> void:
+	var path := InputModel.support_dir().path_join("chargen.json")
+	if not FileAccess.file_exists(path):
+		_open_chartype("No chargen data yet — start Qud once so Raves can read its character options.")
+		return
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if not (parsed is Dictionary):
+		_open_chartype("Raves could not read Qud's character data.")
+		return
+	var genos: Array = parsed.get("genotypes", [])
+	if genos.is_empty():
+		_open_chartype("No genotypes in Qud's character data yet.")
+		return
+	var g: Dictionary = genos[randi() % genos.size()]
+	_cg_genotype = str(g.get("name", ""))
+	# the subtype CLASS this genotype uses, then a subtype from inside it — Qud's own pairing
+	var want_class := _genotype_subtype_class(_cg_genotype)
+	var pool: Array = []
+	for sc in parsed.get("subtypeClasses", []):
+		if str(sc.get("id", "")) != want_class:
+			continue
+		for cat in sc.get("categories", []):
+			for st in cat.get("subtypes", []):
+				pool.append(str(st.get("name", "")))
+	if pool.is_empty():
+		_open_chartype("No subtypes for %s in Qud's character data." % _cg_genotype)
+		return
+	_cg_subtype = pool[randi() % pool.size()]
+	_cg_pregen = ""
+	_cg_pregen_rec = {}
+	_open_summary("Random", {})
+
+## The summary for the Random / Presets lanes. `crumb` is the chartype leg ("Random" /
+## "Presets"); `pregen_rec` non-empty flips the panels to the decoded build.
+func _open_summary(crumb: String, pregen_rec: Dictionary) -> void:
+	var sum: Variant = load("res://SummaryScreen.gd").new()
+	UiState.set_scene("chargen_summary")
+	sum.mode_name = _cg_mode
+	sum.chartype_title = crumb
+	sum.genotype_name = _cg_genotype
+	sum.subtype_name = _cg_subtype
+	sum.pregen = pregen_rec
+	_overlay = sum
+	add_child(sum)
+	# Esc: Random has no earlier screen in its lane (re-rolling is one keypress from the
+	# chartype row); Presets goes back to its carousel.
+	if crumb == "Random":
+		sum.closed.connect(func():
+			_close_overlay()
+			_open_chartype(""))
+		sum.reroll.connect(func():
+			_close_overlay()
+			_roll_random())
+	else:
+		sum.closed.connect(func():
+			_close_overlay()
+			_on_genotype_chosen_presets(_cg_genotype))
+	sum.advance_page.connect(_open_customize)
 
 func _on_genotype_chosen_presets(genotype_name: String) -> void:
 	_cg_genotype = genotype_name
@@ -1337,20 +1414,9 @@ func _on_genotype_chosen_presets(genotype_name: String) -> void:
 func _on_pregen_chosen(nm: String) -> void:
 	_cg_pregen = nm
 	_close_overlay()
-	var sum: Variant = load("res://SummaryScreen.gd").new()
-	UiState.set_scene("chargen_summary")
-	sum.mode_name = _cg_mode
-	sum.chartype_title = "Presets"
-	sum.genotype_name = _cg_genotype
-	sum.pregen = _cg_pregen_rec
-	sum.subtype_name = str(BuildCode.decode(str(_cg_pregen_rec.get("code", ""))).get("subtype", ""))
-	_cg_subtype = sum.subtype_name   # the embark guard needs a subtype either way
-	_overlay = sum
-	add_child(sum)
-	sum.closed.connect(func():
-		_close_overlay()
-		_on_genotype_chosen_presets(_cg_genotype))
-	sum.advance_page.connect(_open_customize)
+	# the embark guard needs a subtype either way; the build code carries the pregen's own
+	_cg_subtype = str(BuildCode.decode(str(_cg_pregen_rec.get("code", ""))).get("subtype", ""))
+	_open_summary("Presets", _cg_pregen_rec)
 
 ## Tutorial mode: walk the guided pre-game menus (Choose Genotype, onboarding to Mutated Human, with
 ## the Tutorial Guide popup) before booting. Reuses the shared card screen with the tutorial extras.
@@ -1452,9 +1518,12 @@ func _open_customize() -> void:
 	cust.subtype_name = _cg_subtype
 	_overlay = cust
 	add_child(cust)
+	# Back goes to the summary of WHICHEVER LANE we came from — the New lane's subtype path
+	# was hardcoded here, so a rolled or preset build unwound into Choose Calling and lost
+	# itself. _reopen_summary is the one place that knows how to rebuild the right summary.
 	cust.closed.connect(func():
 		_close_overlay()
-		_on_subtype_chosen(_cg_subtype))
+		_reopen_summary())
 	cust.customized.connect(func(cname: String, pet: String):
 		_cg_name = cname
 		_cg_pet = pet)
@@ -1475,6 +1544,7 @@ func _open_location() -> void:
 	loc.closed.connect(func():
 		_close_overlay()
 		_open_customize())
+
 	loc.chose.connect(_on_location_chosen)
 
 func _on_location_chosen(location_id: String) -> void:
