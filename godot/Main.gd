@@ -1564,6 +1564,17 @@ func _unhandled_input(event: InputEvent) -> void:
 		# camera like the player. Discrete per press; pairs with S/D vertical pan. Not
 		# in FLY (WASD drives the free camera there), and not in 1:1 — Qud's camera is
 		# the letterbox model only (zoom + clamped player follow), never a free dolly.
+		# LOOK MODE: W = WALK TO the look tile (Daniel: "use the walk key to walk to the look
+		# tile — it was w a while ago"). The mod's own moveto command does the travelling —
+		# Qud's pathing and hostile-interrupts, exactly as a click-to-travel would — and the
+		# cursor closes, its job done. Takes W from the camera dolly only while looking.
+		if event.keycode == KEY_W and inspector != null and inspector.look_on():
+			var wc: Vector2i = inspector.look_cell()
+			if wc.x >= 0 and wc.y >= 0 and wc.x < int(renderer._live_w) and wc.y < int(renderer._live_h):
+				client.send_command("moveto", {"x": wc.x, "y": wc.y})
+				look_toggle()   # travel begins; the cursor's job is done
+				print("[look] walking to (%d,%d)" % [wc.x, wc.y])
+			return
 		if _cam_rig._mode != CamMode.KEYBOARD and not _cam_locked() and event.keycode == KEY_W:
 			_cam_rig._cam_pan += _cam_rig.cam_forward() * _cam_rig.CAM_STEP; return
 		if _cam_rig._mode != CamMode.KEYBOARD and not _cam_locked() and event.keycode == KEY_X:
