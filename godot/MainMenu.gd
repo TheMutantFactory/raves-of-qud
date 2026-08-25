@@ -860,7 +860,6 @@ func _build_version() -> void:
 	# palette entries, so the corner still belongs to the same eighteen colours as the rest.
 	var gold := QudPalette.COLORS["W"].to_html(false)
 	var mag := QudPalette.COLORS["M"].to_html(false)
-	var mut := MUTED.to_html(false)
 	var l := RichTextLabel.new()
 	l.bbcode_enabled = true
 	l.fit_content = true
@@ -874,13 +873,18 @@ func _build_version() -> void:
 		+ "[color=#%s]Raves of Qud mod %s %s License.\n"
 		+ "Play. Hack. Distribute.\n"
 		+ "Raves of Qud viewer %s %s License.[/color]\n"
-		+ "[color=#%s]Raves of Qud requires a legally installed copy of Caves of Qud.\n"
-		+ "No Qud content or artwork is claimed, hosted, or distributed.\n"
-		+ "Freehold Games content is loaded at runtime.[/color][/right]") % [
+		# THE DISCLAIMERS ARE COLOURED WITHIN THE LINE, not by line: each clause takes the
+		# colour of whoever it is about, so "who requires what of whom" is legible at a
+		# glance instead of having to be read. Daniel's split, to the clause.
+		+ "[color=#%s]Raves of Qud requires a [/color][color=#%s]legally installed copy of Caves of Qud.[/color]\n"
+		+ "[color=#%s]No Caves of Qud content or artwork is claimed, hosted, or distributed by [/color][color=#%s]Raves of Qud.[/color]\n"
+		+ "[color=#%s]Freehold Games content [/color][color=#%s]is loaded at runtime.[/color][/right]") % [
 		gold, Brand.QUD_VERSION, Brand.QUD_BUILD,
 		mag, Brand.RAVES_VERSION, Brand.LICENSE,
 		Brand.RAVES_VERSION, Brand.LICENSE,
-		mut]
+		mag, gold,
+		gold, mag,
+		gold, mag]
 	add_child(l)
 	_place(l, "version")
 	# The block outgrows the layout rect in BOTH axes: growth runs LEFT so the right edge stays
