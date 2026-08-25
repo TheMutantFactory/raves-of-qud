@@ -4,17 +4,20 @@
 
 Every screen in Daniel's flow tree exists and is wired.
 
-PARITY PASS, started 2026-08-25 with `tools/capture/parity_rows.py` (row-profile
-Qud's capture against Raves', pair bands by proximity, read the delta):
-  * Customize — DONE, title 0.0px, everything else within 3px
-  * Build summary — DONE, band headers + the whole attribute column within 1px
-  * Location, Attributes, Cybernetics, Mutations, Creating World — still
-    first-pass fractions; profile each against its capture the same way
-    (`--cols` to isolate the column that matters).
+PARITY PASS — DONE 2026-08-25, with `tools/capture/parity_rows.py` (row-profile
+Qud's capture against Raves', pair bands by proximity, read the delta). Every
+screen's key landmarks now measure within ~1px of Qud's:
+  * Customize (title 0.0px), Build summary (whole attribute column within 1px),
+    Attributes (card row +0.3px), Cybernetics (panel +0.4px), Location
+    (card row +0.4px), Creating World (emblem +0.1px, dot strip -0.1px).
+  * Mutations: within 2px at the top; its rows drift ~0.4px each from the
+    THEME's line height, not from a layout fraction. Left alone on purpose.
 
-Known and deliberately unchanged: the nav-hint line sits ~6px above Qud's on
-every card screen. It is the SHARED hook every already-parity-checked screen
-uses, so moving it is its own measured change, not a side effect of this pass.
+Two things deliberately NOT changed, each its own measured job:
+  * The nav-hint line sits ~6px above Qud's on every card screen — the SHARED
+    hook that already-parity-checked screens use.
+  * Creating World below the dot strip: Qud draws world-map art there that has
+    no counterpart in Raves, so pairing further would be fitting noise.
 
 Pending externally: ONE Qud restart activates every export written for these
 slices — startingLocations, pregens, mutations, cybernetics — plus the
