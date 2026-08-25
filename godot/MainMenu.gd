@@ -1441,6 +1441,10 @@ func _embark() -> void:
 		push_warning("Raves: can't embark — bridge not connected")
 		return
 	_send_embark(_cg_genotype, _cg_subtype)
+	# CREATING WORLD (slice 4): the staged progress overlay rides the ROOT so it survives the
+	# scene switch below; Main's first snapshot flips it live and it shows the embark modal.
+	var cw: Variant = load("res://CreatingWorldOverlay.gd").new()
+	get_tree().root.add_child(cw)
 	_enter_viewer()   # data-first, same as Continue: MainFrame auto-connects once the game is live
 
 func _send_embark(genotype: String, subtype: String) -> void:

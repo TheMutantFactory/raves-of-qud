@@ -425,6 +425,9 @@ func _on_snapshot(data: Dictionary) -> void:
 	# neighbours (same stratum) the player has visited, placed by global offset.
 	Profiler.add_us("server", int(data.get("serverUs", 0)))
 	_inject_player_facing(data)   # the player's cell obj carries no reliable hflip; use the player block's
+	# the Creating World overlay (an embark in progress) learns the game is live from the
+	# FIRST snapshot — the exact moment the world beneath it starts rendering
+	get_tree().call_group("creating_world", "game_live")
 	Profiler.begin("ingest")
 	_check_camera_game(data)   # a different game than the stored heading belongs to -> face north
 	store.ingest(data)   # keep the store current even when not rendering, so 3D can start instantly
@@ -705,6 +708,11 @@ func _exec_godot_cmd(cmd: String) -> void:
 			# `profile` — dump the Pareto to profile.txt and reset; `profile keep` dumps
 			# without resetting. The F9/P keys' headless twin, for driving from outside.
 			_dump_profile(parts.size() < 2 or String(parts[1]) != "keep")
+		"cwtest":
+			# summon the Creating World overlay over a LIVE game — the next snapshot flips it
+			# to the embark modal, which is the whole flow minus an actual (save-destroying)
+			# embark. The only honest way to test slice 4 against a running session.
+			get_tree().root.add_child(load("res://CreatingWorldOverlay.gd").new())
 		"spritedump":
 			# `spritedump CX CY` — print every visual node whose footprint covers the cell:
 			# type, position, modulate/albedo, texture id, visibility. The inspector reports
