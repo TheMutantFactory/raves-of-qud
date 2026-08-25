@@ -113,6 +113,10 @@ var _sel := 0
 var _cards: Array = []
 var _desc: RichTextLabel
 var _warn: RichTextLabel   # blocked-card explanation (see _card_blocked)
+var _refusal: Control      # the red X flashed over a refused card
+## Qud's own red — its palette 'R' (#d74200), not a hand-picked one, so the X belongs to the
+## same 18 colours as everything else on screen.
+const REFUSE_RED := QudPalette.COLORS["R"]
 var _palette := {}
 var _border_tex: ImageTexture
 var _peer := StreamPeerTCP.new()
@@ -1062,6 +1066,9 @@ func _apply_selection() -> void:
 		for line in str(_items[_sel].get("desc", "")).split("\n", false):
 			lines.append(QudText.to_bbcode(line, _palette))
 		_desc.text = "[color=#%s]%s[/color]" % [MUTED.to_html(false), "\n".join(lines)]
+	if _refusal != null and is_instance_valid(_refusal):
+		_refusal.queue_free()   # moving off the card answers the refusal; the X goes with it
+		_refusal = null
 	if _warn != null:
 		var why := ""
 		if _sel >= 0 and _sel < _items.size():
@@ -1081,9 +1088,44 @@ func _confirm() -> void:
 	if _sel >= 0 and _sel < _items.size():
 		var nm := str(_items[_sel].get("name", ""))
 		if _card_blocked(nm) != "":
-			return   # the warning is already on screen; refuse rather than pretend
+			# the warning is already on screen; ANSWER the click as well as refusing it —
+			# a press that changes nothing at all reads as a broken button
+			_flash_refusal()
+			return
 		selected = nm
 		chose.emit(selected)
+
+## A Qud-red X struck across the blocked card, for ~2s. Drawn over the card's own column so it
+## lands inside the frame whatever the card's size, and freed on its own timer — a refusal the
+## player can SEE, which a silent no-op is not.
+func _flash_refusal() -> void:
+	if _sel < 0 or _sel >= _cards.size():
+		return
+	var col: Control = _cards[_sel].get("col")
+	if col == null:
+		return
+	var r := col.get_global_rect()
+	if r.size.x <= 1.0 or r.size.y <= 1.0:
+		return
+	if _refusal != null and is_instance_valid(_refusal):
+		_refusal.queue_free()
+	var x := Control.new()
+	x.position = r.position
+	x.size = r.size
+	x.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var t: float = maxf(2.0, r.size.y * 0.055)
+	var pad: float = r.size.x * 0.12
+	x.draw.connect(func():
+		var w := x.size.x
+		var h := x.size.y
+		x.draw_line(Vector2(pad, pad), Vector2(w - pad, h - pad), REFUSE_RED, t)
+		x.draw_line(Vector2(w - pad, pad), Vector2(pad, h - pad), REFUSE_RED, t))
+	add_child(x)
+	_refusal = x
+	var tm := get_tree().create_timer(2.0)
+	tm.timeout.connect(func():
+		if is_instance_valid(x):
+			x.queue_free())
 
 func _unhandled_input(e: InputEvent) -> void:
 	if e.is_action_pressed("ui_cancel"):

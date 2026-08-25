@@ -844,19 +844,31 @@ func _build_version() -> void:
 	if Settings.qud_shape("versions"):
 		_build_version_qud()
 		return
-	# User mode: OUR versions, not Qud's — the client's release and the mod build it last spoke
-	# to (report 9e4163d1). The mod line comes from the last bridge handshake Settings remembers;
-	# before any first connection there is nothing truthful to show, so it says so.
-	var stamp := String(Settings.get_value("last_mod_stamp", ""))
-	var l := _label("%s %s · %s\nmod %s" % [Brand.GAME_NAME, Brand.RAVES_VERSION, Brand.LICENSE,
-		stamp if stamp != "" else "not connected yet"], MUTED, "caption")
+	# USER MODE: the full attribution block, Daniel's wording (2026-08-25). It carries three
+	# things at once — whose game this is, what Raves itself is, and the standing that lets a
+	# viewer exist at all: Raves ships no Qud content, and everything Freehold's comes out of
+	# the player's own installed copy through the modding API. The Qud release/build come from
+	# Brand (measured off a title capture; see the TODO there about sourcing them live), and
+	# the mod and viewer share RAVES_VERSION because this repo versions them together.
+	var l := _label(("Caves of Qud %s Copyright Freehold Games. All rights reserved.\n"
+		+ "Build %s\n"
+		+ "Raves of Qud mod %s %s License. Play. Hack. Distribute.\n"
+		+ "Raves of Qud viewer %s %s License.\n"
+		+ "Raves of Qud requires a legally obtained license for Caves of Qud and a copy of the game installed.\n"
+		+ "No Qud content or artwork is claimed, hosted, or distributed.\n"
+		+ "All Freehold Games content is loaded from Caves of Qud via the modding API.") % [
+		Brand.QUD_VERSION, Brand.QUD_BUILD,
+		Brand.RAVES_VERSION, Brand.LICENSE,
+		Brand.RAVES_VERSION, Brand.LICENSE], MUTED, "caption")
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	l.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
 	add_child(l)
 	_place(l, "version")
-	# The mod line outgrows the layout rect; growth must run LEFT so the right edge stays
-	# pinned in the corner instead of the text walking off the screen (it did).
+	# The block outgrows the layout rect in BOTH axes: growth runs LEFT so the right edge stays
+	# pinned in the corner (the one-line version walked off the screen without it), and UP so a
+	# seven-line block stacks above the corner instead of off the bottom (it did that too).
 	l.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	l.grow_vertical = Control.GROW_DIRECTION_BEGIN
 
 ## 1:1: Qud's own version corner — its release + build, right-aligned, in a READABLE colour.
 ## Qud draws the build line very dark (illegible); we lift it. A RichTextLabel so the two lines
