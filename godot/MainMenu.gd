@@ -878,15 +878,15 @@ func _build_version() -> void:
 	l.text = ("[right][color=#%s]Caves of Qud %s Copyright Freehold Games.\n"
 		+ "All rights reserved.\n"
 		+ "Build %s[/color]\n"
-		+ "[color=#%s]Raves of Qud mod %s %s License.\n"
+		+ "[color=#%s]" + Brand.GAME_NAME + " mod %s %s License.\n"
 		+ "Play. Hack. Distribute.\n"
-		+ "Raves of Qud viewer %s %s License.[/color]\n"
+		+ Brand.GAME_NAME + " viewer %s %s License.[/color]\n"
 		# THE DISCLAIMERS ARE COLOURED WITHIN THE LINE, not by line: each clause takes the
 		# colour of whoever it is about, so "who requires what of whom" is legible at a
 		# glance instead of having to be read. Daniel's split, to the clause.
-		+ "[color=#%s]Raves of Qud requires a [/color][color=#%s]legally installed copy of Caves of Qud.[/color]\n"
+		+ "[color=#%s]" + Brand.GAME_NAME + " requires a [/color][color=#%s]legally installed copy of Caves of Qud.[/color]\n"
 		+ "[color=#%s]No Caves of Qud content or artwork is claimed, hosted,\n"
-		+ "or distributed by [/color][color=#%s]Raves of Qud.[/color]\n"
+		+ "or distributed by [/color][color=#%s]" + Brand.GAME_NAME + ".[/color]\n"
 		+ "[color=#%s]Freehold Games content [/color][color=#%s]is loaded at runtime.[/color][/right]") % [
 		gold, Brand.QUD_VERSION, Brand.QUD_BUILD,
 		mag, Brand.RAVES_VERSION, Brand.LICENSE,

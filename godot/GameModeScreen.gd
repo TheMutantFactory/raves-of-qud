@@ -28,9 +28,9 @@ func _card_blocked(item_name: String) -> String:
 	# Daniel's wording, verbatim — including the joke. It says the same three things a longer
 	# note would (not here, why not, what to do instead) and sounds like the game does.
 	return "Daily runs are for vanilla Caves of Qud\n" \
-		+ "Raves of Qud does not support Daily mode\n" \
+		+ "%s does not support Daily mode\n" % Brand.GAME_NAME \
 		+ "It just wouldn't be fair to the other people running the Daily, for reasons\n" \
-		+ "Pobody's nerfect: you can create a Daily character in Vanilla Qud and load it with Raves of Qud."
+		+ "Pobody's nerfect: you can create a Daily character in Vanilla Qud and load it with %s." % Brand.GAME_NAME
 
 func _load_items() -> Array:
 	var path := InputModel.support_dir().path_join("chargen.json")

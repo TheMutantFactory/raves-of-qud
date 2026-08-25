@@ -44,7 +44,7 @@ import threading
 import time
 
 LOG = os.path.expanduser(
-    "~/Library/Application Support/Godot/app_userdata/Raves of Qud/logs/raves.log")
+    "~/Library/Application Support/Godot/app_userdata/Raves of Mud/logs/raves.log")
 HERE = os.path.dirname(os.path.abspath(__file__))
 FADE = re.compile(r"\[zonefade\] (\S+) off=\((-?\d+),(-?\d+)\)")
 

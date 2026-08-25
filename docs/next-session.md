@@ -15,7 +15,7 @@ in `hv state`, and `hv goto` refuses to drive while duplicates exist. Guarded by
 Full write-up in `docs/gotchas.md` ("One state file, many writers").
 
 Still true and worth keeping: **confirm from a screenshot, never the state file alone.**
-When a report and the screen disagree, `pgrep -f "Raves of Qud" | wc -l` FIRST.
+When a report and the screen disagree, `pgrep -f "Raves of Mud" | wc -l` FIRST.
 
 ## NEXT: mirror Qud's LOOKER (feedback, 2026-08-09: "Let's wire the looker.")
 
@@ -150,5 +150,5 @@ python3 tools/regression/typing_guard_audit.py     # SPOT, no deps
 ```
 
 Same-moment parity capture (Qud freezes unfocused — activate it FIRST, wait ~2.5s, then Raves):
-`hv activate "Caves of Qud"; sleep 2.5; hv shot qud a.png; hv activate "Raves of Qud"; sleep 1.5;
+`hv activate "Caves of Qud"; sleep 2.5; hv shot qud a.png; hv activate "Raves of Mud"; sleep 1.5;
 hv shot raves b.png`

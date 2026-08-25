@@ -1820,7 +1820,7 @@ func _write_zone_report() -> void:
 	var lo: Vector3i = live_rec.get("origin", Vector3i.ZERO)
 	var lz: int = int(live_rec.get("stratum", 0))
 	var lines: Array = []
-	lines.append("=== Raves of Qud — zone report ===")
+	lines.append("=== %s — zone report ===" % Brand.GAME_NAME)
 	lines.append("live %s  origin %s  stratum %d" % [live_id, str(lo), lz])
 	var zw: int = int(renderer._live_w)
 	var zh: int = int(renderer._live_h)

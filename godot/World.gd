@@ -1,7 +1,7 @@
 class_name World
 extends RefCounted
 
-## World-space coordinate math for Raves of Qud.
+## World-space coordinate math for Raves of Mud.
 ##
 ## A Qud world is a grid of parasangs; each parasang is PARASANG×PARASANG zones;
 ## each zone is ZONE_W×ZONE_H cells; plus Z strata. The snapshot's `zone` block

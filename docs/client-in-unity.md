@@ -1,6 +1,6 @@
 # How to build a Raves client in Unity
 
-Raves of Qud is two halves joined by one seam:
+Raves of Mud is two halves joined by one seam:
 
 ```
   Caves of Qud + bridge mod  ──frames──▶  a client that renders + sends input

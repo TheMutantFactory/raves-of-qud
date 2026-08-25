@@ -369,7 +369,7 @@ def anim_measure(b, bp, frames=12):
             # focused, and Godot's animation clock freezes unfocused (first
             # campfire run: qud 9 states, raves 1 — the fire was frozen).
             try:
-                _focus("CavesOfQud" if app == "qud" else "Raves of Qud")
+                _focus("CavesOfQud" if app == "qud" else "Raves of Mud")
                 time.sleep(0.6)
             except Exception:
                 pass
@@ -702,7 +702,7 @@ def reboot_rig(b=None):
     import subprocess
     for cycle in range(3):
         if plat.IS_WIN:
-            subprocess.run('taskkill /F /FI "WINDOWTITLE eq Raves of Qud*"',
+            subprocess.run('taskkill /F /FI "WINDOWTITLE eq Raves of Mud*"',
                            shell=True, capture_output=True)
             deadline2 = time.time() + 15
             while time.time() < deadline2:

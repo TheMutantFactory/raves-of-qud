@@ -1,4 +1,4 @@
-# Raves of Qud — bridge protocol
+# Raves of Mud — bridge protocol
 
 localhost TCP, default port **48710** (`mod/Protocol.cs` `DefaultPort` ==
 `godot/BridgeClient.gd` `PORT`).

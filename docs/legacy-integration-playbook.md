@@ -1,6 +1,6 @@
 # Playbook: driving a legacy game from Godot (and reading it back)
 
-A portable guide for the class of project Raves of Qud belongs to: **a Godot front-end / viewer /
+A portable guide for the class of project Raves of Mud belongs to: **a Godot front-end / viewer /
 test-harness layered on top of a game you can't rewrite** — closed source, a different engine, its
 own render loop and input model. Caves of Qud (Unity/.NET) is the worked example here, but the
 *problems* below recur for any target: an emulator, a Unity/Unreal/Godot game, a terminal roguelike,

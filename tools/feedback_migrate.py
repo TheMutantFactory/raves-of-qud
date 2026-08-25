@@ -58,6 +58,8 @@ def rule_slot(verdict):
 def upgrade(rec, iid, base):
     out = dict(rec)
     out.setdefault("v", 1)
+    # THE OLD NAME ON PURPOSE: these are pre-0.8 records, filed when the project WAS
+    # "Raves of Qud". Backfilling today's name onto them would misdate the history.
     out.setdefault("app", "Raves of Qud")
     # Not today's version. See the module docstring.
     out.setdefault("app_version", "pre-0.8")

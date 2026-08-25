@@ -223,7 +223,7 @@ func _foreign_report(found: Dictionary) -> String:
 	var c: Dictionary = found.get("cell", {})
 	var loc: Vector2i = found.get("local", Vector2i.ZERO)
 	var L: Array = []
-	L.append("=== Raves of Qud — cell %d,%d (ANOTHER ZONE) ===" % [loc.x, loc.y])
+	L.append("=== %s — cell %d,%d (ANOTHER ZONE) ===" % [Brand.GAME_NAME, loc.x, loc.y])
 	L.append("zone %s   look-space (%d,%d)" % [String(found.get("zone", "?")),
 		_look_cell.x, _look_cell.y])
 	L.append("")

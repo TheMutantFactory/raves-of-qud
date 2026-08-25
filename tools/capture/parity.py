@@ -365,7 +365,7 @@ def cmd_capture(node, prefix, goto=True, stable_gap=0.0, fresh=True):
 
     shots = [("CavesOfQud", prefix + "_q.png"),
              ("CavesOfQud", prefix + "_q2.png"),   # the --stable reference
-             ("Raves of Qud", prefix + "_r.png")]
+             ("Raves of Mud", prefix + "_r.png")]
     for i, (target, out) in enumerate(shots):
         # --stable-gap spaces the two Qud shots out. OFF by default, and the reason is
         # worth keeping: --stable masks 1,008 px on the reputation tab while the same

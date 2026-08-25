@@ -196,8 +196,8 @@ func _slice2(sgp) -> void:
 		"ok": false, "route": "title -> in_game (18)",
 		"error": "raves:title->in_game#27: ocr failed",
 		"steps": [
-			{"step": {"activate": "Raves of Qud"}, "ok": true},
-			{"step": {"click_text": "Continue", "window": "Raves of Qud"}, "ok": false,
+			{"step": {"activate": "Raves of Mud"}, "ok": true},
+			{"step": {"click_text": "Continue", "window": "Raves of Mud"}, "ok": false,
 			 "error": "text 'continue' not on screen"},
 		]})
 	_check("a failed drive reports the failing STEP, not just ok/fail",

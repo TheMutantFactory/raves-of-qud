@@ -1,4 +1,4 @@
-# Raves of Qud architecture: Godot client, C# bridge, and the Qud thread model
+# Raves of Mud architecture: Godot client, C# bridge, and the Qud thread model
 
 The runtime structure of the player-facing view (the **Holodeck** — the Godot 2.5D window).
 `CLAUDE.md` keeps a one-paragraph map and points here for the detail. For the render *pipeline* specifically see [`rendering.md`](rendering.md); for the wire format

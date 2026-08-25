@@ -2109,7 +2109,7 @@ want** — the heading carries across. Beyond that:
 And before spending rounds on framing at all: geometry that sits in a narrow slot between two
 solid objects (a gearbox stub running into a wall) is occluded from BOTH of the directions
 along its own axis by construction. Verify it from the builder — a `print()` reaches
-`~/Library/Application Support/Godot/app_userdata/Raves of Qud/logs/raves.log` in the exported
+`~/Library/Application Support/Godot/app_userdata/Raves of Mud/logs/raves.log` in the exported
 app — and use the picture for looks, not for existence.
 
 ## Derive a sub-grid's CELL SIZE from the art — don't divide the footprint by three
@@ -2325,9 +2325,9 @@ only two confirms and the direct edge succeeds) — `sync-raves-and-qud` is the 
 
 ## `hv text` silently no-ops on Raves' status-screen fields; use `hv key` per character
 
-`hv text "Raves of Qud" "ejqxn12"` returned ok with detail `activate + CGEvent typing, HID tap
+`hv text "Raves of Mud" "ejqxn12"` returned ok with detail `activate + CGEvent typing, HID tap
 (tier1: no editable AX element found)` and **nothing appeared in the field** — while the caret was
-visibly blinking in it, so focus was correct. The same field takes `hv key "Raves of Qud" e` fine.
+visibly blinking in it, so focus was correct. The same field takes `hv key "Raves of Mud" e` fine.
 
 The tell is in the detail string: `no editable AX element found`. Godot draws its own `LineEdit`
 without exposing an AX text element, so `hv text` falls through to a raw HID tap that this screen
@@ -2338,7 +2338,7 @@ different focus path), so this is not "hv text is broken" — it is per-field, a
 signal is reading the field back from a screenshot. **Never trust `ok: true` from `hv text` as
 proof the characters arrived.** For FULL 1 (live typing guard), drive with a per-character loop:
 
-    for k in e j q x n 1 2; do hv key "Raves of Qud" "$k"; done
+    for k in e j q x n 1 2; do hv key "Raves of Mud" "$k"; done
 
 Then screenshot the field and confirm both halves: the characters landed AND `hv state` did not
 change screen (no ability/menu fired).
@@ -2474,7 +2474,7 @@ test that treats one sign differently, not for a rendering bug in what is drawn.
 **Reading a walk history is cheap and worth doing first.** `~/Library/Application
 Support/RavesOfQud/world/<gameId>/` holds one JSON per visited zone and `_persist` writes on FIRST
 sight, so mtimes give the walk order; `[zonefade]` lines in `~/Library/Application
-Support/Godot/app_userdata/Raves of Qud/logs/raves.log` give every neighbour re-bake with its
+Support/Godot/app_userdata/Raves of Mud/logs/raves.log` give every neighbour re-bake with its
 offset. Between them you can tell a frontier zone (few visited neighbours — solid dark by design,
 not a bug) from a real fault, before touching a screenshot. **Pick the game dir by checking which
 one holds the CURRENT zone AND is most recent** — several dirs can contain the same zone id from

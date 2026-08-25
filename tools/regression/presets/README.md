@@ -64,7 +64,7 @@ changes** — because the two halves of a preset apply differently:
 
   ```json
   "options-loud": {
-    "window": "Raves of Qud",
+    "window": "Raves of Mud",
     "reset": [
       { "shell": ["python3", "../capture/presets.py", "load", "some-qud-preset"] },
       { "click": [140, 952] }, { "wait": 0.6 }

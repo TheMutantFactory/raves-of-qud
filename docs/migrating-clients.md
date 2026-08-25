@@ -1,6 +1,6 @@
 # Migrating a Raves client between engines
 
-Raves of Qud's value is a **stable seam**: an in-game mod publishes structured state and accepts
+Raves of Mud's value is a **stable seam**: an in-game mod publishes structured state and accepts
 commands over a localhost socket, and *anything* on the other end can render it. The Godot
 client in `godot/` is a reference implementation, not the API. This page is for porting a client
 between engines — Godot → Unity, Godot → Unreal, or a fresh client in something else — and for

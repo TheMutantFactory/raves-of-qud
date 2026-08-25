@@ -156,7 +156,7 @@ says it out loud**, in the consent line it must show before anything leaves the 
 ```bash
 hv click raves 960 577 --right --mod cmd     # Cmd+Right-click any element
 # the form's consent line reads:
-#   "Sends: your note, the element you picked, and Raves of Qud 0.8.2 on macOS."
+#   "Sends: your note, the element you picked, and Raves of Mud 0.8.2 on macOS."
 ```
 
 Type a note starting `[deleteme]`, save, and the whole pipeline is exercised end to end: the outbox
@@ -353,7 +353,7 @@ histographicnomicon, map_editor + all 5 me_menu_* sub-screens, mod_manager.
 
 **All 8 failures are one root cause, not eight.** At `wfc_generator` the route took a restart
 edge; on that restart **Qud's in-game Roslyn compiler NRE'd and the mod did not load**
-(`MODERROR [Raves of Qud Bridge] - Exception compiling mod assembly ... NullReferenceException at
+(`MODERROR [Raves of Mud Bridge] - Exception compiling mod assembly ... NullReferenceException at
 CSharpCompilation.GetSourceDeclarationDiagnostics`). The bridge never came up, `qud_state.json`
 went stale (420s against a 6s TTL), and every subsequent target failed clicking for captions on
 the wrong screen.

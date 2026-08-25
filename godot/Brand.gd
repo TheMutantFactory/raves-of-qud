@@ -11,12 +11,31 @@ extends Node
 ## placeholder is never mistaken for a finished string.
 
 # ── the project ──────────────────────────────────────────────────────────────
-const GAME_NAME := "Raves of Qud"
+## THE NAME, and the only place it lives. Renamed from "Raves of Qud" to "Raves of Mud" on
+## 2026-08-25: the old name leaned on Freehold's trademark to say what the project is, and it
+## does not need to — the description does that job ("a Caves of Qud modpack…") without putting
+## someone else's mark in the product name.
+##
+## WHAT DELIBERATELY DID **NOT** CHANGE WITH IT, and must not be "fixed" later:
+##   * the support directory, still ~/Library/Application Support/RavesOfQud — it holds the
+##     player's own custom art, settings, colour edits, build library and statues. A rename
+##     orphans all of it silently, which is a data loss dressed as tidiness.
+##   * the mod folder RavesOfQudBridge, for the same reason one level over: Qud loads what is
+##     deployed there, and renaming leaves the old copy behind to load instead.
+##   * the bundle identifier com.dazzlingdukeoflazers.ravesofqud — macOS treats a changed id as
+##     a different application (permissions, window state, crash-report identity all reset).
+##   * the repository and its remote.
+## Those are STORAGE KEYS and IDENTIFIERS, not the name. The rule: anything a player reads uses
+## GAME_NAME; anything a machine keys on stays put.
+const GAME_NAME := "Raves of Mud"
+## The old name, kept for one job only: telling a returning player that the thing they installed
+## and the thing they are running are the same project.
+const FORMER_GAME_NAME := "Raves of Qud"
 ## Shown in the 1:1 title version corner under Qud's build — and, since 2026-08-10, stamped into
 ## every feedback report as `app_version`. A report you cannot pin to an exact build is close to
 ## worthless, so this has to be bumped WITH the tag, not after it.
 const RAVES_VERSION := "0.8.2"
-const GAME_TAGLINE := "a 3D viewer for Caves of Qud"
+const GAME_TAGLINE := "a 3D viewer for Caves of Qud"   # the SEO link: says what it is without taking the mark
 ## Spelled "Mutant Factory" — two words, matching mutantfactory.net and the 13 uses on the site.
 ## The GitHub org is `TheMutantFactory` -- `MutantFactory` and `mutantfactory` are both taken by
 ## dormant accounts, and GitHub also refuses `mutant-factory` for differing from one only by a
@@ -41,7 +60,7 @@ const URL_STEAM := "https://store.steampowered.com/app/333640/Caves_of_Qud/"
 const URL_GOG := "https://www.gog.com/game/caves_of_qud"
 const URL_ELSEWHERE := "https://www.cavesofqud.com/"
 const URL_STEAM_RUN := "steam://rungameid/333640"   # launches an installed copy
-const URL_DONATE := "«donation link for Raves of Qud»"   # placeholder
+const URL_DONATE := "«donation link for Raves of Mud»"   # placeholder
 
 ## Where in-game feedback is submitted (feedback-service; see its schema/envelope.v1.md).
 ## A CUSTOM DOMAIN on purpose -- this was feedback-service.daniel-dee.workers.dev, and a personal

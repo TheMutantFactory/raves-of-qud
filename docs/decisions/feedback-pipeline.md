@@ -27,7 +27,7 @@ same reader, the same triage view and the same server:
 ```json
 {
   "v": 1,
-  "app": "Raves of Qud",
+  "app": "Raves of Mud",
   "app_version": "0.8.0",
   "platform": "macOS",
   "install_id": "efd4b9d8be4252fd",
@@ -107,7 +107,7 @@ machine, and the one component that can hold something unintended — the pictur
 reporter can drop:
 
 ```
-Sends: your note, the element you picked, and Raves of Qud 0.8.0 on macOS.
+Sends: your note, the element you picked, and Raves of Mud 0.8.0 on macOS.
 [x] Include image
 ```
 

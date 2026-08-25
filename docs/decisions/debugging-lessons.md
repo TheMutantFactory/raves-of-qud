@@ -13,7 +13,7 @@ New lesson? Add it here (full story) and, if it changes how an agent should act,
   DiagnosticReports/*.ips`), and its stdout is block-buffered when redirected to a file, so a crash
   loses the tail. To get a real GDScript backtrace or native stack, run the project under the **dev
   editor** instead: `Godot --path godot` (writes `Godot-*.ips`, flushes errors). `godot.log` under
-  `app_userdata/Raves of Qud/logs/` flushes script errors too. Don't trust an empty redirected log
+  `app_userdata/Raves of Mud/logs/` flushes script errors too. Don't trust an empty redirected log
   as "no error" — it's probably just unflushed.
 - **`--headless` cannot catch GPU/driver bugs — it renders with a dummy driver.** A `MultiMesh`
   with a `billboard_mode` material `SIGBUS`-crashed the Metal driver (`memmove` on the instance
