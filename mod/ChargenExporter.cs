@@ -141,6 +141,60 @@ namespace RavesOfQud
             j.EndArray();
         }
 
+        /// <summary>
+        /// The mutation catalog (docs/new-game-plan.md slice 7a), from Qud's own
+        /// MutationFactory so descriptions and level text come from the game rather than from
+        /// a second copy of its XML: category, name, cost, max rank, defect flag, tile, and the
+        /// description the picker shows.
+        /// </summary>
+        private static void WriteMutations(JsonWriter j)
+        {
+            j.Name("mutations").BeginArray();
+            try
+            {
+                foreach (var cat in XRL.MutationFactory.GetCategories())
+                {
+                    string cname = cat.Name ?? "";
+                    bool defects = cname.Contains("Defect");
+                    foreach (var e in cat.Entries)
+                    {
+                        j.BeginObject();
+                        j.Member("name", e.DisplayName ?? e.Class ?? "");
+                        j.Member("category", cname);
+                        j.Member("cost", e.Cost);
+                        // MaxSelected is XML-only; the entry itself does not carry it, so the
+                        // multi-rank cap comes from the instance's own GetMaxLevel().
+                        int maxlv = 1;
+                        try
+                        {
+                            var probe = e.CreateInstance();
+                            if (probe != null) maxlv = probe.GetMaxLevel();
+                        }
+                        catch { }
+                        j.Member("maxLevel", maxlv);
+                        j.Member("defect", defects || e.Cost < 0);
+                        j.Member("tile", e.Tile ?? "");
+                        string desc = "";
+                        try
+                        {
+                            var mut = e.CreateInstance();
+                            if (mut != null) desc = mut.GetDescription() ?? "";
+                        }
+                        catch { }
+                        j.Member("desc", desc);
+                        j.Member("exclusions", e.Exclusions ?? "");
+                        j.EndObject();
+                        TileExporter.Ensure(e.Tile);
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                System.Console.WriteLine("[raves] mutations export failed: " + e.Message);
+            }
+            j.EndArray();
+        }
+
         private static void Export()
         {
             var j = new JsonWriter();
@@ -151,6 +205,7 @@ namespace RavesOfQud
             WriteCharTypes(j);
             WriteStartingLocations(j);
             WritePregens(j);
+            WriteMutations(j);
             j.EndObject();
             // Write ATOMICALLY: WriteAllText truncates-then-writes, so a Raves chargen screen reading the
             // file mid-write catches it empty ("No chargen data yet"). Write a temp then atomically swap

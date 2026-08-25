@@ -1248,6 +1248,7 @@ var _cg_pregen := ""      # pregen name (slice 5); non-empty = the driver's Preg
 var _cg_pregen_rec := {}  # ...and its full record, for the summary
 var _cg_attributes := {}  # stat -> final value, from the attributes screen (slice 7)
 var _cg_attr_spent := 0
+var _cg_mutations: Array = []   # [{name, count}] from the mutation picker (slice 7)
 
 ## Qud's chargen opens on the GAME MODE step (Tutorial/Classic/Roleplay/Wander/Daily) before
 ## genotype; mirror that order — mode → genotype → subtype → embark.
@@ -1490,12 +1491,47 @@ func _on_genotype_chosen(genotype_name: String) -> void:
 func _on_subtype_chosen(subtype_name: String) -> void:
 	_cg_subtype = subtype_name
 	_close_overlay()
-	# THE NEW LANE'S POINT-BUY (slice 7): Qud runs the subtype into Attributes before the
-	# summary — the capture's breadcrumb, exactly ("... True Kin | Fuming God-Child |
-	# Attributes | ... | Summary"). Presets and Random skip it: their builds are already
-	# spent, which is why _open_summary is a separate path.
-	_open_attributes()
+	# THE NEW LANE'S POINT-BUY (slice 7), in Qud's own order off the captures:
+	#   mutant   : subtype -> MUTATIONS -> attributes -> summary
+	#   true kin : subtype -> attributes -> (cybernetics, 7c) -> summary
+	# Presets and Random skip both: their builds are already spent, which is why
+	# _open_summary is a separate path.
+	if _genotype_is_mutant(_cg_genotype):
+		_open_mutations()
+	else:
+		_open_attributes()
 	return
+
+## Does this genotype buy MUTATIONS? Straight off the catalog's own flag — never a name test.
+func _genotype_is_mutant(gname: String) -> bool:
+	var path := InputModel.support_dir().path_join("chargen.json")
+	if not FileAccess.file_exists(path):
+		return false
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if not (parsed is Dictionary):
+		return false
+	for g in parsed.get("genotypes", []):
+		if str(g.get("name", "")) == gname:
+			return bool(g.get("supportsMutations", g.get("isMutant", false)))
+	return false
+
+## The mutation picker, then the attribute steppers.
+func _open_mutations() -> void:
+	_close_overlay()
+	var mut: Variant = load("res://MutationsScreen.gd").new()
+	UiState.set_scene("chargen_mutations")
+	mut.mode_name = _cg_mode
+	mut.chartype_title = "New"
+	mut.genotype_name = _cg_genotype
+	mut.subtype_name = _cg_subtype
+	_overlay = mut
+	add_child(mut)
+	mut.closed.connect(func():
+		_close_overlay()
+		_on_genotype_chosen(_cg_genotype))
+	mut.chose_mutations.connect(func(picks: Array, spent: int):
+		_cg_mutations = picks)
+	mut.advance_page.connect(_open_attributes)
 
 ## The stat steppers, then the summary carrying what was bought.
 func _open_attributes() -> void:
@@ -1508,9 +1544,13 @@ func _open_attributes() -> void:
 	att.subtype_name = _cg_subtype
 	_overlay = att
 	add_child(att)
+	# Back goes to the mutation picker for a mutant, or to the subtype screen otherwise
 	att.closed.connect(func():
 		_close_overlay()
-		_on_genotype_chosen(_cg_genotype))
+		if _genotype_is_mutant(_cg_genotype):
+			_open_mutations()
+		else:
+			_on_genotype_chosen(_cg_genotype))
 	att.chose_attributes.connect(func(values: Dictionary, spent: int):
 		_cg_attributes = values
 		_cg_attr_spent = spent)
@@ -1530,6 +1570,7 @@ func _open_new_summary() -> void:
 	sum.genotype_name = _cg_genotype
 	sum.subtype_name = _cg_subtype
 	sum.attributes = _cg_attributes    # what the stepper screen bought
+	sum.mutations = _cg_mutations      # ...and what the mutation picker chose
 	_overlay = sum
 	add_child(sum)
 	sum.closed.connect(func():

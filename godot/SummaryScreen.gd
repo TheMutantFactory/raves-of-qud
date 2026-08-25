@@ -23,6 +23,9 @@ var pregen := {}
 ## Explicit final values from the attributes screen (slice 7), stat -> value. Non-empty wins
 ## over both the pregen decode and the genotype-minimum interim.
 var attributes := {}
+## Explicit picks from the mutations screen (slice 7): [{name, count}]. Non-empty wins over
+## the subtype grant lines, the way the pregen decode does.
+var mutations: Array = []
 var _decoded := {}
 
 func _decoded_build() -> Dictionary:
@@ -104,6 +107,14 @@ func _attribute_rows() -> Array:
 ## The right band's entries: the subtype's own grant lines, minus plain stat bonuses (the left
 ## panel already carries those numbers).
 func _grant_lines() -> Array:
+	if not mutations.is_empty():
+		var picked: Array = []
+		for m in mutations:
+			var nm := str(m.get("name", ""))
+			if int(m.get("count", 1)) > 1:
+				nm += " x%d" % int(m.get("count", 1))
+			picked.append(nm)
+		return picked
 	# a pregen lists its DECODED mutations — the capture's right panel, exactly
 	if not pregen.is_empty():
 		var out2: Array = []
