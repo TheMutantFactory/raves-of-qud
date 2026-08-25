@@ -74,7 +74,7 @@ Mac and PC (Windows) develop in parallel off a shared base; feature work happens
 
 ```bash
 # type-check the mod against the REAL Qud API (catches API drift before a restart)
-dotnet build mod/RavesOfQudBridge.csproj
+dotnet build mod/RavesOfQudBridge.csproj   # COMPILE-CHECK ONLY — this does NOT deploy anything
 
 # look up an EXACT Qud API signature — decompile the shipped assembly (don't guess; reflect, don't grep)
 DOTNET_ROOT=/opt/homebrew/Cellar/dotnet/<ver>/libexec ~/.dotnet/tools/ilspycmd \
