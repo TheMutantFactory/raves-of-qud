@@ -1,5 +1,18 @@
 # New-game flow: the plan (2026-08-24)
 
+## STATUS: slices 1-9 all shipped (2026-08-25)
+
+Every screen in Daniel's flow tree exists and is wired. What remains is the
+MEASURED PARITY PASS — the layout fractions in each new screen are first-pass
+reads off the captures in `~/screenshots/new game/`, not row-profiled the way
+the card screens were (see ChargenCardScreen's layout notes for the method).
+
+Pending externally: ONE Qud restart activates every export written for these
+slices — startingLocations, pregens, mutations, cybernetics — plus the
+name/pet embark params, and the heldLight field the torch work has been
+waiting on since 2026-08-23.
+
+
 Target: `docs/new-game.md` (Daniel's flow tree) + the capture set in
 `~/screenshots/new game/`. Goal: Raves' guided chargen matches Qud's, screen for
 screen, for Classic / Roleplay / Wander (+ Tutorial); Daily stays Qud-only.
