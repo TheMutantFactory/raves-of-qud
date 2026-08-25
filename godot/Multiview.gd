@@ -240,21 +240,31 @@ func _build_pane_ui(cell: Control, i: int, m: int) -> void:
 	# full-screen mode both move live. Daniel: "let's add those to the camera picker."
 	if m == 7:   # CamMode.ADVENTURE
 		for spec in [["adventure_distance", "dist", 0.0, 40.0, 0.5, "horizontal distance"],
-				["adventure_height", "high", 0.0, 30.0, 0.5, "vertical height"],
-				["adventure_angle", "angl", 0.0, 89.0, 1.0, "camera angle (degrees down)"]]:
+				["adventure_height", "height", 0.0, 30.0, 0.5, "vertical height"],
+				["adventure_angle", "angle", 0.0, 89.0, 1.0, "camera angle (degrees down)"]]:
+			var row := HBoxContainer.new()
+			row.add_theme_constant_override("separation", 3)
+			var al := Label.new()
+			al.text = String(spec[1])
+			al.custom_minimum_size = Vector2(40, 14)
+			al.add_theme_font_size_override("font_size", 10)
+			al.add_theme_color_override("font_color", Color(0.6, 0.75, 0.73))
+			al.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			row.add_child(al)
 			var av := HSlider.new()
 			av.min_value = float(spec[2])
 			av.max_value = float(spec[3])
 			av.step = float(spec[4])
 			av.value = float(Settings.get_value(String(spec[0]), 0.0))
-			av.custom_minimum_size = Vector2(112, 14)
+			av.custom_minimum_size = Vector2(69, 14)
 			av.focus_mode = Control.FOCUS_NONE
 			av.tooltip_text = String(spec[5])
 			var akey := String(spec[0])
 			av.value_changed.connect(func(v: float):
 				Settings.set_value(akey, v)
 				Settings.save())
-			col.add_child(av)
+			row.add_child(av)
+			col.add_child(row)
 		# the col is bottom-right-anchored with a fixed offset sized for rotate+zoom;
 		# three more rows grow it downward past the pane edge unless the anchor rises
 		col.position.y -= 45.0

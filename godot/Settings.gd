@@ -273,7 +273,13 @@ func apply_global() -> void:
 	#
 	# It used to be 1:1 only ("user mode keeps the titlebar"). It is now the first named QoL
 	# feature instead: off by default like the rest, switch `titlebar` on to get it back.
-	DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_BORDERLESS, qud_shape("titlebar"))
+	# ONLY ON CHANGE: re-setting the borderless flag on macOS recreates the window even when
+	# the value is identical — every Settings.save() flashed the whole app out and back, and a
+	# slider drag (one save per tick) was a flash storm. Daniel: "the bottom 3 sliders make
+	# the whole raves window disappear and then reappear."
+	var want_borderless := qud_shape("titlebar")
+	if DisplayServer.window_get_flag(DisplayServer.WINDOW_FLAG_BORDERLESS) != want_borderless:
+		DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_BORDERLESS, want_borderless)
 
 func _path() -> String:
 	return InputModel.support_dir().path_join("settings.json")
