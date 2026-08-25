@@ -38,6 +38,14 @@ func _decoded_build() -> Dictionary:
 ## The Random lane sets this so [R] can respin the build in place (Qud's own "[R] Randomize
 ## Selection" affordance, which the summary otherwise has nothing to randomize).
 signal reroll
+## The footer actions (slice 8). The flow supplies the pieces the summary cannot know —
+## the points spent, the pools left — through `build_extra`.
+signal saved_to_library(entry: Dictionary)
+
+## Filled by the flow: {purchased, ap_spent, ap_remaining, base_ap, mp_remaining, lp}
+var build_extra := {}
+var _flash := ""
+var _flash_t := 0.0
 
 func _screen_node_name() -> String: return "SummaryScreen"
 func _subtitle() -> String: return ":build summary:"
@@ -151,10 +159,68 @@ func _grant_lines() -> Array:
 const SUMMARY_BAND_W := 0.156   # each band rule's width fraction (measured off the capture)
 
 func _unhandled_input(e: InputEvent) -> void:
-	if chartype_title == "Random" and e is InputEventKey and e.pressed and not e.echo \
-			and e.keycode == KEY_R:
-		reroll.emit(); accept_event(); return
+	if e is InputEventKey and e.pressed and not e.echo:
+		if chartype_title == "Random" and e.keycode == KEY_R:
+			reroll.emit(); accept_event(); return
+		if e.keycode == KEY_E:
+			_export_code(); accept_event(); return
+		if e.keycode == KEY_S:
+			_save_library(); accept_event(); return
 	super._unhandled_input(e)
+
+var _foot_lbl: RichTextLabel = null
+
+## The current build as BuildCode.encode wants it.
+func _build_dict() -> Dictionary:
+	var purchased: Dictionary = build_extra.get("purchased", {})
+	if purchased.is_empty() and not pregen.is_empty():
+		purchased = _decoded_build().get("attributes", {})
+	var muts: Array = mutations
+	if muts.is_empty() and not pregen.is_empty():
+		muts = _decoded_build().get("mutations", [])
+	return {"genotype": genotype_name, "subtype": subtype_name,
+		"purchased": purchased, "mutations": muts, "cybernetics": cybernetics,
+		"ap_spent": int(build_extra.get("ap_spent", 0)),
+		"ap_remaining": int(build_extra.get("ap_remaining", 0)),
+		"base_ap": int(build_extra.get("base_ap", 0)),
+		"mp_remaining": int(build_extra.get("mp_remaining", 0)),
+		"lp": int(build_extra.get("lp", 0))}
+
+func _export_code() -> void:
+	var code := BuildCode.encode(_build_dict(), BuildCode.catalog_gameversion())
+	DisplayServer.clipboard_set(code)
+	_flash = "Build code copied to the clipboard."
+	_flash_t = 3.0
+	_refresh_foot()
+
+func _save_library() -> void:
+	var nm := str(pregen.get("name", "")) if not pregen.is_empty() else subtype_name
+	var entry := {"name": "%s the %s" % [nm, genotype_name], "genotype": genotype_name,
+		"subtype": subtype_name,
+		"code": BuildCode.encode(_build_dict(), BuildCode.catalog_gameversion()),
+		"saved": Time.get_datetime_string_from_system(false, true)}
+	BuildCode.library_save(entry)
+	saved_to_library.emit(entry)
+	_flash = "Saved to your build library."
+	_flash_t = 3.0
+	_refresh_foot()
+
+func _refresh_foot() -> void:
+	if _foot_lbl == null:
+		return
+	if _flash != "":
+		_foot_lbl.text = "[center][color=#%s]%s[/color][/center]" % [CC_GOLD.to_html(false), _flash]
+		return
+	_foot_lbl.text = "[center][color=#%s][lb]E[rb][/color][color=#%s] Export Code to Clipboard  [/color][color=#%s][lb]S[rb][/color][color=#%s] Save Build To Library[/color][/center]" % [
+		SEL_GOLD.to_html(false), MUTED.to_html(false), SEL_GOLD.to_html(false), MUTED.to_html(false)]
+
+func _process(dt: float) -> void:
+	super._process(dt)
+	if _flash_t > 0.0:
+		_flash_t -= dt
+		if _flash_t <= 0.0:
+			_flash = ""
+			_refresh_foot()
 
 func _build_body(vp: Vector2) -> void:
 	_summary_band(vp, 0.345, "Attributes")
@@ -219,11 +285,11 @@ func _build_body(vp: Vector2) -> void:
 		rr.anchor_left = 0.0; rr.anchor_right = 1.0
 		rr.position.y = vp.y * 0.86
 		add_child(rr)
-	var foot := _text("Export Code to Clipboard  Save Build To Library", MUTED, "body")
-	foot.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	foot.anchor_left = 0.0; foot.anchor_right = 1.0
-	foot.position.y = vp.y * 0.899
-	add_child(foot)
+	_foot_lbl = _rich("", "body")
+	_foot_lbl.anchor_left = 0.0; _foot_lbl.anchor_right = 1.0
+	_foot_lbl.position.y = vp.y * 0.899
+	add_child(_foot_lbl)
+	_refresh_foot()
 	# the standard nav hint
 	var hint := _rich("", "caption")
 	hint.anchor_left = 0.0; hint.anchor_right = 1.0

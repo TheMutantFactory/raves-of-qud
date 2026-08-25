@@ -1312,8 +1312,20 @@ func _on_chartype_chosen(type_id: String) -> void:
 		# genotype's own subtypes, so an impossible pairing cannot be produced.
 		_roll_random()
 		return
+	if type_id == "Library":
+		# THE LIBRARY LANE (slice 8): saved builds and pasted build codes.
+		var lib: Variant = load("res://LibraryScreen.gd").new()
+		UiState.set_scene("chargen_library")
+		lib.mode_name = _cg_mode
+		_overlay = lib
+		add_child(lib)
+		lib.closed.connect(func():
+			_close_overlay()
+			_open_chartype(""))
+		lib.chose_build.connect(_on_library_build)
+		return
 	if type_id != "New":
-		# Library / Last are real Qud flows whose Raves slices are not
+		# "Last" is a real Qud flow whose Raves slice is not
 		# built yet. Reopen the step with the notice up rather than silently doing nothing.
 		var title := "Presets" if type_id == "Pregen" else type_id
 		# plain text — the guide body renders verbatim (no {{}} markup pass, see
@@ -1328,6 +1340,32 @@ func _on_chartype_chosen(type_id: String) -> void:
 	geno.closed.connect(_close_overlay)
 	geno.chose.connect(_on_genotype_chosen)
 	UiState.set_scene("chargen_genotype")
+
+## A decoded build out of the library (or the clipboard) becomes the current build and lands
+## on the summary, which is where every lane converges.
+func _on_library_build(build: Dictionary, label: String) -> void:
+	_close_overlay()
+	_cg_genotype = str(build.get("genotype", ""))
+	_cg_subtype = str(build.get("subtype", ""))
+	_cg_pregen = ""
+	_cg_pregen_rec = {}
+	_cg_mutations = build.get("mutations", [])
+	_cg_cybernetics = build.get("cybernetics", [])
+	# a code carries PURCHASED points; the summary wants final values, so add the genotype base
+	_cg_attributes = {}
+	var purchased: Dictionary = build.get("attributes", {})
+	if not purchased.is_empty():
+		var path := InputModel.support_dir().path_join("chargen.json")
+		if FileAccess.file_exists(path):
+			var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+			if parsed is Dictionary:
+				for g in parsed.get("genotypes", []):
+					if str(g.get("name", "")) != _cg_genotype:
+						continue
+					for st in g.get("stats", []):
+						var n := str(st.get("name", ""))
+						_cg_attributes[n] = int(st.get("min", 10)) + int(purchased.get(n, 0))
+	_open_summary("Library", {})
 
 ## Reopen the build summary for the CURRENT lane (New / Presets / Random). One place, so
 ## every Back that lands on the summary agrees about which lane it belongs to.
@@ -1386,6 +1424,9 @@ func _open_summary(crumb: String, pregen_rec: Dictionary) -> void:
 	add_child(sum)
 	# Esc: Random has no earlier screen in its lane (re-rolling is one keypress from the
 	# chartype row); Presets goes back to its carousel.
+	sum.mutations = _cg_mutations
+	sum.cybernetics = _cg_cybernetics
+	sum.attributes = _cg_attributes
 	if crumb == "Random":
 		sum.closed.connect(func():
 			_close_overlay()
@@ -1393,6 +1434,10 @@ func _open_summary(crumb: String, pregen_rec: Dictionary) -> void:
 		sum.reroll.connect(func():
 			_close_overlay()
 			_roll_random())
+	elif crumb == "Library":
+		sum.closed.connect(func():
+			_close_overlay()
+			_on_chartype_chosen("Library"))
 	else:
 		sum.closed.connect(func():
 			_close_overlay()
