@@ -33,6 +33,9 @@ const CRUMB_ICON := Color8(0x42, 0x64, 0x70)  # Qud (66,100,112)
 const SEL_GOLD := QudPalette.COLORS["W"]
 const BRIGHT_GOLD := Color8(0xE8, 0xD0, 0x1C) # onboarding highlight + guide corner squares (bright yellow)
 const DIM_BORDER := Color8(0x2C, 0x47, 0x47)  # unselected card border
+## Blocked-card warnings. Qud's own caution amber (its 'W'), not red: this is "not here",
+## not "something broke".
+const WARN_AMBER := Color8(0xCF, 0xC0, 0x41)
 const NAME_SEL := Color8(0xC5, 0xCE, 0xC6)    # selected name
 # Unselected name and hotkey, SAMPLED off Qud rather than eyeballed, and sampled on all three card
 # screens because these are shared: the 90th-percentile ink of an unselected label measured
@@ -109,6 +112,7 @@ var _items: Array = []
 var _sel := 0
 var _cards: Array = []
 var _desc: RichTextLabel
+var _warn: RichTextLabel   # blocked-card explanation (see _card_blocked)
 var _palette := {}
 var _border_tex: ImageTexture
 var _peer := StreamPeerTCP.new()
@@ -149,6 +153,12 @@ func _subtitle() -> String: return ":choose:"
 
 ## The item list: [{name, display, hotkey, tile, desc}], in card order.
 func _load_items() -> Array: return []
+
+## WHY A CARD CANNOT BE CHOSEN IN RAVES — "" when it can. A non-empty string is shown under
+## the description whenever the card is selected (hovering a card selects it, so this is the
+## hover warning too) and REFUSES the confirm, keys and clicks alike. Better than a mode that
+## looks available and then behaves differently from Qud's.
+func _card_blocked(_item_name: String) -> String: return ""
 
 ## Which card is selected on open.
 func _default_index() -> int: return 0
@@ -557,6 +567,16 @@ func _build_body(vp: Vector2) -> void:
 	_desc.position = Vector2(vp.x * 0.393, vp.y * _y_desc())   # left-justified, as in Qud (not centred)
 	_desc.custom_minimum_size.x = vp.x * 0.32
 	add_child(_desc)
+	# the blocked-card warning, under the description and centred — see _card_blocked
+	_warn = _rich("", "body")
+	# fit_content (from _rich) sizes a label to its CONTENT, which beats autowrap and ran the
+	# warning off the right edge — a wrapped column needs it off and an explicit width.
+	_warn.fit_content = false
+	_warn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_warn.position = Vector2(vp.x * 0.28, vp.y * (_y_desc() + 0.075))
+	_warn.size = Vector2(vp.x * 0.44, vp.y * 0.14)
+	_warn.custom_minimum_size = _warn.size
+	add_child(_warn)
 
 	# The three-dot deco under the description. Measured off Qud's caste screen: three 5px dots
 	# centred at (959,900) at 1920x1080, offsets (0,-4), (-9,+4), (+9,+4). The spread is NOT
@@ -1040,6 +1060,12 @@ func _apply_selection() -> void:
 		for line in str(_items[_sel].get("desc", "")).split("\n", false):
 			lines.append(QudText.to_bbcode(line, _palette))
 		_desc.text = "[color=#%s]%s[/color]" % [MUTED.to_html(false), "\n".join(lines)]
+	if _warn != null:
+		var why := ""
+		if _sel >= 0 and _sel < _items.size():
+			why = _card_blocked(str(_items[_sel].get("name", "")))
+		_warn.text = "[center][color=#%s]%s[/color][/center]" % [WARN_AMBER.to_html(false), why] \
+			if why != "" else ""
 	_position_sel_frame()
 
 func _randomize() -> void:
@@ -1051,7 +1077,10 @@ func _randomize() -> void:
 
 func _confirm() -> void:
 	if _sel >= 0 and _sel < _items.size():
-		selected = str(_items[_sel].get("name", ""))
+		var nm := str(_items[_sel].get("name", ""))
+		if _card_blocked(nm) != "":
+			return   # the warning is already on screen; refuse rather than pretend
+		selected = nm
 		chose.emit(selected)
 
 func _unhandled_input(e: InputEvent) -> void:

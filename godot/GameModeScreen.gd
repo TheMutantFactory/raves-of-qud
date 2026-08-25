@@ -17,6 +17,19 @@ func _breadcrumb_crumbs() -> Array: return [{"label": "Choose Game Mode", "curre
 func _subtitle() -> String: return ":choose game mode:"
 func _default_index() -> int: return 1   # Classic, like Qud's default
 
+## DAILY IS QUD-ONLY, on purpose. Everyone runs the same fixed character and world seed and
+## the results are compared, so a run played through a 3D viewer with its own camera, fog and
+## look tools is not the run everyone else played — Daniel: "there's too much latitude for
+## players to abuse the daily." Nothing is lost by it: start the Daily in Qud's own window and
+## attach Raves afterwards if you want to watch, since Raves renders whatever game is running.
+func _card_blocked(item_name: String) -> String:
+	if item_name != "Daily":
+		return ""
+	return "Daily runs are Caves of Qud only.\n" \
+		+ "Everyone plays one fixed character and world seed, and Raves' camera, lighting and " \
+		+ "look tools would not be the game the rest of the board played.\n" \
+		+ "Start a Daily in Qud's own window — Raves can attach to it afterwards."
+
 func _load_items() -> Array:
 	var path := InputModel.support_dir().path_join("chargen.json")
 	if FileAccess.file_exists(path):
