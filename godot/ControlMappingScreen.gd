@@ -635,7 +635,18 @@ func _build_hints() -> void:
 	for k in [["Space", "select"], ["Delete", "remove keybind"], ["+", "restore defaults"]]:
 		_hint.append_text("[color=%s][lb][/color][color=%s]%s[/color][color=%s][rb][/color]" % [wht, goldc, k[0], wht])
 		_hint.append_text("[color=%s] %s  [/color]" % [dimc, k[1]])
+	# [Esc] Back — ADDED to Qud's own row, and the only item here that does anything. Until now
+	# this screen said nothing about how to leave it: Qud's "[Esc] Back" lives in the legacy
+	# console ghost, and the ghost is hidden (see the deviation note in the header), so the way
+	# out was an undocumented keypress. Appended rather than led with, so Qud's item order
+	# survives — every other Raves screen puts Back first, and this one is a 1:1 reproduction.
+	#
+	# Space / Delete / + stay PLAIN on purpose: they are drawn but inert (rebinding is still
+	# Qud's), and an underline promising a click they do not honour would be a lie.
+	_hint.append_text("[url=esc][color=%s][lb][/color][color=%s]Esc[/color][color=%s][rb][/color]" % [wht, goldc, wht])
+	_hint.append_text("[color=%s] Back[/color][/url]" % dimc)
 	_hint.pop()
+	preload("res://UiHint.gd").clickable(_hint, {"esc": func(): close()})
 	# Qud centres this row on x~745, BELOW the ability-label line (hints y≈1058-1075)
 	var hc := CenterContainer.new()
 	hc.position = Vector2(-9, 1052)
