@@ -1532,16 +1532,10 @@ func _body_claim(mark: int, top_y: float) -> void:
 func _clickable_foot(rich: RichTextLabel, actions: Dictionary) -> void:
 	if rich == null:
 		return
-	rich.mouse_filter = Control.MOUSE_FILTER_STOP
 	# MERGED, not replaced: a screen can have more than one footer line (the summary has its
 	# export/save row and, in the Random lane, a reroll row) and the second call must not throw
 	# away the first one's actions. Ids are unique per screen, which is what makes that safe.
 	for k in actions:
 		_foot_actions[k] = actions[k]
-	if not rich.meta_clicked.is_connected(_on_foot_meta):
-		rich.meta_clicked.connect(_on_foot_meta)
+	preload("res://UiHint.gd").clickable(rich, _foot_actions)
 
-func _on_foot_meta(meta: Variant) -> void:
-	var cb: Variant = _foot_actions.get(String(meta), null)
-	if cb is Callable:
-		(cb as Callable).call()

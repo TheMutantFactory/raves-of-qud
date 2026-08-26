@@ -192,7 +192,7 @@ func _build_box() -> void:
 	foot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var gold := "#%s" % TITLE_GOLD.to_html(false)
 	var dim := "#%s" % HINT_DIM.to_html(false)
-	foot.text = "[center][color=%s]┤ [/color][color=%s][lb]Esc[rb][/color][color=%s] Back ├[/color][/center]" % [dim, gold, dim]
+	foot.text = "[center][color=%s]┤ [/color][url=esc][color=%s][lb]Esc[rb][/color][color=%s] Back[/color][/url][color=%s] ├[/color][/center]" % [dim, gold, dim, dim]
 	foot.anchor_left = 0.0
 	foot.anchor_right = 1.0
 	foot.anchor_top = 0.955
@@ -200,6 +200,8 @@ func _build_box() -> void:
 	for k in ["left", "top", "right", "bottom"]:
 		foot.set("offset_" + k, 0.0)
 	_box.add_child(foot)
+	# the same call [Esc] makes — see UiHint
+	preload("res://UiHint.gd").clickable(foot, {"esc": func(): closed.emit()})
 
 ## One item row: [highlight bar] under [gold caret][label]. The caret keeps its slot in every
 ## row (transparent when unselected) so text never shifts as the selection moves — the same

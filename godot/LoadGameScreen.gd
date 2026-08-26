@@ -247,13 +247,17 @@ func _build() -> void:
 	hint.add_image(QudChrome.nav_icon(15), 22, 15)
 	hint.append_text("[color=%s][rb][/color]" % wht)
 	hint.append_text("[color=%s] navigate  [/color]" % dimc)
-	hint.append_text("[color=%s][lb][/color][color=%s]Space[/color][color=%s][rb][/color]" % [wht, goldc, wht])
-	hint.append_text("[color=%s] select  [/color]" % dimc)
-	hint.append_text("[color=%s][lb][/color][color=%s]Delete[/color][color=%s][rb][/color]" % [wht, goldc, wht])
-	hint.append_text("[color=%s] delete[/color]" % dimc)
+	hint.append_text("[url=space][color=%s][lb][/color][color=%s]Space[/color][color=%s][rb][/color]" % [wht, goldc, wht])
+	hint.append_text("[color=%s] select  [/color][/url]" % dimc)
+	hint.append_text("[url=del][color=%s][lb][/color][color=%s]Delete[/color][color=%s][rb][/color]" % [wht, goldc, wht])
+	hint.append_text("[color=%s] delete[/color][/url]" % dimc)
 	hint.pop()
 	hint.position = Vector2(622, 1006)
 	add_child(hint)
+	# the same two calls the keys make — see UiHint
+	preload("res://UiHint.gd").clickable(hint, {
+		"space": func(): _activate(_sel),
+		"del": func(): _confirm_delete(_sel)})
 
 	# the same luminance-weighted interlace as Records/Options (measured bg pairs
 	# (6,44,42)/(2,22,22); a flat 50% cut shreds glyphs)

@@ -449,7 +449,7 @@ func _build_footer() -> void:
 	l.scroll_active = false
 	l.theme_type_variation = "Caption"
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	l.text = "[center][color=#%s][lb]Esc[rb][/color][color=#%s] Back      [/color][color=#%s]↑↓[/color][color=#%s] navigate[/color][/center]" % [
+	l.text = "[center][url=esc][color=#%s][lb]Esc[rb][/color][color=#%s] Back[/color][/url]      [color=#%s]↑↓[/color][color=#%s] navigate[/color][/center]" % [
 		GOLD.to_html(false), DIM.to_html(false), GOLD.to_html(false), DIM.to_html(false)]
 	l.anchor_left = 0.0
 	l.anchor_right = 1.0
@@ -457,6 +457,8 @@ func _build_footer() -> void:
 	l.anchor_bottom = 0.985
 	_zero(l)
 	add_child(l)
+	# the same call [Esc] and the "‹ Back" button make — see UiHint
+	preload("res://UiHint.gd").clickable(l, {"esc": func(): closed.emit()})
 	# live write-back status (updated in _process)
 	_status = _label("", DIM, "caption")
 	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
