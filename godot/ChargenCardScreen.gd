@@ -814,6 +814,40 @@ func _layout_deferred() -> void:
 	_size_names()
 	await get_tree().process_frame   # let the row re-flow at the new name heights
 	_position_bands()                # no-op when the screen has no category bands
+	_clear_desc_of_cards()
+
+## Push the flavour line below the cards when the cards reach it.
+##
+## `_y_desc()` is a MEASURED constant per screen and stays the authority — on the figure screens
+## Qud'"'"'s flavour line is exactly there and this changes nothing. But a card column grows with its
+## own wrapped name, and the selection frame is drawn from that column, so on Choose Location
+## ("a sunken caravanserai" wraps to two lines) the frame reached past the constant and the
+## flavour text ended up printed through the card.
+##
+## Measured against the TALLEST card, not the selected one: keying off the selection would make
+## the line hop up and down as the player moved along a row of names that wrap differently.
+func _clear_desc_of_cards() -> void:
+	if _desc == null or _cards.is_empty():
+		return
+	var vp := get_viewport_rect().size
+	var lowest := 0.0
+	for c in _cards:
+		var col: Control = c.get("col")
+		if col == null:
+			continue
+		var r := col.get_global_rect()
+		if r.size.y > 1.0:
+			lowest = maxf(lowest, r.end.y)
+	if lowest <= 0.0:
+		return
+	# the selection frame'"'"'s own bottom clearance, then Qud'"'"'s gap between frame and flavour line
+	var want := lowest + vp.y * 0.0185 + vp.y * 0.010
+	var delta := want - _desc.position.y
+	if delta <= 0.0:
+		return                       # the constant already clears them; leave parity alone
+	_desc.position.y += delta
+	if _warn != null:
+		_warn.position.y += delta    # the warning hangs off the description, not off the screen
 
 func _position_bands() -> void:
 	if _bands.is_empty():
