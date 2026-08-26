@@ -206,10 +206,21 @@ func _show_modal() -> void:
 	box.color = Color8(0x0A, 0x2E, 0x2D)
 	box.position = Vector2(vp.x * 0.5 - w * 0.5, vp.y * 0.455)
 	box.size = Vector2(w, h)
+	# CLICKABLE. Daniel: "the user can'"'"'t click the modal 'You embark for the Caves of Qud'. They
+	# can only hit space." A box that says "press [Space]" is still a thing on screen that a
+	# player will click, and there is exactly one way out of it, so a click can only mean that.
+	# The hit target is the BOX, not the whole overlay: a click on the world-build text behind it
+	# is not an answer to the modal.
+	box.mouse_filter = Control.MOUSE_FILTER_STOP
+	box.gui_input.connect(func(e: InputEvent):
+		if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT and _live:
+			queue_free()
+			get_viewport().set_input_as_handled())
 	_modal.add_child(box)
 	for edge in [[0, 0, w, 2], [0, h - 2, w, 2], [0, 0, 2, h], [w - 2, 0, 2, h]]:
 		var b := ColorRect.new()
 		b.color = MUTED
+		b.mouse_filter = Control.MOUSE_FILTER_IGNORE   # the border must not eat the box's clicks
 		b.position = box.position + Vector2(edge[0], edge[1])
 		b.size = Vector2(edge[2], edge[3])
 		_modal.add_child(b)
@@ -217,13 +228,15 @@ func _show_modal() -> void:
 	msg.text = "You embark for the caves of Qud."
 	msg.add_theme_color_override("font_color", Color8(0xC5, 0xCE, 0xC6))
 	msg.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	msg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	msg.anchor_left = 0.0; msg.anchor_right = 1.0
 	msg.position.y = box.position.y + h * 0.28
 	_modal.add_child(msg)
 	var pr := Label.new()
-	pr.text = "> press [Space]"
+	pr.text = "> press [Space] or click"
 	pr.add_theme_color_override("font_color", SEL_GOLD)
 	pr.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	pr.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	pr.anchor_left = 0.0; pr.anchor_right = 1.0
 	pr.position.y = box.position.y + h * 0.62
 	_modal.add_child(pr)

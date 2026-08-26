@@ -25,6 +25,25 @@ func _card_gap_frac() -> float: return 0.020
 ## lower than the shared hook — the first pass read a band inside the card as the card top
 ## and corrected the wrong way, which put the cards through the title.
 func _y_cards() -> float: return 0.4729
+## ...and the header moves with them. MEASURED off Qud'"'"'s own Choose Starting Location at
+## 1920x1080: its title inks rows 474..491 (0.4389) and its selection frame'"'"'s top edge sits at
+## 488 (0.4519), i.e. the frame tucks just under the title'"'"'s underline and ENCLOSES the subtitle
+## — which is what Qud'"'"'s screen looks like, brackets around ":choose starting location:".
+##
+## Raves inherited the shared header positions, which were measured on the FIGURE screens, whose
+## cards are half as tall and start lower. Here that put the title 9px high and the frame 3px
+## high, so the frame'"'"'s top edge cut through the middle of "character creation" instead of
+## resting under it. Overriding all three keeps the one relationship that reads: title above,
+## frame below, subtitle inside.
+## These are LABEL TOPS, and the ink does not start there — the first pass set them to Qud's
+## measured INK rows and landed the title 8px low and the subtitle 3px high. Corrected by
+## measuring Raves' own ink against Qud's in a column strip clear of every frame rail: Qud inks
+## its title at 474 and its subtitle at 495 (of 1080). The subtitle took two passes because the
+## first read merged it with the title's descenders — the probe window has to START BELOW the
+## title's ink or it reports the wrong row and the correction goes the wrong way.
+func _y_title() -> float: return 0.4315
+func _y_subtitle() -> float: return 0.4537
+func _sel_pad_top_frac() -> float: return 0.021   # 0.4729 - 0.4519, so the frame top lands at Qud'"'"'s
 func _card_h_frac() -> float: return 0.195
 
 func _breadcrumb_crumbs() -> Array:
