@@ -117,6 +117,8 @@ var _sel := 0
 var _cards: Array = []
 var _desc: RichTextLabel
 var _warn: RichTextLabel   # blocked-card explanation (see _card_blocked)
+var _warn_base_y := 0.0   # its measured resting place; _place_warn only ever pushes DOWN from here
+var _deco_knobs: Array = []   # the three-dot deco, hidden while a refusal is on screen
 var _refusal: Control      # the red X flashed over a refused card
 ## Qud's own red — its palette 'R' (#d74200), not a hand-picked one, so the X belongs to the
 ## same 18 colours as everything else on screen.
@@ -591,6 +593,7 @@ func _build_body(vp: Vector2) -> void:
 	_warn.position = Vector2(vp.x * 0.225, vp.y * (_y_desc() + 0.075))
 	_warn.size = Vector2(vp.x * 0.55, vp.y * 0.14)
 	_warn.custom_minimum_size = _warn.size
+	_warn_base_y = _warn.position.y
 	add_child(_warn)
 
 	# The three-dot deco under the description. Measured off Qud's caste screen: three 5px dots
@@ -616,6 +619,7 @@ func _build_body(vp: Vector2) -> void:
 		k.position = Vector2(cx + off.x - ks * 0.5, oy + off.y - ks * 0.5)
 		k.size = Vector2(ks, ks)
 		add_child(k)
+		_deco_knobs.append(k)
 
 	var rnd := _rich("[center][color=#%s][lb]R[rb][/color][color=#%s] Randomize Selection[/color][/center]" % [
 		SEL_GOLD.to_html(false), MUTED.to_html(false)], "body")
@@ -828,7 +832,7 @@ func _layout_deferred() -> void:
 ## Push the flavour line below the cards when the cards reach it.
 ##
 ## `_y_desc()` is a MEASURED constant per screen and stays the authority — on the figure screens
-## Qud'"'"'s flavour line is exactly there and this changes nothing. But a card column grows with its
+## Qud's flavour line is exactly there and this changes nothing. But a card column grows with its
 ## own wrapped name, and the selection frame is drawn from that column, so on Choose Location
 ## ("a sunken caravanserai" wraps to two lines) the frame reached past the constant and the
 ## flavour text ended up printed through the card.
@@ -849,7 +853,7 @@ func _clear_desc_of_cards() -> void:
 			lowest = maxf(lowest, r.end.y)
 	if lowest <= 0.0:
 		return
-	# the selection frame'"'"'s own bottom clearance, then Qud'"'"'s gap between frame and flavour line
+	# the selection frame's own bottom clearance, then Qud's gap between frame and flavour line
 	var want := lowest + vp.y * 0.0185 + vp.y * 0.010
 	var delta := want - _desc.position.y
 	if delta <= 0.0:
@@ -857,6 +861,7 @@ func _clear_desc_of_cards() -> void:
 	_desc.position.y += delta
 	if _warn != null:
 		_warn.position.y += delta    # the warning hangs off the description, not off the screen
+		_warn_base_y += delta
 
 func _position_bands() -> void:
 	if _bands.is_empty():
@@ -1118,6 +1123,16 @@ func _apply_selection() -> void:
 			why = _card_blocked(str(_items[_sel].get("name", "")))
 		_warn.text = "[center][color=#%s]%s[/color][/center]" % [WARN_AMBER.to_html(false), why] \
 			if why != "" else ""
+		# A four-line refusal pushed past the description can reach the three-dot deco, and a
+		# knob printed through the sentence explaining the refusal is worse than no knob. The
+		# deco is decoration; the warning is the reason the player cannot have the card.
+		for k in _deco_knobs:
+			if is_instance_valid(k):
+				k.visible = why == ""
+		if why != "":
+			# deferred: the description's own height is not known until it has laid out the text
+			# we just gave it, and that height is the whole input to where this goes
+			_place_warn.call_deferred()
 	_position_sel_frame()
 
 func _randomize() -> void:
@@ -1339,3 +1354,17 @@ func _rich(bb: String, role := "body") -> RichTextLabel:
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	l.text = bb
 	return l
+
+## Keep the blocked-card warning clear of the description above it.
+##
+## The warning sits a constant below _y_desc(), which is right where the description is the two
+## lines the game-mode screen shows. Choose Genotype prints FIVE perk bullets, and the amber
+## warning ran straight through the last two of them. Measured off the description's own rendered
+## height, so it follows whatever that card happens to say, and floored at the constant so the
+## screens that already fit keep the position they were measured into.
+func _place_warn() -> void:
+	if _warn == null or _desc == null:
+		return
+	var vp := get_viewport_rect().size
+	var below: float = _desc.position.y + float(_desc.get_content_height()) + vp.y * 0.012
+	_warn.position.y = maxf(_warn_base_y, below)

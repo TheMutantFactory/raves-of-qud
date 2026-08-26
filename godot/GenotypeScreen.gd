@@ -28,6 +28,25 @@ func _screen_node_name() -> String: return "GenotypeScreen"
 func _subtitle() -> String: return ":choose genotype:"
 func _default_index() -> int: return 0   # Mutated Human
 
+## THE TUTORIAL'S GENOTYPE IS FIXED. Set this to the one genotype the lane can actually deliver
+## and every other card is SHOWN BUT REFUSED — the warning under the row, and the red X on the
+## confirm. Deliberately not PregenScreen's `force_name`, which filters its list down to one: the
+## player came to this screen to choose, so the card they cannot have is worth showing with a
+## reason attached. Empty (normal chargen) blocks nothing.
+##
+## It matters because the tutorial's pick was already being ignored: _on_tutorial_genotype takes
+## whatever was chosen and then forces the Marsh Taur pregen regardless, so picking True Kin
+## handed the player a mutated human without a word about it.
+var forced_name := ""
+
+func _card_blocked(item_name: String) -> String:
+	if forced_name == "" or item_name == forced_name:
+		return ""
+	return "The tutorial runs a fixed character\n" \
+		+ "Qud's tutorial boots a %s, and %s follows it step for step\n" % [forced_name, Brand.GAME_NAME] \
+		+ "%s would mean different limbs, different gear and different advice\n" % item_name \
+		+ "Pick %s here — or start a Classic game if you want to build a %s." % [forced_name, item_name]
+
 ## Qud: "Classic | New | Choose Genotype". The "New" leg comes from the chartype screen the
 ## player actually passed through (ChartypeScreen, 2026-08-10) — still never faked: entering
 ## the flow mid-way leaves `chartype_title` empty and the crumb absent.

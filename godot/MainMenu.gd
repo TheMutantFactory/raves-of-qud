@@ -437,7 +437,7 @@ func _spray_letter(glyph: Array, box: Rect2, origin: Vector2, disp: Vector2, til
 ## The edge has to be computed POST-ROTATION: the patch is tilted, so its bottom edge is a
 ## slanted line, and the drips have to start on that line while still falling straight down.
 ## `paint_bottom_frac` is where the ink actually ends inside the texture — the patch image
-## carries transparent padding for overspray, so the texture's bottom is not the paint'"'"'s.
+## carries transparent padding for overspray, so the texture's bottom is not the paint's.
 func _drip_from(tr: TextureRect, img_w: float, paint_bottom_frac: float, tilt: float,
 		paint: Color, glyph_cols: int) -> void:
 	# CHUNKIER than one authored pixel on purpose: at this size the patch pixel is ~3px, and
@@ -457,8 +457,8 @@ func _drip_from(tr: TextureRect, img_w: float, paint_bottom_frac: float, tilt: f
 	drips.size = size
 	add_child(drips)
 	# BEHIND the patch, in front of the wordmark: paint runs out from UNDER the sprayed
-	# letter, it does not lie across it. Drawn on top, every drip clipped the R'"'"'s leg and
-	# the M'"'"'s feet on its way past.
+	# letter, it does not lie across it. Drawn on top, every drip clipped the R's leg and
+	# the M's feet on its way past.
 	move_child(drips, tr.get_index())
 	# one run per stencil column, give or take — enough to look like it ran, not like a curtain
 	drips.setup(block, paint, a, b, tr.size.y, maxi(5, glyph_cols),
@@ -1451,7 +1451,7 @@ func _open_chargen() -> void:
 	_open_game_mode()
 
 ## THE FIRST CHARGEN STEP, and the only one whose Back correctly leaves chargen: there is no
-## earlier screen, so Esc here belongs to the title. `preselect` restores the player'"'"'s mode when
+## earlier screen, so Esc here belongs to the title. `preselect` restores the player's mode when
 ## the chartype screen sends them back.
 func _open_game_mode(preselect := "") -> void:
 	var mode: Variant = load("res://GameModeScreen.gd").new()
@@ -1537,7 +1537,7 @@ func _on_chartype_chosen(type_id: String) -> void:
 	_open_genotype_new()
 
 ## Choose Genotype in the New lane. A function rather than inline, because the caste/calling
-## screen'"'"'s Back has to reopen exactly this screen.
+## screen's Back has to reopen exactly this screen.
 func _open_genotype_new() -> void:
 	var geno: Variant = load("res://GenotypeScreen.gd").new()
 	geno.mode_name = _cg_mode   # breadcrumb trail: Qud shows the mode alongside the current screen
@@ -1695,6 +1695,9 @@ func _start_tutorial() -> void:
 		{"label": "Pregens", "current": false},
 	]
 	geno.onboard_index = 0   # steer to Mutated Human, the tutorial's genotype
+	# ...and REFUSE the other one. The steer was only a suggestion, and the lane forces the Marsh
+	# Taur pregen either way, so True Kin was a choice that silently did not happen.
+	geno.forced_name = TUTORIAL_GENOTYPE
 	geno.guide_tip_file = "tutorial_tip.txt"
 	_overlay = geno
 	add_child(geno)
@@ -1735,6 +1738,9 @@ func _on_tutorial_genotype(genotype_name: String) -> void:
 		_open_tutorial_summary())
 
 const TUTORIAL_PREGEN := "Marsh Taur"
+## ...whose genotype. The tutorial can only deliver this one, so the genotype screen refuses the
+## rest rather than accepting a pick it is about to overwrite.
+const TUTORIAL_GENOTYPE := "Mutated Human"
 
 func _open_tutorial_summary() -> void:
 	_close_overlay()

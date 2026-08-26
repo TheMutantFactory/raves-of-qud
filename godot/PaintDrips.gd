@@ -45,7 +45,7 @@ func setup(block: float, paint: Color, a: Vector2, b: Vector2, span: float, coun
 		rng_seed: int) -> void:
 	_block = maxf(3.0, block)
 	_paint = paint
-	# shrink the start edge toward its own midpoint — still the same line, so a drip'"'"'s start
+	# shrink the start edge toward its own midpoint — still the same line, so a drip's start
 	# height stays correct for the tilt, just no longer out at the corners
 	var mid: Vector2 = (a + b) * 0.5
 	_a = mid + (a - mid) * DRIP_WIDTH
