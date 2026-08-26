@@ -39,6 +39,7 @@ var client: BridgeClient
 var _wish_layer: CanvasLayer    # Ctrl+Shift+W wish prompt overlay (built lazily), sends "wish" to Qud
 var _wish_edit: LineEdit
 var _popup: PopupOverlay        # mirrors Qud modal popups forwarded by the mod (own file)
+var _tutorial: CanvasLayer      # mirrors Qud's TUTORIAL GUIDE box (TutorialGuide.gd)
 var _item_picker: PickerOverlay # mirrors Qud's PickGameObjectScreen (empty-slot equip picker)
 var _cyber: Control            # mirrors Qud's cybernetics TERMINAL (the becoming nook)
 var overlay_check: Callable = Callable()   # MainFrame: "is a frame overlay (status/controlmap) open?"
@@ -186,6 +187,11 @@ func _ready() -> void:
 	add_child(client)
 	client.snapshot.connect(_on_snapshot)
 	client.popup.connect(_on_popup)
+	client.tutorial.connect(_on_tutorial)
+	# ASK for the live step. The mod publishes the guide on change only, so attaching to a run
+	# already in progress (Continue, or a viewer restarted mid-tutorial) would show no box until
+	# the tutorial next spoke — and a beat can sit there for many turns waiting to be obeyed.
+	client.send_command("tutorial_resend", {})
 	client.qud_view.connect(func(v: String) -> void: qud_view_changed.emit(v))
 	client.picker.connect(_on_picker)
 	client.cyber.connect(_on_cyber)
@@ -225,6 +231,11 @@ func _ready() -> void:
 	# forwarded by the mod, and ships the viewer's answer back so Qud's blocked turn thread unblocks.
 	_popup = PopupOverlay.new()
 	add_child(_popup)
+	# The TUTORIAL GUIDE, mirrored from Qud (mod/TutorialBridge.cs). A child of the Holodeck scene
+	# on purpose: this node lives inside MainFrame's SubViewport, so its viewport IS the play area
+	# and the box lands over the world instead of over the side panels, with no rect to thread.
+	_tutorial = preload("res://TutorialGuide.gd").new()
+	add_child(_tutorial)
 	_popup.closed.connect(func(): popup_closed.emit())
 	_popup.answered.connect(func(payload: Dictionary):
 		client.send_command("popup", payload)
@@ -341,6 +352,16 @@ func _inject_player_facing(data: Dictionary) -> void:
 ## A Qud modal (message / yes-no / option list / text prompt) mirrored by the mod. During a popup the turn
 ## thread is blocked, so NO snapshots arrive — this is the only channel that tells us it opened. The overlay
 ## is modal (eats input) until the viewer answers, which ships a "popup" command back to unblock Qud.
+## Qud's tutorial moved to a new beat (or stopped talking). The box persists across turns, unlike
+## a popup, so it is driven ONLY by these frames — nothing else may clear it.
+func _on_tutorial(data: Dictionary) -> void:
+	if _tutorial == null:
+		return
+	if bool(data.get("active", false)):
+		_tutorial.show_step(data, _palette, Rect2())
+	else:
+		_tutorial.hide_step()
+
 func _on_popup(data: Dictionary) -> void:
 	if _popup == null:
 		return

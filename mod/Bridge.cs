@@ -1502,6 +1502,14 @@ namespace RavesOfQud
                     EmbarkDriver.RequestTutorial();
                     return;
                 }
+                if (name == "tutorial_resend")
+                {
+                    // The viewer just attached to a run already in progress. The guide publishes on
+                    // CHANGE only, so a client that arrives between two beats would sit there with no
+                    // box until the tutorial happened to say something else — which is most of a step.
+                    TutorialBridge.OnClientConnect();
+                    return;
+                }
                 if (name == "tutorial_go")
                 {
                     // COMMIT: the player confirmed on Raves' guided genotype screen — boot the tutorial.
