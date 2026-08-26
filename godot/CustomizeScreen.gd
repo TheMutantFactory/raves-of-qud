@@ -21,6 +21,8 @@ var _row_labels: Array = []
 var _edit: LineEdit = null
 
 func _screen_node_name() -> String: return "CustomizeScreen"
+## Row-profiled off Qud: this screen sits its deco high, right under its two prompt rows.
+func _y_deco() -> float: return 0.4935
 func _subtitle() -> String: return ":customize character:"
 func _load_items() -> Array: return []
 func _next_enabled() -> bool: return true
@@ -47,6 +49,7 @@ func _breadcrumb_crumbs() -> Array:
 	return out
 
 func _build_body(vp: Vector2) -> void:
+	var mark := _body_mark()
 	_row_labels.clear()
 	for i in 2:
 		var rl := _rich("", "body")
@@ -56,17 +59,10 @@ func _build_body(vp: Vector2) -> void:
 		add_child(rl)
 		_row_labels.append(rl)
 	_refresh_rows()
-	# the three-dot deco, close under the form (capture: ~0.505)
-	var ks: int = maxi(3, int(round(vp.y * 0.0046)))
-	var dx: int = maxi(2, int(round(vp.x * 0.0047)))
-	var dy: int = maxi(1, int(round(vp.y * 0.0037)))
-	for off in [Vector2(0, -dy), Vector2(-dx, dy), Vector2(dx, dy)]:
-		var k := ColorRect.new()
-		k.color = DECO_KNOB
-		k.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		k.position = Vector2(vp.x * 0.5 + off.x - ks * 0.5, vp.y * 0.4935 + off.y - ks * 0.5)
-		k.size = Vector2(ks, ks)
-		add_child(k)
+	# the two prompt rows are all there is above the deco here
+	_body_bot = vp.y * (0.4376 + 2.0 * 0.0204)
+	_body_claim(mark, vp.y * 0.4376)
+	_make_deco()   # created here, PLACED by the cascade (see _y_deco / _place_deco)
 	var foot := _rich("[center][color=#%s][lb]R[rb][/color][color=#%s] Randomize Selection  [/color][color=#%s][lb]Delete[rb][/color][color=#%s] Reset Selection[/color][/center]" % [
 		SEL_GOLD.to_html(false), MUTED.to_html(false), SEL_GOLD.to_html(false), MUTED.to_html(false)], "body")
 	foot.anchor_left = 0.0; foot.anchor_right = 1.0

@@ -125,6 +125,9 @@ var _col_title: Label         # "character creation" — the top of the cascadin
 var _col_sub: Label           # ":choose …:"
 var _col_row: Control        # the HBox of cards
 var _resize_t: Timer          # debounces the rebuild while a window is being dragged
+var _body_bot := 0.0          # panel screens: the bottom of their own content (see _body_bottom)
+var _body_nodes: Array = []   # panel screens: everything their body drew, so the cascade can push it
+var _body_top_home := 0.0     # ...and the y its first row was built at
 var _title_bottom := 0.0      # filled by the cascade; the selection frame may not rise above it
 var _sub_top := 0.0           # ...and prefers to sit above this, in the title-to-subtitle gap
 var _refusal: Control      # the red X flashed over a refused card
@@ -222,6 +225,16 @@ func _card_gap_frac() -> float: return 0.014
 ## than drawing its highlight straight through a header.
 func _sel_pad_top_frac() -> float: return 0.024
 
+## The three-dot deco's measured HOME, as a fraction of viewport height. Qud puts it lower on the
+## card screens than on the panel ones, which is why this is a hook and not a constant.
+func _y_deco() -> float: return 0.8333
+## The top of the footer block. The deco is never pushed into it.
+func _y_footer_top() -> float: return 0.905
+## THE BOTTOM OF WHAT THE BODY DREW, in pixels, for screens whose body is a PANEL rather than the
+## card row — the cascade cannot walk rows it does not know about. A panel screen sets `_body_bot`
+## at the end of its _build_body and the deco follows it. 0 means "nothing to clear".
+func _body_bottom() -> float: return _body_bot
+
 # ══ lifecycle ══════════════════════════════════════════════════════════════════════
 
 func _ready() -> void:
@@ -260,6 +273,9 @@ func _build_screen() -> void:
 	if guide_body != "":
 		_build_guide()
 	_init_sel_frame_deferred()   # awaits layout, then boxes the selected card
+	# EVERY screen, not just the card ones: _build_center draws the title and subtitle for all of
+	# them, and a panel screen'"'"'s deco has the same job to do as a card screen'"'"'s.
+	_layout_column.call_deferred()
 
 ## RESPONSIVE, by rebuilding. Every row on this screen is sized and placed from the viewport at
 ## BUILD time — card widths, the band pitch, the chevrons, the breadcrumb, the emblem — and a
@@ -650,16 +666,7 @@ func _build_body(vp: Vector2) -> void:
 	# the product. Getting there from the sprite would need a modulate above 1.0 to brighten it.
 	# At 5px Qud's dots are solid blocks anyway, so a ColorRect is both exact and one less
 	# dependency on an extracted asset being present.
-	var ks: int = maxi(3, int(round(vp.y * 0.0046)))   # 5px at 1080
-	# CREATED here, PLACED by the cascade (_place_deco): this row is the one the old layout kept
-	# colliding with, precisely because it was addressed absolutely while everything above it grew.
-	for _i in 3:
-		var k := ColorRect.new()
-		k.color = DECO_KNOB
-		k.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		k.size = Vector2(ks, ks)
-		add_child(k)
-		_deco_knobs.append(k)
+	_make_deco()
 
 	var rnd := _rich("[center][color=#%s][lb]R[rb][/color][color=#%s] Randomize Selection[/color][/center]" % [
 		SEL_GOLD.to_html(false), MUTED.to_html(false)], "body")
@@ -1400,7 +1407,6 @@ func _rich(bb: String, role := "body") -> RichTextLabel:
 const MIN_GAP := 0.006          # the smallest gap between two rows, as a fraction of height
 const SUB_EXTRA := 0.008        # Daniel: "the row-to-row spacing between the title and the
                                 # :choose xyz: is too small" — this is the whole widening
-const Y_DECO := 0.8333          # Qud's three-dot deco, measured; y900 at 1080
 const Y_RANDOMIZE := 0.905      # Qud's, measured; the footer is pinned from the bottom up
 const Y_HINT := 0.965
 
@@ -1415,6 +1421,18 @@ func _layout_column() -> void:
 	_title_bottom = y - gap
 	_sub_top = maxf(y, vp.y * (_y_subtitle() + SUB_EXTRA))
 	y = _stack(_col_sub, _sub_top, gap)
+	# A PANEL BODY MOVES AS A BLOCK. Its rows are built at measured offsets relative to each other,
+	# so the cascade must not re-place them individually — but it does have to push the whole block
+	# clear of a header that has grown. Without this the widened title gap slid the subtitle down
+	# onto Customize's first row, which is the same collision from the other direction.
+	if _body_top_home > 0.0 and not _body_nodes.is_empty():
+		var shift: float = maxf(0.0, y - _body_top_home)
+		if shift > 0.5:
+			for n in _body_nodes:
+				if n != null and is_instance_valid(n) and n is Control:
+					(n as Control).position.y += shift
+			_body_bot += shift
+			_body_top_home += shift
 	# THE SELECTION FRAME reaches ABOVE the card row, and that overhang is what was landing on the
 	# title. Reserve it here so the frame has somewhere to be. Qud lets the frame enclose the
 	# SUBTITLE, so only the title has to be cleared.
@@ -1425,7 +1443,7 @@ func _layout_column() -> void:
 	y = _stack(_desc, maxf(y, vp.y * _y_desc()), gap)
 	if _warn != null and is_instance_valid(_warn) and _warn.text != "":
 		y = _stack(_warn, y, gap)
-	_place_deco(y, vp)
+	_place_deco(maxf(y, _body_bottom()), vp)
 	_position_bands()
 	_position_sel_frame()
 
@@ -1462,9 +1480,9 @@ func _place_deco(y: float, vp: Vector2) -> void:
 	var dx: int = maxi(2, int(round(vp.x * 0.0047)))
 	var dy: int = maxi(1, int(round(vp.y * 0.0037)))
 	# Qud's own resting place, unless the column has grown past it — then it follows the column.
-	var oy: float = maxf(vp.y * Y_DECO, y + ks)
+	var oy: float = maxf(vp.y * _y_deco(), y + ks)
 	# ...but never into the footer.
-	oy = minf(oy, vp.y * Y_RANDOMIZE - ks * 3.0)
+	oy = minf(oy, vp.y * _y_footer_top() - ks * 3.0)
 	var cx: float = vp.x * 0.5
 	var offs := [Vector2(0, -dy), Vector2(-dx, dy), Vector2(dx, dy)]
 	for i in mini(_deco_knobs.size(), offs.size()):
@@ -1473,3 +1491,32 @@ func _place_deco(y: float, vp: Vector2) -> void:
 			continue
 		k.position = Vector2(cx + offs[i].x - ks * 0.5, oy + offs[i].y - ks * 0.5)
 		k.size = Vector2(ks, ks)
+
+## The three teal knobs, created but NOT placed — _place_deco owns where they go. Shared, because
+## three screens each carried their own copy of this loop with its own hard-coded y, which is the
+## duplication that let each of them drift into its own content.
+func _make_deco() -> void:
+	if not _deco_knobs.is_empty():
+		return
+	var ks: int = maxi(3, int(round(get_viewport_rect().size.y * 0.0046)))
+	for _i in 3:
+		var k := ColorRect.new()
+		k.color = DECO_KNOB
+		k.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		k.size = Vector2(ks, ks)
+		add_child(k)
+		_deco_knobs.append(k)
+
+## Register what a PANEL body just drew, so the cascade can push it as a block. Used as:
+##     var m := _body_mark()
+##     ...build the panel...
+##     _body_claim(m, top_y)
+## Card screens need none of this — the cascade already knows their row.
+func _body_mark() -> int:
+	return get_child_count()
+
+func _body_claim(mark: int, top_y: float) -> void:
+	_body_nodes.clear()
+	for i in range(mark, get_child_count()):
+		_body_nodes.append(get_child(i))
+	_body_top_home = top_y

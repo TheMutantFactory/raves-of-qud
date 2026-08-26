@@ -50,6 +50,10 @@ var _flash_t := 0.0
 func _screen_node_name() -> String: return "SummaryScreen"
 func _subtitle() -> String: return ":build summary:"
 func _load_items() -> Array: return []
+## Qud puts this screen's deco higher than the card screens' (row-profiled: ~0.695), and its
+## footer starts higher too — the Random lane's Randomize line sits at 0.86.
+func _y_deco() -> float: return 0.695
+func _y_footer_top() -> float: return 0.86
 func _next_enabled() -> bool: return true
 
 func _breadcrumb_crumbs() -> Array:
@@ -223,6 +227,7 @@ func _process(dt: float) -> void:
 			_refresh_foot()
 
 func _build_body(vp: Vector2) -> void:
+	var mark := _body_mark()
 	_summary_band(vp, 0.345, "Attributes")
 	_summary_band(vp, 0.6625, "Mutations" if bool(_genotype().get("isMutant", true)) else "Cybernetics")
 	# ROW-PROFILED against Qud's capture (tools/capture/parity_rows.py): its attribute rows
@@ -270,17 +275,12 @@ func _build_body(vp: Vector2) -> void:
 		il.position.y = idy
 		add_child(il)
 		idy += step
-	# the three-dot deco, higher than the card screens put it (capture: ~0.695)
-	var ks: int = maxi(3, int(round(vp.y * 0.0046)))
-	var dx: int = maxi(2, int(round(vp.x * 0.0047)))
-	var dy: int = maxi(1, int(round(vp.y * 0.0037)))
-	for off in [Vector2(0, -dy), Vector2(-dx, dy), Vector2(dx, dy)]:
-		var k := ColorRect.new()
-		k.color = DECO_KNOB
-		k.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		k.position = Vector2(vp.x * 0.5 + off.x - ks * 0.5, vp.y * 0.695 + off.y - ks * 0.5)
-		k.size = Vector2(ks, ks)
-		add_child(k)
+	# THE BOTTOM OF THE PANEL, for the cascade: the three columns are independent and any of them
+	# can be the longest — six attributes, up to ten grants, three identity lines. Whichever wins
+	# is what the deco has to clear.
+	_body_bot = y0 + float(maxi(maxi(rows.size(), mini(lines.size(), 10)), 3)) * step
+	_body_claim(mark, vp.y * 0.4932)   # the band headers are this panel's first row
+	_make_deco()   # created here, PLACED by the cascade (see _y_deco / _place_deco)
 	# footer affordances — stubs until the Library slice wires them
 	if chartype_title == "Random":
 		var rr := _rich("[center][color=#%s][lb]R[rb][/color][color=#%s] Randomize Selection[/color][/center]" % [

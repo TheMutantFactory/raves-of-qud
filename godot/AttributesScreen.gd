@@ -36,6 +36,9 @@ var _desc_lbl: RichTextLabel = null
 var _unspent_box: Control = null
 
 func _screen_node_name() -> String: return "AttributesScreen"
+## Row-profiled off Qud: this screen sits its deco at 0.75.
+func _y_deco() -> float: return 0.75
+func _y_footer_top() -> float: return 0.905
 func _subtitle() -> String: return ":choose attributes:"
 func _load_items() -> Array: return []
 func _next_enabled() -> bool: return true
@@ -75,6 +78,7 @@ static func modifier(v: int) -> int:
 	return int(floor((v - 16) / 2.0))
 
 func _build_body(vp: Vector2) -> void:
+	var mark := _body_mark()
 	var g := _genotype()
 	_base_points = int(g.get("statPoints", 44))
 	_points = _base_points
@@ -139,24 +143,25 @@ func _build_body(vp: Vector2) -> void:
 		card.add_child(minus)
 		_cards_ui.append({"card": card, "np": np, "name": nm, "val": vl,
 			"mod": md, "cost": cst, "plus": plus, "minus": minus})
+	# THE CARD BLOCK'S REAL BOTTOM. Each card hangs its "[1pts]" cost label BELOW its own frame
+	# (ch * 1.02), so the block reaches further down than the cards do — and the description, at
+	# its measured 0.6137, printed straight through that row of cost labels.
+	_body_bot = vp.y * 0.488 + ch * 1.02 + UiFont.px(get_viewport(), "caption") * 1.35
 	_desc_lbl = _rich("", "body")
-	_desc_lbl.position = Vector2(vp.x * 0.36, vp.y * 0.6137)   # Qud's desc inks at 0.6185
+	# measured home, unless the cards reach it — the same rule the rest of the column follows
+	_desc_lbl.position = Vector2(vp.x * 0.36,
+		maxf(vp.y * 0.6137, _body_bot + vp.y * 0.008))   # Qud's desc inks at 0.6185
 	# _rich defaults to AUTOWRAP_OFF (the card screens' one-line descriptions want that), so a
 	# paragraph column has to ask for wrapping AND a width to wrap into
 	_desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_desc_lbl.size = Vector2(vp.x * 0.30, vp.y * 0.12)
 	_desc_lbl.custom_minimum_size = _desc_lbl.size
 	add_child(_desc_lbl)
-	var ks: int = maxi(3, int(round(vp.y * 0.0046)))
-	var dx: int = maxi(2, int(round(vp.x * 0.0047)))
-	var dy: int = maxi(1, int(round(vp.y * 0.0037)))
-	for off in [Vector2(0, -dy), Vector2(-dx, dy), Vector2(dx, dy)]:
-		var k := ColorRect.new()
-		k.color = DECO_KNOB
-		k.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		k.position = Vector2(vp.x * 0.5 + off.x - ks * 0.5, vp.y * 0.75 + off.y - ks * 0.5)
-		k.size = Vector2(ks, ks)
-		add_child(k)
+	# ...and now the description is the lowest thing, and it WRAPS — a long attribute blurb is
+	# exactly what used to reach the deco.
+	_body_bot = _desc_lbl.position.y + maxf(_desc_lbl.size.y, _desc_lbl.get_content_height())
+	_body_claim(mark, vp.y * 0.488)   # the card row is this panel's first row
+	_make_deco()   # created here, PLACED by the cascade (see _y_deco / _place_deco)
 	_foot = _rich("", "body")
 	_foot.anchor_left = 0.0; _foot.anchor_right = 1.0
 	_foot.position.y = vp.y * 0.905
