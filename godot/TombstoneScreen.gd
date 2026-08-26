@@ -61,6 +61,13 @@ func _build() -> void:
 	_body = _label(BODY_INK, HORIZONTAL_ALIGNMENT_LEFT)
 	_body.scroll_active = true
 	_hint = _label(HINT_INK, HORIZONTAL_ALIGNMENT_CENTER)
+	# a RichTextLabel only reports [url] clicks when it can feel the mouse at all
+	_hint.mouse_filter = Control.MOUSE_FILTER_STOP
+	_hint.meta_clicked.connect(func(meta: Variant):
+		if String(meta) == "save":
+			save_requested.emit()
+		else:
+			dismissed.emit())
 
 func _label(ink: Color, _align: int) -> RichTextLabel:
 	var l := RichTextLabel.new()
@@ -87,8 +94,12 @@ func show_tombstone(data: Dictionary, palette: Dictionary) -> void:
 		lines.append(QudText.to_bbcode(line, _palette))
 	_body.text = "[color=#%s]%s[/color]" % [BODY_INK.to_html(false), "\n".join(lines)]
 	# Both of Qud's, because both work: F1 is forwarded to the screen's own SaveTombstone().
-	_hint.text = "[center][color=#%s][lb]F1[rb] Save Tombstone File   [lb]Esc[rb] Exit[/color][/center]" \
-		% HINT_INK.to_html(false)
+	# CLICKABLE, as [url]s — Daniel: "user needs to be able to click the tombstone file ESC to be
+	# able to escape." A hint that names a key is still the only control on the screen, and a
+	# player reaches for it with the mouse. Hit targets are the words themselves rather than the
+	# whole line, so the two actions stay distinguishable.
+	_hint.text = ("[center][color=#%s][url=save][lb]F1[rb] Save Tombstone File[/url]"
+		+ "   [url=exit][lb]Esc[rb] Exit[/url][/color][/center]") % HINT_INK.to_html(false)
 	visible = true
 	_relayout()
 	_relayout.call_deferred()

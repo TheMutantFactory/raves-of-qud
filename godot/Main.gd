@@ -419,14 +419,27 @@ var _cam_game_id := ""
 ## same reason: a new game must not render a previous game's zones) — this is the camera's half of
 ## that rule.
 ##
-## Only the heading resets. Distance, zoom, mode and the rest are how the player likes to look at
-## the game, not where they were pointing in it, so they carry over as before.
+## THE MODE RESETS TOO, as of 2026-08-26 — Daniel: "when Qud starts, the camera should be
+## compass-mode, pointing north." This reverses what the line below used to say (that the mode is
+## a preference like zoom and should carry over). A new character arriving in first-person, or in
+## the top-down parity view, is not where anyone wants to start reading a new world; compass north
+## is the orientation every other map in Qud is drawn in.
+##
+## Distance and zoom still carry over: those really are how the player likes to look at the game.
 func _check_camera_game(data: Dictionary) -> void:
 	var gid := String(data.get("gameId", ""))
 	if gid == "" or gid == _cam_game_id:
 		return
-	if _cam_game_id != "" and _cam_rig != null:
+	# INCLUDING from "" — the empty stored id means the saved camera belongs to no game we can
+	# name, which is exactly the case where it should not be inherited. Skipping it was why a
+	# fresh session'"'"'s first game still came up in whatever mode the file happened to hold.
+	if _cam_rig != null:
 		_cam_rig._compass_yaw = _cam_rig.COMPASS_YAW_DEFAULT
+		# ...and through _set_mode, not by assigning _mode: that is what lays the billboards down,
+		# fixes the z-stretch and tells the frame which camera it is now on. NOT while the 1:1
+		# camera lock is on — in parity mode the camera is not the viewer's to reset.
+		if not _cam_locked():
+			_set_mode(CamMode.COMPASS)
 	_cam_game_id = gid
 
 ## Qud's cybernetics terminal, mirrored. Same parked-turn-thread story as the popup and the
