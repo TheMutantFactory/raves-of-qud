@@ -1502,6 +1502,23 @@ namespace RavesOfQud
                     EmbarkDriver.RequestTutorial();
                     return;
                 }
+                if (name == "tombstone_exit")
+                {
+                    // The viewer dismissed the tombstone — close Qud's too, so the two windows
+                    // leave the end-of-run screen together instead of one waiting on the other.
+                    TombstoneBridge.RequestExit();
+                    return;
+                }
+                if (name == "tombstone_save")
+                {
+                    TombstoneBridge.RequestSave();
+                    return;
+                }
+                if (name == "tombstone_resend")
+                {
+                    TombstoneBridge.OnClientConnect();
+                    return;
+                }
                 if (name == "tutorial_resend")
                 {
                     // The viewer just attached to a run already in progress. The guide publishes on

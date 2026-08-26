@@ -40,6 +40,7 @@ var _wish_layer: CanvasLayer    # Ctrl+Shift+W wish prompt overlay (built lazily
 var _wish_edit: LineEdit
 var _popup: PopupOverlay        # mirrors Qud modal popups forwarded by the mod (own file)
 var _tutorial: CanvasLayer      # mirrors Qud's TUTORIAL GUIDE box (TutorialGuide.gd)
+var _tomb: CanvasLayer          # mirrors Qud's end-of-run summary (TombstoneScreen.gd)
 var _item_picker: PickerOverlay # mirrors Qud's PickGameObjectScreen (empty-slot equip picker)
 var _cyber: Control            # mirrors Qud's cybernetics TERMINAL (the becoming nook)
 var overlay_check: Callable = Callable()   # MainFrame: "is a frame overlay (status/controlmap) open?"
@@ -188,10 +189,12 @@ func _ready() -> void:
 	client.snapshot.connect(_on_snapshot)
 	client.popup.connect(_on_popup)
 	client.tutorial.connect(_on_tutorial)
+	client.tombstone.connect(_on_tombstone)
 	# ASK for the live step. The mod publishes the guide on change only, so attaching to a run
 	# already in progress (Continue, or a viewer restarted mid-tutorial) would show no box until
 	# the tutorial next spoke — and a beat can sit there for many turns waiting to be obeyed.
 	client.send_command("tutorial_resend", {})
+	client.send_command("tombstone_resend", {})
 	client.qud_view.connect(func(v: String) -> void: qud_view_changed.emit(v))
 	client.picker.connect(_on_picker)
 	client.cyber.connect(_on_cyber)
@@ -236,6 +239,16 @@ func _ready() -> void:
 	# and the box lands over the world instead of over the side panels, with no rect to thread.
 	_tutorial = preload("res://TutorialGuide.gd").new()
 	add_child(_tutorial)
+	# The end-of-run tombstone, mirrored from Qud (mod/TombstoneBridge.cs).
+	_tomb = preload("res://TombstoneScreen.gd").new()
+	add_child(_tomb)
+	_tomb.dismissed.connect(func():
+		# Close QUD's first and let its own frame turn the screen off here — dismissing locally
+		# would put Raves back at the title with Qud still parked on the summary, which is the
+		# desync this whole path exists to remove.
+		client.send_command("tombstone_exit", {}))
+	_tomb.save_requested.connect(func():
+		client.send_command("tombstone_save", {}))
 	_popup.closed.connect(func(): popup_closed.emit())
 	_popup.answered.connect(func(payload: Dictionary):
 		client.send_command("popup", payload)
@@ -361,6 +374,17 @@ func _on_tutorial(data: Dictionary) -> void:
 		_tutorial.show_step(data, _palette, Rect2())
 	else:
 		_tutorial.hide_step()
+
+## The run ended (or its summary was dismissed). Qud is the authority on both edges.
+func _on_tombstone(data: Dictionary) -> void:
+	if _tomb == null:
+		return
+	var up := bool(data.get("active", false))
+	if up:
+		_tomb.show_tombstone(data, _palette)
+	else:
+		_tomb.hide_tombstone()
+	tombstone_changed.emit(up)
 
 func _on_popup(data: Dictionary) -> void:
 	if _popup == null:
@@ -994,6 +1018,10 @@ signal one_to_one_changed(on: bool, chosen: bool)
 ## Qud moved to a different CurrentGameView — its legacy screens (the Looker) arrive here, on the
 ## popup mirror's channel rather than the snapshot, because those screens stop snapshots.
 signal qud_view_changed(name: String)
+
+## The end-of-run tombstone is up (or gone). MainFrame listens: while it is up, the heartbeat that
+## returns Raves to the title has to WAIT, or the two windows disagree about where the player is.
+signal tombstone_changed(up: bool)
 
 ## A camera mode actually CHANGED (the rig confirmed it). Carries the mode and its controls line
 ## from _MODE_NAMES, so MainFrame can print the controls without keeping its own copy of them.

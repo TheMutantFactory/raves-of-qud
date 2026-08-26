@@ -168,6 +168,8 @@ var _crt_layer: CanvasLayer        # CRT scanline+vignette overlay above everyth
 const MIN_MOD_PROTOCOL := 3   # oldest mod wire version this client can rely on (needs `liquid` + `onFire`)
 const CLIENT_PROTOCOL := 3    # newest wire version this client was built to understand
 var _mod_status := 0          # 0 unknown, 1 current, 2 mod-too-old, 3 client-too-old — update log only on change
+## Qud is showing the end-of-run summary. Blocks the return-to-title heartbeat (see _poll_live).
+var _tombstone_up := false
 
 func _ready() -> void:
 	name = "MainFrame"
@@ -1849,6 +1851,7 @@ func _connect_holodeck() -> void:
 	# Qud's CurrentGameView, off the popup mirror's channel — the legacy screens it reports (the
 	# Looker) park the turn thread, so this cannot ride the snapshot. See PopupBridge.PollView.
 	_holo.connect("qud_view_changed", _apply_qud_view)
+	_holo.connect("tombstone_changed", _on_tombstone_changed)
 	_holo.connect("camera_changed", _on_camera_changed)   # print the new camera's controls to the log
 	_holo.connect("look_changed", _on_look_changed)       # the look cursor -> the log + its button
 	# a system-menu pick of "Control Mapping" mirrors into Raves' own screen (Qud
@@ -1915,6 +1918,12 @@ func _poll_game_lifecycle() -> void:
 	if not _seen_live:
 		return           # never had a game this session — the connect flow owns startup
 	_dead_reads += 1
+	# THE TOMBSTONE HOLDS THE DOOR. A run that ended is exactly when this heartbeat fires, and
+	# racing to the title while Qud is still parked on its summary is the desync: two windows
+	# disagreeing about where the player is, with a screen only dismissable in the other one.
+	# Qud owns both edges — we leave when its summary closes, not before.
+	if _tombstone_up:
+		return
 	if _dead_reads >= 3:
 		# the game is gone (saved-and-quit, died, or Qud closed) — mirror Qud's
 		# return to the title. MainMenu's _ready reports scene=title itself.
@@ -2149,3 +2158,11 @@ func _shot() -> void:
 	var path := InputModel.support_dir().path_join("frame_shot.png")
 	img.save_png(path)
 	print("[frame] shot -> ", path)
+
+## The mirrored tombstone appeared or was dismissed. On dismissal the heartbeat is re-armed from
+## zero rather than left mid-count, so the summary is never followed by an instant scene change
+## that reads as a flicker.
+func _on_tombstone_changed(up: bool) -> void:
+	_tombstone_up = up
+	if not up:
+		_dead_reads = 0
