@@ -48,6 +48,16 @@ func _breadcrumb_crumbs() -> Array:
 	out.append({"label": "Customize", "current": true})
 	return out
 
+## Clear whichever row has focus. One implementation, reached by [R], by [Delete], and by a click
+## on either — the two keys always did the same thing, in two copies of the same four lines.
+func _clear_row() -> void:
+	if _row == 0:
+		_cname = ""
+	else:
+		_pet = ""
+	_refresh_rows()
+	customized.emit(_cname, _pet)
+
 func _build_body(vp: Vector2) -> void:
 	var mark := _body_mark()
 	_row_labels.clear()
@@ -63,10 +73,11 @@ func _build_body(vp: Vector2) -> void:
 	_body_bot = vp.y * (0.4376 + 2.0 * 0.0204)
 	_body_claim(mark, vp.y * 0.4376)
 	_make_deco()   # created here, PLACED by the cascade (see _y_deco / _place_deco)
-	var foot := _rich("[center][color=#%s][lb]R[rb][/color][color=#%s] Randomize Selection  [/color][color=#%s][lb]Delete[rb][/color][color=#%s] Reset Selection[/color][/center]" % [
+	var foot := _rich("[center][url=r][color=#%s][lb]R[rb][/color][color=#%s] Randomize Selection  [/color][/url][url=del][color=#%s][lb]Delete[rb][/color][color=#%s] Reset Selection[/color][/url][/center]" % [
 		SEL_GOLD.to_html(false), MUTED.to_html(false), SEL_GOLD.to_html(false), MUTED.to_html(false)], "body")
 	foot.anchor_left = 0.0; foot.anchor_right = 1.0
 	foot.position.y = vp.y * 0.9073   # ink 0.9120
+	_clickable_foot(foot, {"r": _clear_row, "del": _clear_row})
 	add_child(foot)
 	var hint := _rich("", "caption")
 	hint.anchor_left = 0.0; hint.anchor_right = 1.0
@@ -127,11 +138,7 @@ func _unhandled_input(e: InputEvent) -> void:
 		accept_event(); return
 	if e is InputEventKey and e.pressed and not e.echo:
 		if e.keycode == KEY_R:
-			if _row == 0: _cname = ""
-			else: _pet = ""
-			_refresh_rows(); customized.emit(_cname, _pet); accept_event(); return
+			_clear_row(); accept_event(); return
 		if e.keycode == KEY_DELETE or e.keycode == KEY_BACKSPACE:
-			if _row == 0: _cname = ""
-			else: _pet = ""
-			_refresh_rows(); customized.emit(_cname, _pet); accept_event(); return
+			_clear_row(); accept_event(); return
 	super._unhandled_input(e)   # Esc closes, 9 advances — the template's own handling

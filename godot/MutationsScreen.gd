@@ -95,6 +95,7 @@ func _build_body(vp: Vector2) -> void:
 	_desc_lbl.custom_minimum_size = _desc_lbl.size
 	add_child(_desc_lbl)
 	_foot = _rich("", "body")
+	_clickable_foot(_foot, {"del": _reset})   # the same call [Delete] makes
 	_foot.anchor_left = 0.0; _foot.anchor_right = 1.0
 	_foot.position.y = vp.y * 0.905
 	add_child(_foot)
@@ -210,7 +211,7 @@ func _refresh() -> void:
 	_pick_lbl.text = picked
 	var cm := _cur()
 	_desc_lbl.text = QudText.to_bbcode(str(cm.get("desc", "")), _palette) if not cm.is_empty() else ""
-	_foot.text = "[center][color=#%s]Points Remaining: %d  [/color][color=#%s][lb]Delete[rb][/color][color=#%s] Reset Selection[/color][/center]" % [
+	_foot.text = "[center][color=#%s]Points Remaining: %d  [/color][url=del][color=#%s][lb]Delete[rb][/color][color=#%s] Reset Selection[/color][/url][/center]" % [
 		MUTED.to_html(false), _points, SEL_GOLD.to_html(false), MUTED.to_html(false)]
 
 ## The picks go to the flow BEFORE the advance — the click box calls this too, so a mouse

@@ -163,6 +163,8 @@ func _build_body(vp: Vector2) -> void:
 	_body_claim(mark, vp.y * 0.488)   # the card row is this panel's first row
 	_make_deco()   # created here, PLACED by the cascade (see _y_deco / _place_deco)
 	_foot = _rich("", "body")
+	# the same calls [R] and [Delete] make — see _clickable_foot
+	_clickable_foot(_foot, {"r": _roll, "del": _reset})
 	_foot.anchor_left = 0.0; _foot.anchor_right = 1.0
 	_foot.position.y = vp.y * 0.905
 	add_child(_foot)
@@ -196,7 +198,7 @@ func _refresh() -> void:
 	if _desc_lbl != null:
 		_desc_lbl.text = QudText.to_bbcode(str(_stats[_stat_sel]["desc"]), _palette)
 	if _foot != null:
-		_foot.text = "[center][color=#%s]Points Remaining: %d  [/color][color=#%s][lb]R[rb][/color][color=#%s] Randomize Selection  [/color][color=#%s][lb]Delete[rb][/color][color=#%s] Reset Selection[/color][/center]" % [
+		_foot.text = "[center][color=#%s]Points Remaining: %d  [/color][url=r][color=#%s][lb]R[rb][/color][color=#%s] Randomize Selection  [/color][/url][url=del][color=#%s][lb]Delete[rb][/color][color=#%s] Reset Selection[/color][/url][/center]" % [
 			MUTED.to_html(false), _points, SEL_GOLD.to_html(false), MUTED.to_html(false),
 			SEL_GOLD.to_html(false), MUTED.to_html(false)]
 

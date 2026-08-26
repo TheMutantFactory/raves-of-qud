@@ -101,6 +101,7 @@ func _build_body(vp: Vector2) -> void:
 	_behav_lbl.custom_minimum_size = _behav_lbl.size
 	add_child(_behav_lbl)
 	_foot = _rich("", "body")
+	_clickable_foot(_foot, {"del": _reset_picks})   # the same call [Delete] makes
 	_foot.anchor_left = 0.0; _foot.anchor_right = 1.0
 	_foot.position.y = vp.y * 0.905
 	add_child(_foot)
@@ -214,8 +215,14 @@ func _refresh() -> void:
 		_detail_lbl.text = "[color=#%s]Start with no cybernetic implants.[/color]" % MUTED.to_html(false)
 		_behav_lbl.text = ""
 		_icon.visible = false
-	_foot.text = "[center][color=#%s]License Points: %d  [/color][color=#%s][lb]Delete[rb][/color][color=#%s] Reset Selection[/color][/center]" % [
+	_foot.text = "[center][color=#%s]License Points: %d  [/color][url=del][color=#%s][lb]Delete[rb][/color][color=#%s] Reset Selection[/color][/url][/center]" % [
 		MUTED.to_html(false), _points, SEL_GOLD.to_html(false), MUTED.to_html(false)]
+
+## Drop every implant back. One implementation, reached by [Delete] and by a click on it.
+func _reset_picks() -> void:
+	_picks.clear()
+	_points = _base_points
+	_refresh()
 
 func _unhandled_input(e: InputEvent) -> void:
 	if e.is_action_pressed("ui_down"):
@@ -227,7 +234,7 @@ func _unhandled_input(e: InputEvent) -> void:
 	if e is InputEventKey and e.pressed and not e.echo:
 		match e.keycode:
 			KEY_DELETE, KEY_BACKSPACE:
-				_picks.clear(); _points = _base_points; _refresh(); accept_event(); return
+				_reset_picks(); accept_event(); return
 			KEY_9, KEY_KP_9:
 				_nav_next(); accept_event(); return
 	if e.is_action_pressed("ui_cancel"):

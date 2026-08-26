@@ -215,7 +215,7 @@ func _refresh_foot() -> void:
 	if _flash != "":
 		_foot_lbl.text = "[center][color=#%s]%s[/color][/center]" % [CC_GOLD.to_html(false), _flash]
 		return
-	_foot_lbl.text = "[center][color=#%s][lb]E[rb][/color][color=#%s] Export Code to Clipboard  [/color][color=#%s][lb]S[rb][/color][color=#%s] Save Build To Library[/color][/center]" % [
+	_foot_lbl.text = "[center][url=e][color=#%s][lb]E[rb][/color][color=#%s] Export Code to Clipboard  [/color][/url][url=s][color=#%s][lb]S[rb][/color][color=#%s] Save Build To Library[/color][/url][/center]" % [
 		SEL_GOLD.to_html(false), MUTED.to_html(false), SEL_GOLD.to_html(false), MUTED.to_html(false)]
 
 func _process(dt: float) -> void:
@@ -283,12 +283,15 @@ func _build_body(vp: Vector2) -> void:
 	_make_deco()   # created here, PLACED by the cascade (see _y_deco / _place_deco)
 	# footer affordances — stubs until the Library slice wires them
 	if chartype_title == "Random":
-		var rr := _rich("[center][color=#%s][lb]R[rb][/color][color=#%s] Randomize Selection[/color][/center]" % [
+		var rr := _rich("[center][url=r][color=#%s][lb]R[rb][/color][color=#%s] Randomize Selection[/color][/url][/center]" % [
 			SEL_GOLD.to_html(false), MUTED.to_html(false)], "body")
 		rr.anchor_left = 0.0; rr.anchor_right = 1.0
 		rr.position.y = vp.y * 0.86
 		add_child(rr)
+		# the Random lane's reroll — the same signal [R] emits
+		_clickable_foot(rr, {"r": func(): reroll.emit()})
 	_foot_lbl = _rich("", "body")
+	_clickable_foot(_foot_lbl, {"e": _export_code, "s": _save_library})
 	_foot_lbl.anchor_left = 0.0; _foot_lbl.anchor_right = 1.0
 	_foot_lbl.position.y = vp.y * 0.899
 	add_child(_foot_lbl)

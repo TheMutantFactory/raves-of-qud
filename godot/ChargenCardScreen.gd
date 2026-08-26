@@ -125,6 +125,7 @@ var _col_title: Label         # "character creation" — the top of the cascadin
 var _col_sub: Label           # ":choose …:"
 var _col_row: Control        # the HBox of cards
 var _resize_t: Timer          # debounces the rebuild while a window is being dragged
+var _foot_actions := {}       # url id -> Callable, for the clickable footer keys
 var _body_bot := 0.0          # panel screens: the bottom of their own content (see _body_bottom)
 var _body_nodes: Array = []   # panel screens: everything their body drew, so the cascade can push it
 var _body_top_home := 0.0     # ...and the y its first row was built at
@@ -668,11 +669,12 @@ func _build_body(vp: Vector2) -> void:
 	# dependency on an extracted asset being present.
 	_make_deco()
 
-	var rnd := _rich("[center][color=#%s][lb]R[rb][/color][color=#%s] Randomize Selection[/color][/center]" % [
+	var rnd := _rich("[center][url=r][color=#%s][lb]R[rb][/color][color=#%s] Randomize Selection[/color][/url][/center]" % [
 		SEL_GOLD.to_html(false), MUTED.to_html(false)], "body")
 	rnd.anchor_left = 0.0; rnd.anchor_right = 1.0
 	rnd.position.y = vp.y * Y_RANDOMIZE
 	add_child(rnd)
+	_clickable_foot(rnd, {"r": _randomize})
 
 	var hint := _rich("", "caption")
 	hint.anchor_left = 0.0; hint.anchor_right = 1.0
@@ -1520,3 +1522,26 @@ func _body_claim(mark: int, top_y: float) -> void:
 	for i in range(mark, get_child_count()):
 		_body_nodes.append(get_child(i))
 	_body_top_home = top_y
+
+## Make a footer line's bracketed keys CLICKABLE. `actions` maps a url id to the Callable that
+## key already runs, so the click and the keypress go through one implementation and cannot drift.
+##
+## Every chargen footer names its keys — "[R] Randomize Selection", "[Delete] Reset Selection",
+## "[E] Export Code to Clipboard" — and a named key on screen is something a player clicks.
+## Wrap the segment in [url=id] and pass the same Callable the key handler calls.
+func _clickable_foot(rich: RichTextLabel, actions: Dictionary) -> void:
+	if rich == null:
+		return
+	rich.mouse_filter = Control.MOUSE_FILTER_STOP
+	# MERGED, not replaced: a screen can have more than one footer line (the summary has its
+	# export/save row and, in the Random lane, a reroll row) and the second call must not throw
+	# away the first one's actions. Ids are unique per screen, which is what makes that safe.
+	for k in actions:
+		_foot_actions[k] = actions[k]
+	if not rich.meta_clicked.is_connected(_on_foot_meta):
+		rich.meta_clicked.connect(_on_foot_meta)
+
+func _on_foot_meta(meta: Variant) -> void:
+	var cb: Variant = _foot_actions.get(String(meta), null)
+	if cb is Callable:
+		(cb as Callable).call()
