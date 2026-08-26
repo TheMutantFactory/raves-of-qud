@@ -15,14 +15,23 @@ const MODES := [
 func _screen_node_name() -> String: return "GameModeScreen"
 func _breadcrumb_crumbs() -> Array: return [{"label": "Choose Game Mode", "current": true}]
 func _subtitle() -> String: return ":choose game mode:"
-func _default_index() -> int: return 1   # Classic, like Qud's default
+func _default_index() -> int: return 0   # Classic, like Qud's default (and first, once Tutorial moves)
 
-## DAILY IS QUD-ONLY, on purpose. Everyone runs the same fixed character and world seed and
-## the results are compared, so a run played through a 3D viewer with its own camera, fog and
-## look tools is not the run everyone else played — Daniel: "there's too much latitude for
-## players to abuse the daily." Nothing is lost by it: start the Daily in Qud's own window and
-## attach Raves afterwards if you want to watch, since Raves renders whatever game is running.
+## THE TWO MODES RAVES REFUSES, and why.
+##
+## DAILY IS QUD-ONLY, on purpose. Everyone runs the same fixed character and world seed and the
+## results are compared, so a run played through a 3D viewer with its own camera, fog and look
+## tools is not the run everyone else played — Daniel: "there's too much latitude for players to
+## abuse the daily." Nothing is lost by it: start the Daily in Qud's own window and attach Raves
+## afterwards if you want to watch, since Raves renders whatever game is running.
+##
+## TUTORIAL is refused because Raves' lane for it does not hold up — Daniel: "the tutorial section
+## in Raves is busted and I just don't think it's worth the effort to get it tip-top." Qud's own
+## tutorial is right there and works; a half-working copy of it in the viewer is worse than none.
 func _card_blocked(item_name: String) -> String:
+	if item_name == "Tutorial":
+		# Daniel's wording, verbatim.
+		return "Roads? Where we're going, we don't need roads"
 	if item_name != "Daily":
 		return ""
 	# Daniel's wording, verbatim — including the joke. It says the same three things a longer
@@ -32,15 +41,33 @@ func _card_blocked(item_name: String) -> String:
 		+ "It just wouldn't be fair to the other people running the Daily, for reasons\n" \
 		+ "Pobody's nerfect: you can create a Daily character in Vanilla Qud and load it with %s." % Brand.GAME_NAME
 
+## Qud lists Tutorial FIRST; Raves shows it LAST. A card the screen is going to refuse does not
+## belong in the lead position where the eye starts and the default selection used to sit.
+##
+## Reordered HERE rather than in the mod's export, which mirrors Qud's own order and should keep
+## telling the truth about it. The hotkeys are re-lettered to follow the row, because Qud assigns
+## them A..E in order and a row reading A B C D with an A on the end reads as a bug.
 func _load_items() -> Array:
+	var out: Array = MODES.duplicate(true)
 	var path := InputModel.support_dir().path_join("chargen.json")
 	if FileAccess.file_exists(path):
 		var f := FileAccess.open(path, FileAccess.READ)
 		if f != null:
 			var data: Variant = JSON.parse_string(f.get_as_text())
 			if data is Dictionary and data.get("gameModes", null) is Array and not data["gameModes"].is_empty():
-				return data["gameModes"]
-	return MODES.duplicate(true)
+				out = data["gameModes"]
+	var moved: Array = []
+	var tail: Array = []
+	for m in out:
+		if str(m.get("name", "")) == "Tutorial":
+			tail.append(m)
+		else:
+			moved.append(m)
+	moved.append_array(tail)
+	var keys := "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	for i in moved.size():
+		moved[i]["hotkey"] = keys[i % keys.length()]
+	return moved
 
 ## Qud's card icons are near-black mask sprites recoloured two-tone (dark body → foreground, bright
 ## accents → detail). Selected shows the per-mode colours; unselected the neutral grey-teal.
