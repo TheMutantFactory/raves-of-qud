@@ -181,43 +181,12 @@ func close(sync_qud := true) -> void:
 ## Qud's own name for its keybinds screen, as its report writes it.
 const QUD_KEYBINDS := "Keybinds"
 
-## MAKE THE BACK STICK. `uiback` was fire-and-forget, and this screen opens in a race with the
-## very screen it backs out of: picking "Control Mapping" in the mirrored popup tells Qud to open
-## its Keybinds screen, and Qud opens it ASYNCHRONOUSLY. Close Raves' copy quickly enough and the
-## back lands BEFORE Keybinds is up — it dismisses whatever was there instead, Keybinds then
-## appears, and Qud sits on a screen the player already left in Raves. Observed exactly that.
-##
-## So read it back: watch Qud's own report and re-send while it is still, or newly, on Keybinds.
-## Bounded to a few sends over ~3s, and it stops the instant Qud moves — a command you send to
-## another process is not done because you sent it, only because its state changed.
+## See QudSync.back_until_left — the back races the screen it is backing out of, so it is re-sent
+## until Qud's own report says it left. `abort` stops the moment the player reopens this screen.
 func _verify_qud_left() -> void:
-	var deadline := Time.get_unix_time_from_system() + 3.0
-	var sent := 1
-	var traced := false
-	while Time.get_unix_time_from_system() < deadline:
-		await get_tree().create_timer(0.35, true, false, true).timeout
-		if not is_inside_tree():
-			return
-		if visible:
-			return          # the player reopened it; stop pushing
-		var scene := String(QudSync.qud_report().get("scene", ""))
-		if not traced:
-			traced = true
-			print("[controlmap] back sent; Qud reports scene=%s" % ("<none>" if scene == "" else scene))
-		if scene == "":
-			continue        # no fresh report — say nothing rather than guess
-		if scene != QUD_KEYBINDS:
-			if sent > 1:
-				print("[controlmap] Qud left %s after %d backs" % [QUD_KEYBINDS, sent])
-			return          # Qud moved; the back took
-		if sent >= 4:
-			# SAY SO. An intermittent cross-process race that silently gives up is one nobody
-			# can diagnose from a screenshot later.
-			print("[controlmap] Qud is still on %s after %d backs — left as is" % [QUD_KEYBINDS, sent])
-			return
-		print("[controlmap] Qud still on %s — re-sending uiback (%d)" % [scene, sent + 1])
-		_send_bridge({"type": "command", "name": "uiback"})
-		sent += 1
+	await QudSync.back_until_left(QUD_KEYBINDS,
+		func(): _send_bridge({"type": "command", "name": "uiback"}),
+		"controlmap", func(): return visible)
 
 func _unhandled_input(e: InputEvent) -> void:
 	if not visible:

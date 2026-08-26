@@ -1236,6 +1236,11 @@ func _close_options_overlay() -> void:
 	UiState.set_scene("in_game")
 	if _holo != null:
 		_holo.request_uiback()
+		# ...and make it STICK. Qud opens ModernOptionsMenu asynchronously from the same popup
+		# answer that opened this overlay, so a quick close backs out of the popup instead and
+		# leaves Qud on the options screen. See QudSync.back_until_left.
+		QudSync.back_until_left("ModernOptionsMenu", func(): _holo.request_uiback(), "options",
+			func(): return _options != null)
 
 ## The two panels whose 1:1 visibility follows Qud's overlay options (Qud's own toggle
 ## buttons persist the same ids, so the pair stays congruent). Safe to call any time.

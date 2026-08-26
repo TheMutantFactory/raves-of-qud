@@ -145,19 +145,60 @@ func resync() -> String:
 		return _toast("Already in sync — Qud is at %s, no game running." % view)
 	return _toast("No game running in Qud — returning to the title.")
 
+## MAKE A BACK STICK. `uiback` is fire-and-forget, and every Raves overlay that mirrors a Qud
+## screen opens in a RACE with the screen it will later back out of: picking the item in the
+## mirrored popup tells Qud to open that screen ASYNCHRONOUSLY. Close Raves' copy quickly enough
+## and the back lands BEFORE Qud's screen is up — it dismisses whatever was there instead, the
+## screen then appears, and Qud sits on something the player already left. Measured on Control
+## Mapping: a close 0.4s after opening loses the race every time, a close after 1.5s never does.
+##
+## So read it back. Watch Qud's own report and re-send while it is still, or newly, on `screen`.
+## Bounded to `tries` sends over ~3s, stopping the instant Qud moves or `abort` says to.
+##
+## A command sent to another process is not done because you sent it; it is done when its state
+## changed. This is the one place that rule is implemented, so every sender gets the same
+## behaviour and the same log.
+func back_until_left(screen: String, send: Callable, tag: String, abort := Callable(),
+		tries := 4) -> void:
+	var deadline := Time.get_unix_time_from_system() + 3.0
+	var sent := 1
+	var traced := false
+	while Time.get_unix_time_from_system() < deadline:
+		await get_tree().create_timer(0.35, true, false, true).timeout
+		if abort.is_valid() and bool(abort.call()):
+			return
+		var now := String(qud_report().get("scene", ""))
+		if not traced:
+			traced = true
+			print("[%s] back sent; Qud reports scene=%s" % [tag, "<none>" if now == "" else now])
+		if now == "":
+			continue        # no fresh report — say nothing rather than guess
+		if now != screen:
+			if sent > 1:
+				print("[%s] Qud left %s after %d backs" % [tag, screen, sent])
+			return
+		if sent >= tries:
+			# SAY SO. An intermittent cross-process race that gives up silently is one nobody
+			# can diagnose from a screenshot later.
+			print("[%s] Qud is still on %s after %d backs — left as is" % [tag, screen, sent])
+			return
+		print("[%s] Qud still on %s — re-sending uiback (%d)" % [tag, screen, sent + 1])
+		send.call()
+		sent += 1
+
 ## Did the Back command actually move Qud? `uiback` reaches the active window's own OnCancel/Exit,
 ## which covers the status screens and popups but is NOT guaranteed for every modern screen —
 ## ModernHighScores, measured, does not budge. A tool for un-stranding people must not report
 ## "sent" as if it meant "worked": watch Qud's own report for ~3s and say which happened, so the
 ## player either sees it clear or is told to go dismiss it in Qud instead of pressing F5 forever.
 func _verify_dismissed(was: String, view: String) -> void:
-	var deadline := Time.get_unix_time_from_system() + 3.0
-	while Time.get_unix_time_from_system() < deadline:
-		await get_tree().create_timer(0.4, true, false, true).timeout
-		var now := String(qud_report().get("scene", was))
-		if now != was:
-			_toast("Qud left %s — now on %s." % [view, _view_name(now)])
-			return
+	# RE-SENDS, not just watches. This used to report the outcome and nothing else, which meant a
+	# back lost to the open race read as "Qud did not respond" — the same race the overlays hit.
+	await back_until_left(was, func(): send_bridge("uiback"), "resync")
+	var now := String(qud_report().get("scene", was))
+	if now != was:
+		_toast("Qud left %s — now on %s." % [view, _view_name(now)])
+		return
 	_toast("Qud did not respond to Back and is still on %s.\nDismiss it in Qud's window; Raves is at the title." % view)
 
 ## A self-freeing toast on its own layer. FREED, never hidden: a hidden CanvasLayer still feeds
