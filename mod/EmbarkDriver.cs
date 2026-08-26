@@ -38,13 +38,12 @@ namespace RavesOfQud
         {
             public string Genotype;                    // e.g. "Mutated Human", "True Kin"
             public string Subtype;                     // caste/calling id, e.g. "Apostle"
-            public string Gamemode = "Classic";        // Classic | Roleplay | Wander | Tutorial
+            public string Gamemode = "Classic";        // Classic | Roleplay | Wander
             public string Chartype = "New";            // "New" = custom; "Pregen" = a prebuilt character
             public string Pregen;                      // if set: boot this pregen (skips genotype/subtype build)
             public string StartingLocation = "Joppa";  // QudChooseStartingLocationModule id
             public string Name;                        // character name; null/empty = Qud rolls one
             public string Pet;                         // pet blueprint; null/empty = no pet
-            public bool TutorialBoot = false;          // Tutorial: commit+boot in one shot (fallback path)
         }
 
         private static volatile PendingBuildSpec _pending;
@@ -55,18 +54,9 @@ namespace RavesOfQud
 
         /// <summary>Socket-thread entry: queue an embark and wake the main menu. Safe to call
         /// off the game thread — the actual builder driving is marshalled onto Qud's UI queue.</summary>
-        /// <summary>Start the guided TUTORIAL. Unlike a normal embark there's no genotype/subtype —
-        /// Qud's game-mode module does it all in SelectMode("Tutorial"): TutorialManager.StartTutorial,
-        /// a Pregen character, and an advance that boots the tutorial zone. So we just drive the live
-        /// builder's SelectMode. Signalled by Gamemode == "Tutorial".</summary>
-        public static void RequestTutorial()
-        {
-            RequestEmbark(new PendingBuildSpec { Gamemode = "Tutorial" });
-        }
-
         /// <summary>Boot a background "Meta" pseudo-game so Raves has a LIVE game to Continue into /
-        /// render without hand-running chargen. Uses the same known-good pregen build the tutorial
-        /// commits (Marsh Taur mutated-human), but as a plain Classic game.</summary>
+        /// render without hand-running chargen. Uses a known-good pregen build (Marsh Taur
+        /// mutated-human, the one Qud's own tutorial uses) as a plain Classic game.</summary>
         public static void RequestMeta()
         {
             RequestEmbark(new PendingBuildSpec
@@ -123,34 +113,11 @@ namespace RavesOfQud
             _pending = null;   // got the builder — commit to this attempt
             try
             {
-                if (spec.Gamemode == "Tutorial")
-                {
-                    // BEGIN the tutorial's guided chargen so Qud advances to the genotype window and its
-                    // TutorialManager sets the current tip; we then read that tip (lastText) and hand it
-                    // to Raves — Qud's own text, read live, never bundled. Do NOT boot yet: the builder
-                    // stays at the genotype window until Raves confirms (tutorial_go -> commit + boot).
-                    var gmm = eb.GetModule<QudGamemodeModule>();
-                    if (gmm == null)
-                        throw new InvalidOperationException("Gamemode module not found");
-                    gmm.SelectMode("Tutorial");
-                    if (spec.TutorialBoot)
-                    {
-                        System.Console.WriteLine("[raves] tutorial: one-shot -> commit + boot");
-                        CommitTutorial(eb);   // fallback: no separate BEGIN happened, boot straight in
-                    }
-                    else
-                    {
-                        System.Console.WriteLine("[raves] tutorial: begin (SelectMode) — capturing tip, awaiting commit");
-                        CaptureTutorialTipSoon(0);   // read the live tip; boot on the later commit
-                    }
-                    return;
-                }
-
                 if (!string.IsNullOrEmpty(spec.Pregen))
                 {
                     // Prebuilt-character boot (the "Meta" pseudo-game). Replicate what SelectMode does
                     // for a pregen game — Gamemode + Chartype="Pregen" — then fill the same fixed pregen
-                    // build the tutorial commits, and boot. Popups suppressed exactly like a normal embark.
+                    // build, and boot. Popups suppressed exactly like a normal embark.
                     XRL.UI.Popup.Suppress = true;
                     StartSuppressWindow();
                     SetData<QudGamemodeModule>(eb, new QudGamemodeModuleData { Mode = spec.Gamemode });
@@ -219,92 +186,6 @@ namespace RavesOfQud
             if (m == null)
                 throw new InvalidOperationException("Embark module not found: " + typeof(T).Name);
             m.setData(data);
-        }
-
-        /// COMMIT the tutorial (after RequestTutorial's BEGIN + tip capture): the guided builder is
-        /// still parked at the genotype window, so fill the tutorial's fixed Marsh Taur mutated-human
-        /// pregen build (JoppaTutorial.IntroTutorialStart) and boot — same call the normal embark uses.
-        public static void RequestTutorialCommit()
-        {
-            var gm = GameManager.Instance;
-            if (gm == null || gm.uiQueue == null) return;
-            gm.uiQueue.queueTask(DriveTutorialCommit, 0);
-        }
-
-        private static void DriveTutorialCommit()
-        {
-            EmbarkBuilder eb = null;
-            try { eb = EmbarkBuilder.gameObject?.GetComponent<EmbarkBuilder>(); }
-            catch { }
-            if (eb == null)
-            {
-                // The BEGIN builder isn't there (never started / already torn down) — fall back to the
-                // one-shot path (starts + commits + boots in one go).
-                RequestEmbark(new PendingBuildSpec { Gamemode = "Tutorial", TutorialBoot = true });
-                return;
-            }
-            System.Console.WriteLine("[raves] tutorial: commit -> exitWithInfo");
-            CommitTutorial(eb);
-        }
-
-        /// Fill the tutorial's fixed pregen build on the (already tutorial-started) builder and boot.
-        private static void CommitTutorial(EmbarkBuilder eb)
-        {
-            try
-            {
-                XRL.UI.Popup.Suppress = true;
-                StartSuppressWindow();
-                SetData<QudGenotypeModule>(eb, new QudGenotypeModuleData("Mutated Human"));
-                SetData<QudPregenModule>(eb, new QudPregenModuleData("Marsh Taur"));
-                SetData<QudChooseStartingLocationModule>(eb, new QudChooseStartingLocationModuleData("JoppaTutorial"));
-                // bootGame reads Subtype.data for random-name generation even for a pregen; without it
-                // that line NREs (the pregen supplies the real body). Any valid calling works.
-                SetData<QudSubtypeModule>(eb, new QudSubtypeModuleData("Apostle"));
-                eb.exitWithInfo();
-            }
-            catch (Exception e)
-            {
-                System.Console.WriteLine("[raves] tutorial commit FAILED: " + e);
-                try { eb.exitWithoutInfo(); } catch { }
-            }
-        }
-
-        /// Poll TutorialManager.lastText (set by IntroTutorialStart.LateUpdate -> manager.Highlight)
-        /// until the genotype-step tip is up, then write it to tutorial_tip.txt for Raves. Re-queues
-        /// itself each frame (LateUpdate needs to run first); bounded so it can't spin forever.
-        private static void CaptureTutorialTipSoon(int tries)
-        {
-            var gm = GameManager.Instance;
-            if (gm == null || gm.uiQueue == null) return;
-            gm.uiQueue.queueTask(() =>
-            {
-                try
-                {
-                    string tip = null;
-                    foreach (var tm in UnityEngine.Resources.FindObjectsOfTypeAll<TutorialManager>())
-                    {
-                        if (tm != null) { tip = tm.lastText; break; }
-                    }
-                    if (!string.IsNullOrEmpty(tip) && tip != "<noframe>")
-                        WriteTutorialTip(tip);
-                    else if (tries < 120)
-                        CaptureTutorialTipSoon(tries + 1);
-                }
-                catch (Exception e) { System.Console.WriteLine("[raves] tip capture: " + e.Message); }
-            }, 0);
-        }
-
-        private static void WriteTutorialTip(string tip)
-        {
-            try
-            {
-                string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-                string dir = System.IO.Path.Combine(home, "Library", "Application Support", "RavesOfQud");
-                System.IO.Directory.CreateDirectory(dir);
-                System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "tutorial_tip.txt"), tip);
-                System.Console.WriteLine("[raves] tutorial tip -> tutorial_tip.txt (" + tip.Length + " chars)");
-            }
-            catch (Exception e) { System.Console.WriteLine("[raves] tip write: " + e.Message); }
         }
 
         /// <summary>

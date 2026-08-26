@@ -1463,7 +1463,7 @@ var _cg_attr_spent := 0
 var _cg_mutations: Array = []   # [{name, count}] from the mutation picker (slice 7)
 var _cg_cybernetics: Array = []  # [{blueprint, display, slot}] from the implant picker (7c)
 
-## Qud's chargen opens on the GAME MODE step (Tutorial/Classic/Roleplay/Wander/Daily) before
+## Qud's chargen opens on the GAME MODE step (Classic/Roleplay/Wander/Daily/Tutorial) before
 ## genotype; mirror that order — mode → genotype → subtype → embark.
 func _open_chargen() -> void:
 	if _overlay != null:
@@ -1488,9 +1488,9 @@ func _open_game_mode(preselect := "") -> void:
 func _on_mode_chosen(mode_name: String) -> void:
 	_cg_mode = mode_name
 	_close_overlay()
-	if mode_name == "Tutorial":
-		_start_tutorial()   # pregen guided game — no genotype/subtype, boot straight in
-		return
+	# No Tutorial branch: GameModeScreen REFUSES that card, so this is only ever reached by a
+	# mode Raves can actually run. (Raves' own tutorial lane was removed 2026-08-26 — Qud's
+	# tutorial works, and its guide box is mirrored into the viewer; see mod/TutorialBridge.cs.)
 	# Qud's next step is CHARACTER TYPE (Presets/New/Random/Library/Last), not genotype —
 	# skipping it was the "jumped straight to the mutant/truekin screen" feedback (2026-08-10).
 	_open_chartype()
@@ -1699,129 +1699,6 @@ func _on_pregen_chosen(nm: String) -> void:
 	# the embark guard needs a subtype either way; the build code carries the pregen's own
 	_cg_subtype = str(BuildCode.decode(str(_cg_pregen_rec.get("code", ""))).get("subtype", ""))
 	_open_summary("Presets", _cg_pregen_rec)
-
-## Tutorial mode: walk the guided pre-game menus (Choose Genotype, onboarding to Mutated Human, with
-## the Tutorial Guide popup) before booting. Reuses the shared card screen with the tutorial extras.
-func _start_tutorial() -> void:
-	# BEGIN Qud's tutorial chargen now (if the bridge is up) so the mod parks it at the genotype
-	# window and captures its live tip into tutorial_tip.txt — which the guide popup reads. The body
-	# starts empty and fills in when the real (Qud) text lands; nothing tutorial prose is bundled.
-	var tip_path := InputModel.support_dir().path_join("tutorial_tip.txt")
-	if FileAccess.file_exists(tip_path):
-		DirAccess.remove_absolute(tip_path)   # drop any stale tip so we don't flash the previous one
-	if _qud_up and _peer.get_status() == StreamPeerTCP.STATUS_CONNECTED:
-		_send_command({"type": "command", "name": "tutorial"})   # begin + capture tip
-	var geno: Variant = load("res://GenotypeScreen.gd").new()
-	geno.crumbs = [
-		{"label": "Tutorial", "current": false},
-		{"label": "Choose Genotype", "current": true},
-		{"label": "Pregens", "current": false},
-	]
-	geno.onboard_index = 0   # steer to Mutated Human, the tutorial's genotype
-	# ...and REFUSE the other one. The steer was only a suggestion, and the lane forces the Marsh
-	# Taur pregen either way, so True Kin was a choice that silently did not happen.
-	geno.forced_name = TUTORIAL_GENOTYPE
-	geno.guide_tip_file = "tutorial_tip.txt"
-	_overlay = geno
-	add_child(geno)
-	geno.closed.connect(func():
-		_close_overlay()
-		_open_game_mode("Tutorial"))
-	geno.chose.connect(_on_tutorial_genotype)
-	# the gametree could not see this screen: the tutorial's genotype step never reported a
-	# scene, so `hv goto`/assert had nothing to verify and the lane was untestable from outside
-	UiState.set_scene("chargen_genotype")
-
-## After the guided genotype pick, COMMIT Qud's tutorial (the guided builder is parked at the genotype
-## window; the mod boots the fixed Marsh Taur pregen) and watch it in the Holodeck.
-## THE TUTORIAL LANE walks the same screens every other lane does, with its choices FORCED
-## (docs/new-game.md): genotype Mutated Human, preset Marsh Taur, the sunken caravanserai. It
-## used to jump from the genotype pick straight to the boot, which skipped four screens the
-## player is meant to see. Qud's own guided builder stays parked where `tutorial` left it; the
-## commit at the end is still tutorial_go, the known-good boot.
-func _on_tutorial_genotype(genotype_name: String) -> void:
-	_close_overlay()
-	_cg_mode = "Tutorial"
-	_cg_genotype = genotype_name if genotype_name != "" else "Mutated Human"
-	var pgs: Variant = load("res://PregenScreen.gd").new()
-	UiState.set_scene("chargen_pregens")
-	pgs.mode_name = "Tutorial"
-	pgs.genotype_name = _cg_genotype
-	pgs.force_name = TUTORIAL_PREGEN
-	_overlay = pgs
-	add_child(pgs)
-	pgs.closed.connect(func():
-		_close_overlay()
-		_start_tutorial())
-	pgs.chose.connect(func(nm: String):
-		_cg_pregen_rec = pgs.pregen(nm)
-		_cg_pregen = nm
-		_cg_subtype = str(BuildCode.decode(str(_cg_pregen_rec.get("code", ""))).get("subtype", ""))
-		_close_overlay()
-		_open_tutorial_summary())
-
-const TUTORIAL_PREGEN := "Marsh Taur"
-## ...whose genotype. The tutorial can only deliver this one, so the genotype screen refuses the
-## rest rather than accepting a pick it is about to overwrite.
-const TUTORIAL_GENOTYPE := "Mutated Human"
-
-func _open_tutorial_summary() -> void:
-	_close_overlay()
-	var sum: Variant = load("res://SummaryScreen.gd").new()
-	UiState.set_scene("chargen_summary")
-	sum.mode_name = "Tutorial"
-	sum.chartype_title = "Presets"
-	sum.genotype_name = _cg_genotype
-	sum.subtype_name = _cg_subtype
-	sum.pregen = _cg_pregen_rec
-	_overlay = sum
-	add_child(sum)
-	sum.closed.connect(func():
-		_close_overlay()
-		_on_tutorial_genotype(_cg_genotype))
-	sum.advance_page.connect(_open_tutorial_customize)
-
-func _open_tutorial_customize() -> void:
-	_close_overlay()
-	var cust: Variant = load("res://CustomizeScreen.gd").new()
-	UiState.set_scene("chargen_customize")
-	cust.mode_name = "Tutorial"
-	cust.chartype_title = "Presets"
-	cust.genotype_name = _cg_genotype
-	cust.subtype_name = _cg_subtype
-	_overlay = cust
-	add_child(cust)
-	cust.closed.connect(func():
-		_close_overlay()
-		_open_tutorial_summary())
-	cust.advance_page.connect(_open_tutorial_location)
-
-func _open_tutorial_location() -> void:
-	_close_overlay()
-	var loc: Variant = load("res://LocationScreen.gd").new()
-	UiState.set_scene("chargen_location")
-	loc.mode_name = "Tutorial"
-	loc.chartype_title = "Presets"
-	loc.genotype_name = _cg_genotype
-	loc.subtype_name = _cg_subtype
-	loc.force_set = "Tutorial"     # the sunken caravanserai, which the normal lane hides
-	_overlay = loc
-	add_child(loc)
-	loc.closed.connect(func():
-		_close_overlay()
-		_open_tutorial_customize())
-	loc.chose.connect(func(_id: String):
-		_close_overlay()
-		_tutorial_boot())
-
-func _tutorial_boot() -> void:
-	if not _qud_up or _peer.get_status() != StreamPeerTCP.STATUS_CONNECTED:
-		push_warning("Raves: can't start tutorial — bridge not connected")
-		return
-	_send_command({"type": "command", "name": "tutorial_go"})   # commit + boot
-	# the same Creating World screen every other lane shows (slice 4)
-	get_tree().root.add_child(load("res://CreatingWorldOverlay.gd").new())
-	_enter_viewer()
 
 ## Frame + send a bridge command over the detection peer (same wire format as _send_embark).
 func _send_command(msg: Dictionary) -> void:

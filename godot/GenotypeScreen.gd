@@ -1,10 +1,10 @@
 extends "res://ChargenCardScreen.gd"
 
 ## CHARACTER CREATION — GENOTYPE (Qud's ":choose genotype:"). Same card-row template as the game-mode
-## screen — two cards, Mutated Human / True Kin — reused for both the tutorial and normal chargen.
+## screen — two cards, Mutated Human / True Kin.
 ##
-## Set `crumbs` before adding to the tree to control the top-left breadcrumb (e.g. the tutorial trail
-## Tutorial → Choose Genotype → Pregens); left unset it shows just "Choose Genotype".
+## Set `crumbs` before adding to the tree to control the top-left breadcrumb; left unset it shows
+## just "Choose Genotype".
 
 ## Optional breadcrumb override — [{label, current}], left→right. Empty = the default trail.
 var crumbs: Array = []
@@ -27,24 +27,6 @@ const GENOTYPES := [
 func _screen_node_name() -> String: return "GenotypeScreen"
 func _subtitle() -> String: return ":choose genotype:"
 func _default_index() -> int: return 0   # Mutated Human
-
-## THE TUTORIAL'S GENOTYPE IS FIXED. Set this to the one genotype the lane can actually deliver
-## and every other card is SHOWN BUT REFUSED — the warning under the row, and the red X on the
-## confirm. Deliberately not PregenScreen's `force_name`, which filters its list down to one: the
-## player came to this screen to choose, so the card they cannot have is worth showing with a
-## reason attached. Empty (normal chargen) blocks nothing.
-##
-## It matters because the tutorial's pick was already being ignored: _on_tutorial_genotype takes
-## whatever was chosen and then forces the Marsh Taur pregen regardless, so picking True Kin
-## handed the player a mutated human without a word about it.
-var forced_name := ""
-
-func _card_blocked(item_name: String) -> String:
-	if forced_name == "" or item_name == forced_name:
-		return ""
-	# Daniel's wording, verbatim. It names True Kin outright because True Kin is the only card
-	# this lane refuses — keep it in step with `forced_name` if a third genotype ever appears.
-	return "Mom says you can't do the tutorial with a True Kin"
 
 ## Qud: "Classic | New | Choose Genotype". The "New" leg comes from the chartype screen the
 ## player actually passed through (ChartypeScreen, 2026-08-10) — still never faked: entering

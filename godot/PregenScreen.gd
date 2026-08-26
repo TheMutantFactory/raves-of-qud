@@ -10,7 +10,6 @@ var mode_name := ""
 var genotype_name := ""
 ## Tutorial (slice 9): show ONLY this pregen, so the lane's forced choice is visible and
 ## confirmable rather than skipped past. Empty = the whole genotype's roster.
-var force_name := ""
 
 var _detail_by_name := {}
 var _tile_by_name := {}
@@ -42,8 +41,6 @@ func _load_items() -> Array:
 	var hotkeys := "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 	for pg in parsed.get("pregens", []):
 		if genotype_name != "" and str(pg.get("genotype", "")) != genotype_name:
-			continue
-		if force_name != "" and str(pg.get("name", "")) != force_name:
 			continue
 		var nm := str(pg.get("name", ""))
 		out.append({"name": nm, "display": nm,

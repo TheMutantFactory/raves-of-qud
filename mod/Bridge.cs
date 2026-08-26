@@ -1495,13 +1495,6 @@ namespace RavesOfQud
                     EmbarkDriver.RequestMeta();
                     return;
                 }
-                if (name == "tutorial")
-                {
-                    // BEGIN the guided tutorial: start its chargen so Qud is at the genotype window and
-                    // its live tip gets captured to tutorial_tip.txt (Raves reads it). No boot yet.
-                    EmbarkDriver.RequestTutorial();
-                    return;
-                }
                 if (name == "tombstone_exit")
                 {
                     // The viewer dismissed the tombstone — close Qud's too, so the two windows
@@ -1525,12 +1518,6 @@ namespace RavesOfQud
                     // CHANGE only, so a client that arrives between two beats would sit there with no
                     // box until the tutorial happened to say something else — which is most of a step.
                     TutorialBridge.OnClientConnect();
-                    return;
-                }
-                if (name == "tutorial_go")
-                {
-                    // COMMIT: the player confirmed on Raves' guided genotype screen — boot the tutorial.
-                    EmbarkDriver.RequestTutorialCommit();
                     return;
                 }
                 if (name == "embark")

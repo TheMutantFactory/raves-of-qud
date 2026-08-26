@@ -97,20 +97,22 @@ const TEXT_SCALE := 0.87
 
 var selected := ""
 
-## Guided-tutorial extras (opt-in; set before adding to the tree). onboard_index draws a bright
-## highlight box around that card to steer the player; guide_body (+ guide_title) shows a
-## "TUTORIAL GUIDE" popup. Left at defaults, a normal chargen screen shows neither.
+## Steer the player at ONE card by drawing a bright highlight box around it (opt-in; set before
+## adding to the tree). Left at -1, no card is steered.
+##
+## Nothing sets this since Raves' tutorial lane was removed (2026-08-26). It is kept because it is
+## three lines and it is the mechanism any future guided flow would want — the notice popup below
+## survived the same cut for the same reason, and is in use.
 var onboard_index := -1
 ## Set before adding to the tree: open on THIS card rather than on the screen's default. Used by
 ## every Back link — a Back that forgets what the player picked is a Back that silently rerolls
 ## part of their build.
 var preselect_name := ""
 var _onboard_active := true   # onboard card shows the bright highlight until the player engages a card
+## The notice popup, in Qud's frame style. Still in use: the chartype screen shows the lanes Raves
+## has no slice for through it ("NOT YET IN RAVES").
 var guide_title := "TUTORIAL GUIDE"
 var guide_body := ""
-## If set, poll this file (in the support dir) for Qud's live tutorial tip and swap it into the
-## popup once the mod captures it — so the real text is read from Qud, never bundled.
-var guide_tip_file := ""
 
 var _items: Array = []
 var _sel := 0
@@ -134,8 +136,6 @@ var _emblem_extracted := false
 var _frame_tex: Texture2D
 var _frame_extracted := false
 var _guide_body_label: RichTextLabel   # the popup body, so the live tip can be swapped in
-var _guide_tip_last := ""
-var _guide_tip_t := 0.0
 var _sel_frame: NinePatchRect          # Qud's big solid-yellow selection frame (corner brackets), moves to the selection
 
 # ══ SUBCLASS HOOKS — override these ════════════════════════════════════════════════
@@ -245,7 +245,7 @@ func _ready() -> void:
 	_ensure_sel_frame()
 	_apply_selection()
 	_resolve_icons()
-	if guide_body != "" or guide_tip_file != "":
+	if guide_body != "":
 		_build_guide()
 	_init_sel_frame_deferred()   # awaits layout, then boxes the selected card
 	_peer.connect_to_host(BridgeClient.host(), BridgeClient.port())
@@ -264,18 +264,6 @@ func _process(dt: float) -> void:
 		if Time.get_ticks_msec() >= _resolve_until:
 			_resolve_until = 0
 			_resolve_icons()
-	if guide_tip_file != "" and _guide_body_label != null:
-		_guide_tip_t += dt
-		if _guide_tip_t >= 0.4:
-			_guide_tip_t = 0.0
-			var path := InputModel.support_dir().path_join(guide_tip_file)
-			if FileAccess.file_exists(path):
-				var f := FileAccess.open(path, FileAccess.READ)
-				if f != null:
-					var tip := f.get_as_text().strip_edges()
-					if tip != "" and tip != _guide_tip_last:
-						_guide_tip_last = tip
-						_update_guide_body(tip)
 
 func _exit_tree() -> void:
 	if _peer != null:

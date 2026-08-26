@@ -4,17 +4,13 @@ extends "res://ChargenCardScreen.gd"
 ## carousel as every stage, with each card's icon a composited 5x3 world-map tile GRID from the
 ## startingLocations export (mod ChargenExporter reads EmbarkModules.xml from the player's own
 ## install). Selecting a card hands its id to the embark spec's `start`, which the mod's
-## QudChooseStartingLocationModuleData already honours. Tutorial-set locations are excluded —
-## they belong to the Tutorial lane (slice 9).
+## QudChooseStartingLocationModuleData already honours. Tutorial-set locations are excluded, as
+## they are in Qud'"'"'s own chargen.
 
 var mode_name := ""
 var chartype_title := ""
 var genotype_name := ""
 var subtype_name := ""
-## Tutorial (slice 9): show only locations in this Set — "Tutorial" surfaces the sunken
-## caravanserai the normal lane hides. Empty = the ordinary, non-Tutorial roster.
-var force_set := ""
-
 var _grids := {}    # item name -> grid array, stashed by _load_items for _card_icon
 
 func _screen_node_name() -> String: return "LocationScreen"
@@ -54,11 +50,8 @@ func _load_items() -> Array:
 	var out: Array = []
 	var hotkeys := "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 	for loc in parsed.get("startingLocations", []):
-		if force_set != "":
-			if str(loc.get("set", "")) != force_set:
-				continue
-		elif str(loc.get("set", "")) == "Tutorial":
-			continue   # the Tutorial lane's forced start, never offered here (Qud hides it too)
+		if str(loc.get("set", "")) == "Tutorial":
+			continue   # Qud hides its tutorial start from ordinary chargen; so do we
 		var disp := QudText.strip(str(loc.get("display", loc.get("id", ""))))
 		# `tile` is a SENTINEL: _resolve_icons skips empty tiles entirely, and our icons come
 		# from the stashed grid, not from any single tile — any non-empty string unlocks the
