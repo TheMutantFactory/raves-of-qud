@@ -119,8 +119,14 @@ var _sel := 0
 var _cards: Array = []
 var _desc: RichTextLabel
 var _warn: RichTextLabel   # blocked-card explanation (see _card_blocked)
-var _warn_base_y := 0.0   # its measured resting place; _place_warn only ever pushes DOWN from here
 var _deco_knobs: Array = []   # the three-dot deco, hidden while a refusal is on screen
+var _col_title: Label         # "character creation" — the top of the cascading column
+                              # (named _col_* so a subclass may keep its own _title_lbl)
+var _col_sub: Label           # ":choose …:"
+var _col_row: Control        # the HBox of cards
+var _resize_t: Timer          # debounces the rebuild while a window is being dragged
+var _title_bottom := 0.0      # filled by the cascade; the selection frame may not rise above it
+var _sub_top := 0.0           # ...and prefers to sit above this, in the title-to-subtitle gap
 var _refusal: Control      # the red X flashed over a refused card
 ## Qud's own red — its palette 'R' (#d74200), not a hand-picked one, so the X belongs to the
 ## same 18 colours as everything else on screen.
@@ -222,6 +228,7 @@ func _ready() -> void:
 	name = _screen_node_name()
 	_fit_to_viewport()
 	get_viewport().size_changed.connect(_fit_to_viewport)
+	get_viewport().size_changed.connect(_on_viewport_resized)
 	theme = UiFont.scaled_theme(get_viewport(), TEXT_SCALE)
 	for code in QUD_COLORS:
 		_palette[code] = "#" + Color(QUD_COLORS[code]).to_html(false)
@@ -233,6 +240,11 @@ func _ready() -> void:
 				_sel = i
 				break
 
+	_build_screen()
+	_peer.connect_to_host(BridgeClient.host(), BridgeClient.port())
+
+## Everything visual, in one place, so a resize can re-run EXACTLY what a first build ran.
+func _build_screen() -> void:
 	var bg := ColorRect.new()
 	bg.color = BG
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -248,7 +260,48 @@ func _ready() -> void:
 	if guide_body != "":
 		_build_guide()
 	_init_sel_frame_deferred()   # awaits layout, then boxes the selected card
-	_peer.connect_to_host(BridgeClient.host(), BridgeClient.port())
+
+## RESPONSIVE, by rebuilding. Every row on this screen is sized and placed from the viewport at
+## BUILD time — card widths, the band pitch, the chevrons, the breadcrumb, the emblem — and a
+## Control that was given anchors keeps the OFFSETS it was built with, so a resized window left
+## the column centred on the old width with the cards and the flavour line adrift. Re-running the
+## build is the honest fix: there is exactly one code path that knows how this screen is laid out,
+## and it is the one that just ran.
+##
+## Debounced, because size_changed fires every frame while a window is being dragged, and the
+## selection is carried across so a resize does not reset what the player picked.
+func _on_viewport_resized() -> void:
+	if _resize_t != null and is_instance_valid(_resize_t):
+		_resize_t.start()
+		return
+	_resize_t = Timer.new()
+	_resize_t.one_shot = true
+	_resize_t.wait_time = 0.15
+	_resize_t.timeout.connect(_rebuild_screen)
+	add_child(_resize_t)
+	_resize_t.start()
+
+func _rebuild_screen() -> void:
+	var keep := _sel
+	for c in get_children():
+		if c == _resize_t:
+			continue
+		remove_child(c)   # NOW, not queue_free: a lingering child poisons the next build's
+		c.queue_free()    # get_children() the same way it poisoned _build_buttons
+	_cards.clear()
+	_bands.clear()
+	_deco_knobs.clear()
+	_sel_frame = null
+	_col_title = null
+	_col_sub = null
+	_col_row = null
+	_desc = null
+	_warn = null
+	_emblem_rect = null
+	_guide_body_label = null
+	theme = UiFont.scaled_theme(get_viewport(), TEXT_SCALE)
+	_sel = clampi(keep, 0, maxi(0, _items.size() - 1))
+	_build_screen()
 
 func _process(dt: float) -> void:
 	_peer.poll()
@@ -509,11 +562,13 @@ func _build_center() -> void:
 	cc.anchor_left = 0.0; cc.anchor_right = 1.0
 	cc.position.y = vp.y * _y_title()
 	add_child(cc)
+	_col_title = cc
 	var sub := _text(_subtitle(), SUB_TEAL, "caption")
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	sub.anchor_left = 0.0; sub.anchor_right = 1.0
-	sub.position.y = vp.y * _y_subtitle()   # tighter under the title, as in Qud (was 0.468 — too low)
+	sub.position.y = vp.y * _y_subtitle()   # initial; the cascade re-places it (see _layout_column)
 	add_child(sub)
+	_col_sub = sub
 
 	_build_body(vp)
 
@@ -533,6 +588,7 @@ func _build_body(vp: Vector2) -> void:
 	row.position.y = vp.y * _y_cards()   # tuck the cards just under the subtitle, as in Qud (was 0.5 — too low)
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(row)
+	_col_row = row
 	# Qud widens the pitch across an ARCOLOGY BOUNDARY: its caste cards measure
 	# [120,120,120,140,120,120,120,140,120,120,120] at 1920x1080 — four cards per band, +20px where
 	# one band ends and the next begins. Without it Raves' row was uniform and finished ~56px narrower
@@ -581,7 +637,6 @@ func _build_body(vp: Vector2) -> void:
 	_warn.position = Vector2(vp.x * 0.225, vp.y * (_y_desc() + 0.075))
 	_warn.size = Vector2(vp.x * 0.55, vp.y * 0.14)
 	_warn.custom_minimum_size = _warn.size
-	_warn_base_y = _warn.position.y
 	add_child(_warn)
 
 	# The three-dot deco under the description. Measured off Qud's caste screen: three 5px dots
@@ -596,15 +651,12 @@ func _build_body(vp: Vector2) -> void:
 	# At 5px Qud's dots are solid blocks anyway, so a ColorRect is both exact and one less
 	# dependency on an extracted asset being present.
 	var ks: int = maxi(3, int(round(vp.y * 0.0046)))   # 5px at 1080
-	var dx: int = maxi(2, int(round(vp.x * 0.0047)))   # 9px at 1920
-	var dy: int = maxi(1, int(round(vp.y * 0.0037)))   # 4px at 1080
-	var cx: float = vp.x * 0.5
-	var oy: float = vp.y * 0.8333                      # y900 at 1080
-	for off in [Vector2(0, -dy), Vector2(-dx, dy), Vector2(dx, dy)]:
+	# CREATED here, PLACED by the cascade (_place_deco): this row is the one the old layout kept
+	# colliding with, precisely because it was addressed absolutely while everything above it grew.
+	for _i in 3:
 		var k := ColorRect.new()
 		k.color = DECO_KNOB
 		k.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		k.position = Vector2(cx + off.x - ks * 0.5, oy + off.y - ks * 0.5)
 		k.size = Vector2(ks, ks)
 		add_child(k)
 		_deco_knobs.append(k)
@@ -612,12 +664,12 @@ func _build_body(vp: Vector2) -> void:
 	var rnd := _rich("[center][color=#%s][lb]R[rb][/color][color=#%s] Randomize Selection[/color][/center]" % [
 		SEL_GOLD.to_html(false), MUTED.to_html(false)], "body")
 	rnd.anchor_left = 0.0; rnd.anchor_right = 1.0
-	rnd.position.y = vp.y * 0.905
+	rnd.position.y = vp.y * Y_RANDOMIZE
 	add_child(rnd)
 
 	var hint := _rich("", "caption")
 	hint.anchor_left = 0.0; hint.anchor_right = 1.0
-	hint.position.y = vp.y * 0.965
+	hint.position.y = vp.y * Y_HINT
 	var ih := int(round(UiFont.px(get_viewport(), "caption") * 1.15))
 	hint.push_paragraph(HORIZONTAL_ALIGNMENT_CENTER)
 	var icon := QudChrome.nav_icon(ih, SEL_GOLD)
@@ -814,42 +866,7 @@ func _layout_deferred() -> void:
 	await get_tree().process_frame
 	_size_names()
 	await get_tree().process_frame   # let the row re-flow at the new name heights
-	_position_bands()                # no-op when the screen has no category bands
-	_clear_desc_of_cards()
-
-## Push the flavour line below the cards when the cards reach it.
-##
-## `_y_desc()` is a MEASURED constant per screen and stays the authority — on the figure screens
-## Qud's flavour line is exactly there and this changes nothing. But a card column grows with its
-## own wrapped name, and the selection frame is drawn from that column, so on Choose Location
-## ("a sunken caravanserai" wraps to two lines) the frame reached past the constant and the
-## flavour text ended up printed through the card.
-##
-## Measured against the TALLEST card, not the selected one: keying off the selection would make
-## the line hop up and down as the player moved along a row of names that wrap differently.
-func _clear_desc_of_cards() -> void:
-	if _desc == null or _cards.is_empty():
-		return
-	var vp := get_viewport_rect().size
-	var lowest := 0.0
-	for c in _cards:
-		var col: Control = c.get("col")
-		if col == null:
-			continue
-		var r := col.get_global_rect()
-		if r.size.y > 1.0:
-			lowest = maxf(lowest, r.end.y)
-	if lowest <= 0.0:
-		return
-	# the selection frame's own bottom clearance, then Qud's gap between frame and flavour line
-	var want := lowest + vp.y * 0.0185 + vp.y * 0.010
-	var delta := want - _desc.position.y
-	if delta <= 0.0:
-		return                       # the constant already clears them; leave parity alone
-	_desc.position.y += delta
-	if _warn != null:
-		_warn.position.y += delta    # the warning hangs off the description, not off the screen
-		_warn_base_y += delta
+	_layout_column()
 
 func _position_bands() -> void:
 	if _bands.is_empty():
@@ -1052,8 +1069,19 @@ func _position_sel_frame() -> void:
 	var pr := vp.x * 0.024
 	var pt := vp.y * _sel_pad_top_frac()   # top edge lands on the subtitle line, as in Qud
 	var pb := vp.y * 0.0185  # bottom edge clears the hotkey and stops above the flavour line
-	_sel_frame.position = Vector2(r.position.x - pl, r.position.y - pt)
-	_sel_frame.size = Vector2(r.size.x + pl + pr, r.size.y + pt + pb)
+	# NEVER ABOVE THE TITLE. The frame is drawn from the card COLUMN, which grows with its own
+	# wrapped name, so on a screen with tall cards its top edge climbed into "character creation"
+	# and struck through the words. The cascade reserves the overhang; this is the guarantee.
+	# The rail wants the GAP between the title and the subtitle: below the title'"'"'s ink, above the
+	# subtitle'"'"'s. Clamped to the title first, because clearing the title is the guarantee and
+	# missing the subtitle is only the preference — when the gap is too small for both, the
+	# subtitle is the one Qud draws inside the frame anyway.
+	var top: float = maxf(r.position.y - pt, _title_bottom + 2.0)
+	if _sub_top > _title_bottom + 4.0:
+		top = minf(top, _sub_top - 2.0)
+	top = maxf(top, _title_bottom + 2.0)
+	_sel_frame.position = Vector2(r.position.x - pl, top)
+	_sel_frame.size = Vector2(r.size.x + pl + pr, r.position.y + r.size.y + pb - top)
 	_sel_frame.modulate = BRIGHT_GOLD if (_onboard_active and _sel == onboard_index) else SEL_GOLD
 	_sel_frame.visible = true
 
@@ -1117,10 +1145,9 @@ func _apply_selection() -> void:
 		for k in _deco_knobs:
 			if is_instance_valid(k):
 				k.visible = why == ""
-		if why != "":
-			# deferred: the description's own height is not known until it has laid out the text
-			# we just gave it, and that height is the whole input to where this goes
-			_place_warn.call_deferred()
+		# deferred: the description and warning have not laid out the text we just gave them, and
+		# their heights are the whole input to where everything under them goes
+		_layout_column.call_deferred()
 	_position_sel_frame()
 
 func _randomize() -> void:
@@ -1343,16 +1370,106 @@ func _rich(bb: String, role := "body") -> RichTextLabel:
 	l.text = bb
 	return l
 
-## Keep the blocked-card warning clear of the description above it.
-##
-## The warning sits a constant below _y_desc(), which is right where the description is the two
-## lines the game-mode screen shows. Choose Genotype prints FIVE perk bullets, and the amber
-## warning ran straight through the last two of them. Measured off the description's own rendered
-## height, so it follows whatever that card happens to say, and floored at the constant so the
-## screens that already fit keep the position they were measured into.
-func _place_warn() -> void:
-	if _warn == null or _desc == null:
+# ══ the centre column, as ONE cascading pass ═══════════════════════════════════════
+#
+# WHY THIS EXISTS. Every row of a chargen screen used to be placed at its own measured
+# fraction of the viewport, independently of the rows above it — title at _y_title(),
+# cards at _y_cards(), flavour at _y_desc(), the deco at a literal 0.8333. That is fine
+# while every row is the height it was measured at, and wrong the moment one is not:
+# a location name that wraps to two lines, a genotype with five perk bullets, a blocked
+# card's four-line refusal. Each collision then got its own patch — push the flavour
+# below the cards, push the warning below the flavour, hide the deco when the warning
+# reaches it — and the next longer string found the next gap. Daniel: "we need to fix
+# this issue we've been kludging over and over."
+#
+# So the column is laid out ONCE, top to bottom, each row placed after the one above it:
+# the ORDER is structural and cannot be violated by content. The measured constants stay
+# — they are still where Qud puts these rows — but they now describe the GAP each row
+# wants, not an absolute address it insists on. Nominal content lands exactly where it
+# always did; longer content pushes what follows down instead of printing through it.
+#
+# The footer (randomize + hint) is pinned to the BOTTOM and the column grows into the
+# slack between. When the slack runs out the footer is what gives, which is the right
+# failure: a hint line low on the screen is readable, a hint line through the deco is not.
+
+## Each row's measured HOME — where Qud puts it — is still the per-screen _y_* hook. The cascade
+## treats those as MINIMUMS, not addresses: a row sits at its measured home unless the content
+## above has already pushed past it, in which case it follows. Nominal content is therefore
+## pixel-identical to the layout these constants were measured for, and longer content pushes
+## instead of printing through.
+const MIN_GAP := 0.006          # the smallest gap between two rows, as a fraction of height
+const SUB_EXTRA := 0.008        # Daniel: "the row-to-row spacing between the title and the
+                                # :choose xyz: is too small" — this is the whole widening
+const Y_DECO := 0.8333          # Qud's three-dot deco, measured; y900 at 1080
+const Y_RANDOMIZE := 0.905      # Qud's, measured; the footer is pinned from the bottom up
+const Y_HINT := 0.965
+
+## Lay the column out. Safe to call at any time and as often as needed — it reads the live
+## heights, so it is also the resize handler and the "the description just changed" handler.
+func _layout_column() -> void:
+	if _col_title == null or not is_instance_valid(_col_title):
 		return
 	var vp := get_viewport_rect().size
-	var below: float = _desc.position.y + float(_desc.get_content_height()) + vp.y * 0.012
-	_warn.position.y = maxf(_warn_base_y, below)
+	var gap: float = vp.y * MIN_GAP
+	var y: float = _stack(_col_title, vp.y * _y_title(), gap)
+	_title_bottom = y - gap
+	_sub_top = maxf(y, vp.y * (_y_subtitle() + SUB_EXTRA))
+	y = _stack(_col_sub, _sub_top, gap)
+	# THE SELECTION FRAME reaches ABOVE the card row, and that overhang is what was landing on the
+	# title. Reserve it here so the frame has somewhere to be. Qud lets the frame enclose the
+	# SUBTITLE, so only the title has to be cleared.
+	var over: float = vp.y * _sel_pad_top_frac()
+	if _col_row != null and is_instance_valid(_col_row):
+		_col_row.position.y = maxf(maxf(y, vp.y * _y_cards()), _title_bottom + over)
+		y = _col_row.position.y + _row_height() + gap
+	y = _stack(_desc, maxf(y, vp.y * _y_desc()), gap)
+	if _warn != null and is_instance_valid(_warn) and _warn.text != "":
+		y = _stack(_warn, y, gap)
+	_place_deco(y, vp)
+	_position_bands()
+	_position_sel_frame()
+
+## Put `c` at `y`, and return the y the NEXT row starts at.
+func _stack(c: Control, y: float, gap: float) -> float:
+	if c == null or not is_instance_valid(c):
+		return y + gap
+	c.position.y = round(y)
+	var h: float = c.size.y
+	if c is RichTextLabel:
+		h = maxf(h, (c as RichTextLabel).get_content_height())
+	if h <= 1.0:
+		h = c.get_minimum_size().y
+	return y + h + gap
+
+## The card row's height, which is the TALLEST card — the row itself can report 0 before its
+## children have re-flowed at their measured name heights (see _size_names).
+func _row_height() -> float:
+	var h := 0.0
+	for c in _cards:
+		var col: Control = c.get("col")
+		if col != null and is_instance_valid(col):
+			h = maxf(h, col.size.y)
+	if h <= 1.0 and _col_row != null and is_instance_valid(_col_row):
+		h = _col_row.size.y
+	return h
+
+## The three-dot deco, at the top of whatever space is left under the column. It is the row
+## the old layout kept colliding with, because it was the only one addressed absolutely.
+func _place_deco(y: float, vp: Vector2) -> void:
+	if _deco_knobs.is_empty():
+		return
+	var ks: int = maxi(3, int(round(vp.y * 0.0046)))
+	var dx: int = maxi(2, int(round(vp.x * 0.0047)))
+	var dy: int = maxi(1, int(round(vp.y * 0.0037)))
+	# Qud's own resting place, unless the column has grown past it — then it follows the column.
+	var oy: float = maxf(vp.y * Y_DECO, y + ks)
+	# ...but never into the footer.
+	oy = minf(oy, vp.y * Y_RANDOMIZE - ks * 3.0)
+	var cx: float = vp.x * 0.5
+	var offs := [Vector2(0, -dy), Vector2(-dx, dy), Vector2(dx, dy)]
+	for i in mini(_deco_knobs.size(), offs.size()):
+		var k: ColorRect = _deco_knobs[i]
+		if k == null or not is_instance_valid(k):
+			continue
+		k.position = Vector2(cx + offs[i].x - ks * 0.5, oy + offs[i].y - ks * 0.5)
+		k.size = Vector2(ks, ks)
