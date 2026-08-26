@@ -101,6 +101,10 @@ var selected := ""
 ## highlight box around that card to steer the player; guide_body (+ guide_title) shows a
 ## "TUTORIAL GUIDE" popup. Left at defaults, a normal chargen screen shows neither.
 var onboard_index := -1
+## Set before adding to the tree: open on THIS card rather than on the screen's default. Used by
+## every Back link — a Back that forgets what the player picked is a Back that silently rerolls
+## part of their build.
+var preselect_name := ""
 var _onboard_active := true   # onboard card shows the bright highlight until the player engages a card
 var guide_title := "TUTORIAL GUIDE"
 var guide_body := ""
@@ -221,6 +225,11 @@ func _ready() -> void:
 		_palette[code] = "#" + Color(QUD_COLORS[code]).to_html(false)
 	_items = _load_items()
 	_sel = clampi(_default_index(), 0, maxi(0, _items.size() - 1))
+	if preselect_name != "":
+		for i in _items.size():
+			if str(_items[i].get("name", "")) == preselect_name:
+				_sel = i
+				break
 
 	var bg := ColorRect.new()
 	bg.color = BG

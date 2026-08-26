@@ -1448,7 +1448,14 @@ func _open_chargen() -> void:
 	_cg_mode = ""
 	_cg_genotype = ""
 	_cg_subtype = ""
+	_open_game_mode()
+
+## THE FIRST CHARGEN STEP, and the only one whose Back correctly leaves chargen: there is no
+## earlier screen, so Esc here belongs to the title. `preselect` restores the player'"'"'s mode when
+## the chartype screen sends them back.
+func _open_game_mode(preselect := "") -> void:
 	var mode: Variant = load("res://GameModeScreen.gd").new()
+	mode.preselect_name = preselect
 	_overlay = mode
 	add_child(mode)
 	mode.closed.connect(_close_overlay)
@@ -1474,9 +1481,12 @@ func _open_chartype(notice := "") -> void:
 		# than faking a screen it cannot follow through on.
 		ct.guide_title = "NOT YET IN RAVES"
 		ct.guide_body = notice
+	ct.preselect_name = _cg_chartype
 	_overlay = ct
 	add_child(ct)
-	ct.closed.connect(_close_overlay)
+	ct.closed.connect(func():
+		_close_overlay()
+		_open_game_mode(_cg_mode))
 	ct.chose.connect(_on_chartype_chosen)
 	UiState.set_scene("chargen_chartype")
 
@@ -1488,9 +1498,12 @@ func _on_chartype_chosen(type_id: String) -> void:
 		var geno2: Variant = load("res://GenotypeScreen.gd").new()
 		geno2.mode_name = _cg_mode
 		geno2.chartype_title = "Presets"
+		geno2.preselect_name = _cg_genotype
 		_overlay = geno2
 		add_child(geno2)
-		geno2.closed.connect(_close_overlay)
+		geno2.closed.connect(func():
+			_close_overlay()
+			_open_chartype(""))
 		geno2.chose.connect(_on_genotype_chosen_presets)
 		UiState.set_scene("chargen_genotype")
 		return
@@ -1521,12 +1534,20 @@ func _on_chartype_chosen(type_id: String) -> void:
 		# ChargenCardScreen._update_guide_body)
 		_open_chartype("%s isn't wired into Raves' character creation yet — New is the path that works end to end. To use %s, start the game from Qud's own window." % [title, title])
 		return
+	_open_genotype_new()
+
+## Choose Genotype in the New lane. A function rather than inline, because the caste/calling
+## screen'"'"'s Back has to reopen exactly this screen.
+func _open_genotype_new() -> void:
 	var geno: Variant = load("res://GenotypeScreen.gd").new()
 	geno.mode_name = _cg_mode   # breadcrumb trail: Qud shows the mode alongside the current screen
 	geno.chartype_title = "New"   # ...and the chartype leg: "Wander | New | Choose Genotype"
+	geno.preselect_name = _cg_genotype
 	_overlay = geno
 	add_child(geno)
-	geno.closed.connect(_close_overlay)
+	geno.closed.connect(func():
+		_close_overlay()
+		_open_chartype(""))
 	geno.chose.connect(_on_genotype_chosen)
 	UiState.set_scene("chargen_genotype")
 
@@ -1677,7 +1698,9 @@ func _start_tutorial() -> void:
 	geno.guide_tip_file = "tutorial_tip.txt"
 	_overlay = geno
 	add_child(geno)
-	geno.closed.connect(_close_overlay)
+	geno.closed.connect(func():
+		_close_overlay()
+		_open_game_mode("Tutorial"))
 	geno.chose.connect(_on_tutorial_genotype)
 	# the gametree could not see this screen: the tutorial's genotype step never reported a
 	# scene, so `hv goto`/assert had nothing to verify and the lane was untestable from outside
@@ -1799,9 +1822,12 @@ func _on_genotype_chosen(genotype_name: String) -> void:
 	sub.genotype_name = genotype_name
 	sub.mode_name = _cg_mode
 	sub.chartype_title = "New"   # the leg of the trail the chartype screen added
+	sub.preselect_name = _cg_subtype
 	_overlay = sub
 	add_child(sub)
-	sub.closed.connect(_close_overlay)
+	sub.closed.connect(func():
+		_close_overlay()
+		_open_genotype_new())
 	sub.chose.connect(_on_subtype_chosen)
 
 func _on_subtype_chosen(subtype_name: String) -> void:
