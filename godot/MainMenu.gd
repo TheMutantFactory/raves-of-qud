@@ -456,6 +456,10 @@ func _drip_from(tr: TextureRect, img_w: float, paint_bottom_frac: float, tilt: f
 	drips.position = Vector2.ZERO
 	drips.size = size
 	add_child(drips)
+	# BEHIND the patch, in front of the wordmark: paint runs out from UNDER the sprayed
+	# letter, it does not lie across it. Drawn on top, every drip clipped the R'"'"'s leg and
+	# the M'"'"'s feet on its way past.
+	move_child(drips, tr.get_index())
 	# one run per stencil column, give or take — enough to look like it ran, not like a curtain
 	drips.setup(block, paint, a, b, tr.size.y, maxi(5, glyph_cols),
 		int(a.x) * 7919 + int(tilt * 100.0))
