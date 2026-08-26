@@ -299,20 +299,44 @@ func _ask_unspent() -> void:
 	q.anchor_left = 0.0; q.anchor_right = 1.0
 	q.position.y = box.position.y + h * 0.60
 	_unspent_box.add_child(q)
-	var yn := _rich("[center][color=#%s]> Yes[/color][color=#%s]    No[/color][/center]" % [
-		SEL_GOLD.to_html(false), MUTED.to_html(false)], "body")
+	# CLICKABLE, as [url]s. This modal has exactly two answers and they are both on screen, so a
+	# player reaches for them with the mouse — the same reason the tombstone footer and the embark
+	# box needed it. Key and click go through the SAME two calls, so the two ways of answering
+	# cannot drift apart.
+	var yn := _rich(("[center][url=yes][color=%s]> Yes[/color][/url]"
+		+ "[color=%s]    [/color][url=no][color=%s]No[/color][/url][/center]") % [
+		"#" + SEL_GOLD.to_html(false), "#" + MUTED.to_html(false), "#" + MUTED.to_html(false)], "body")
 	yn.anchor_left = 0.0; yn.anchor_right = 1.0
 	yn.position.y = box.position.y + h * 0.80
+	# a RichTextLabel only reports [url] clicks when it can feel the mouse at all
+	yn.mouse_filter = Control.MOUSE_FILTER_STOP
+	yn.meta_clicked.connect(func(meta: Variant):
+		if String(meta) == "yes":
+			_unspent_yes()
+		else:
+			_unspent_no())
 	_unspent_box.add_child(yn)
+
+## The two answers, one implementation each — reached by [Space]/[Esc] and by a click.
+func _unspent_yes() -> void:
+	if _unspent_box == null:
+		return
+	_unspent_box.queue_free()
+	_unspent_box = null
+	_advance()
+
+func _unspent_no() -> void:
+	if _unspent_box == null:
+		return
+	_unspent_box.queue_free()
+	_unspent_box = null
 
 func _unhandled_input(e: InputEvent) -> void:
 	if _unspent_box != null:
 		if e.is_action_pressed("ui_accept"):
-			_unspent_box.queue_free(); _unspent_box = null
-			_advance(); accept_event(); return
+			_unspent_yes(); accept_event(); return
 		if e.is_action_pressed("ui_cancel"):
-			_unspent_box.queue_free(); _unspent_box = null
-			accept_event(); return
+			_unspent_no(); accept_event(); return
 		return
 	if e.is_action_pressed("ui_right"):
 		_stat_sel = mini(_stat_sel + 1, _stats.size() - 1); _refresh(); accept_event(); return
