@@ -983,44 +983,31 @@ func _build_hint() -> void:
 	if Settings.clone_of_qud():
 		l.offset_top += 6      # measured: Qud's hint inks at y 1036, the seeded rect put ours at 1030
 		l.offset_bottom += 6
-func _build_version() -> void:
-	# The title is Qud's shape in both modes (clone_of_qud), so this divergence goes through
-	# the one sanctioned gate: the "versions" QoL feature. 1:1 always gets Qud's corner.
-	if Settings.qud_shape("versions"):
-		_build_version_qud()
-		return
-	# USER MODE: the full attribution block, Daniel's wording (2026-08-25). It carries three
-	# things at once — whose game this is, what Raves itself is, and the standing that lets a
-	# viewer exist at all: Raves ships no Qud content, and everything Freehold's comes out of
-	# the player's own installed copy through the modding API. The Qud release/build come from
-	# Brand (measured off a title capture; see the TODO there about sourcing them live), and
-	# the mod and viewer share RAVES_VERSION because this repo versions them together.
-	# BROKEN FOR READABILITY at Daniel's own line breaks (2026-08-25): the long lines are split
-	# where the sense splits, so the corner reads as short statements rather than one wall of
-	# right-aligned prose. The line breaks are his, not the label's wrapping.
-	#
-	# WHOSE STATEMENT IS WHOSE, BY COLOUR: Freehold's version and licence lines in Qud's gold
-	# ('W'), Raves' in its magenta ('M'), and the three disclaimers left muted because they are
-	# nobody's boast — they are the terms the whole thing stands on. Both colours are Qud's own
-	# palette entries, so the corner still belongs to the same eighteen colours as the rest.
-	var gold := QudPalette.COLORS["W"].to_html(false)
-	var mag := QudPalette.COLORS["M"].to_html(false)
-	var l := RichTextLabel.new()
-	l.bbcode_enabled = true
-	l.fit_content = true
-	l.scroll_active = false
-	l.autowrap_mode = TextServer.AUTOWRAP_OFF
-	l.theme_type_variation = "Caption"
-	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	# A DROP SHADOW IN QUD'S FIELD COLOUR ('k', #0f3b3a): the corner sits over the title art,
-	# where gold on pale stone and magenta on teal both lose their edges. The shadow is the
-	# colour Qud paints behind everything, so it reads as the text sitting ON the world rather
-	# than as an effect laid over it.
-	l.add_theme_color_override("font_shadow_color", QudPalette.COLORS["k"])
-	l.add_theme_constant_override("shadow_offset_x", 2)
-	l.add_theme_constant_override("shadow_offset_y", 2)
-	l.add_theme_constant_override("shadow_outline_size", 2)
-	l.text = ("[right][color=#%s]Caves of Qud %s Copyright Freehold Games.\n"
+## The SHORT form: four lines of pure version, Daniel's wording (2026-08-26). This is what the
+## corner says at rest — the full notice is still there, one hover away (_ver_full).
+##
+## Same colour convention as the expanded block, so hovering changes the amount of text and
+## nothing else: Freehold's release and build in Qud's gold ('W'), Raves' two in its magenta.
+func _ver_short(gold: String, mag: String) -> String:
+	return ("[right][color=#%s]Caves of Qud %s\nBuild %s[/color]\n"
+		+ "[color=#%s]" + Brand.GAME_NAME + " Mod %s\n"
+		+ Brand.GAME_NAME + " Viewer %s[/color][/right]") % [
+		gold, Brand.QUD_VERSION, Brand.QUD_BUILD, mag, Brand.RAVES_VERSION, Brand.RAVES_VERSION]
+
+## The EXPANDED notice, Daniel's wording (2026-08-25), shown on hover. It carries three things at
+## once — whose game this is, what Raves itself is, and the standing that lets a viewer exist at
+## all: Raves ships no Qud content, and everything Freehold's comes out of the player's own
+## installed copy through the modding API.
+##
+## BROKEN FOR READABILITY at Daniel's own line breaks: the long lines are split where the sense
+## splits, so the corner reads as short statements rather than one wall of right-aligned prose.
+## The line breaks are his, not the label's wrapping.
+##
+## WHOSE STATEMENT IS WHOSE, BY COLOUR: Freehold's version and licence lines in Qud's gold ('W'),
+## Raves' in its magenta ('M'). Both are Qud's own palette entries, so the corner still belongs to
+## the same eighteen colours as the rest.
+func _ver_full(gold: String, mag: String) -> String:
+	return ("[right][color=#%s]Caves of Qud %s Copyright Freehold Games.\n"
 		+ "All rights reserved.\n"
 		+ "Build %s[/color]\n"
 		+ "[color=#%s]" + Brand.GAME_NAME + " mod %s %s License.\n"
@@ -1039,11 +1026,47 @@ func _build_version() -> void:
 		mag, gold,
 		gold, mag,
 		gold, mag]
+
+func _build_version() -> void:
+	# The title is Qud's shape in both modes (clone_of_qud), so this divergence goes through
+	# the one sanctioned gate: the "versions" QoL feature. 1:1 always gets Qud's corner.
+	if Settings.qud_shape("versions"):
+		_build_version_qud()
+		return
+	# USER MODE: the versions at rest, the full notice on hover. The notice has not moved or
+	# changed colour — it is the same block, and the corner just stops shouting it at a player
+	# who has read it once. The Qud release/build come from Brand (measured off a title capture;
+	# see the TODO there about sourcing them live), and the mod and viewer share RAVES_VERSION
+	# because this repo versions them together.
+	var gold := QudPalette.COLORS["W"].to_html(false)
+	var mag := QudPalette.COLORS["M"].to_html(false)
+	var l := RichTextLabel.new()
+	l.bbcode_enabled = true
+	l.fit_content = true
+	l.scroll_active = false
+	l.autowrap_mode = TextServer.AUTOWRAP_OFF
+	l.theme_type_variation = "Caption"
+	# STOP, not IGNORE: the corner has to feel the pointer to expand. It is the only thing in
+	# this corner, so nothing loses a click to it.
+	l.mouse_filter = Control.MOUSE_FILTER_STOP
+	# A DROP SHADOW IN QUD'S FIELD COLOUR ('k', #0f3b3a): the corner sits over the title art,
+	# where gold on pale stone and magenta on teal both lose their edges. The shadow is the
+	# colour Qud paints behind everything, so it reads as the text sitting ON the world rather
+	# than as an effect laid over it.
+	l.add_theme_color_override("font_shadow_color", QudPalette.COLORS["k"])
+	l.add_theme_constant_override("shadow_offset_x", 2)
+	l.add_theme_constant_override("shadow_offset_y", 2)
+	l.add_theme_constant_override("shadow_outline_size", 2)
+	l.text = _ver_short(gold, mag)
+	l.mouse_entered.connect(func(): l.text = _ver_full(gold, mag))
+	l.mouse_exited.connect(func(): l.text = _ver_short(gold, mag))
 	add_child(l)
 	_place(l, "version")
 	# The block outgrows the layout rect in BOTH axes: growth runs LEFT so the right edge stays
-	# pinned in the corner (the one-line version walked off the screen without it), and UP so a
-	# seven-line block stacks above the corner instead of off the bottom (it did that too).
+	# pinned in the corner (the one-line version walked off the screen without it), and UP so the
+	# expanded block stacks above the corner instead of off the bottom (it did that too). Growing
+	# UP is also what makes the hover stable: the block expands AWAY from the pointer, so it
+	# cannot pull its own edge out from under the cursor and flap.
 	l.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	l.grow_vertical = Control.GROW_DIRECTION_BEGIN
 
