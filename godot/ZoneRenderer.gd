@@ -4994,10 +4994,9 @@ func _is_arch(tile: String) -> bool:
 ## upright billboard. A flat sprite of an arch, standing in the gap of a stone run. What it should
 ## be is the run CONTINUING, with a hole in it.
 ##
-## So the art's opaque pixels become geometry at FULL CELL DEPTH — the wall's own thickness — and
-## the transparent middle stays empty. One rule does both halves of the report: the arch reaches
-## the wall because it is as deep as the wall, and the opening stays open because there was never
-## anything there to build.
+## So the art's opaque pixels become geometry with real depth (ARCH_DEPTH_PX) and the transparent
+## middle stays empty. One rule does both halves of the report: the arch meets the wall on both
+## faces, and the opening stays open because there was never anything there to build.
 ##
 ## ONE COLOUR, because an extruded mask has no business wearing the sprite's shading. Faces and
 ## edges take the same material and the relief comes from the geometry, exactly as it does for the
@@ -5036,7 +5035,7 @@ func _place_arch(tile: String, main_c: String, _detail_c: String, cx: int, cy: i
 	# scaled over the arch's OWN rows, so its top reaches wall height — a derived shape sizes
 	# against the wall it joins, not against the 24 art rows it was drawn in
 	var row := func(r: float) -> float: return (float(y1) + 1.0 - r) / float(y1 - y0 + 1) * WALL_H
-	var d := 0.5   # HALF-depth: one full cell across, meeting the wall on both faces
+	var d := ARCH_DEPTH_PX * 0.5 / w   # half-depth, art px -> cell (the door's own idiom)
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	for b in boxes:
@@ -12387,6 +12386,16 @@ func _obj_detail(obj: Dictionary) -> Color:
 ## to 0.35, which on a dark sprite under a dim cell light came out as a few brown dots — Daniel,
 ## looking at it: "I need red on the character sprite." A stain is PAINT: the head of a run is the
 ## liquid's colour outright, and only the tail lets the art underneath show through.
+## HOW DEEP AN ARCHWAY IS, in art pixels. The first pass extruded it a full cell (16px, the tile's
+## own width) on the reasoning that "extend to the wall" meant as deep as the wall — Daniel:
+## "the arches need to be about 8 pixels deep, not the whole tile. Same height. Same artwork. Just
+## not extruded as much." So it still MEETS the wall on both faces, it is just a thinner piece of
+## it: an archway is a doorway in a wall, not a tunnel through one.
+##
+## Read as a fraction of the tile WIDTH, like the door's frame depth, so it stays 8/16 of a cell
+## whatever the art's pixel dimensions turn out to be.
+const ARCH_DEPTH_PX := 8.0
+
 const DRIP_HEAD := 1.0        ## the top of a run is pure stain
 const DRIP_TAIL := 0.55       ## ...and the bottom still reads as stain, not as a tint
 const DRIP_ROWS_MAX := 10     ## longest run, in art pixels
