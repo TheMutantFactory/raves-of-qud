@@ -225,6 +225,11 @@ func _card_gap_frac() -> float: return 0.014
 ## row in that space and Qud's frame stops short of it, so the banded screen tightens this rather
 ## than drawing its highlight straight through a header.
 func _sel_pad_top_frac() -> float: return 0.024
+## ...and how far it reaches BELOW the card. Hoisted out of _position_sel_frame so the cascade can
+## reserve the same number the frame draws with: this pad used to be a literal there, with a
+## comment claiming it "stops above the flavour line", and on a screen with tall cards it stopped
+## doing exactly that — the frame'"'"'s bottom edge crossed the first line of the description.
+func _sel_pad_bot_frac() -> float: return 0.0185
 
 ## The three-dot deco's measured HOME, as a fraction of viewport height. Qud puts it lower on the
 ## card screens than on the panel ones, which is why this is a hook and not a constant.
@@ -1077,7 +1082,7 @@ func _position_sel_frame() -> void:
 	var pl := vp.x * 0.024
 	var pr := vp.x * 0.024
 	var pt := vp.y * _sel_pad_top_frac()   # top edge lands on the subtitle line, as in Qud
-	var pb := vp.y * 0.0185  # bottom edge clears the hotkey and stops above the flavour line
+	var pb := vp.y * _sel_pad_bot_frac()   # clears the hotkey; the cascade reserves the same pad
 	# NEVER ABOVE THE TITLE. The frame is drawn from the card COLUMN, which grows with its own
 	# wrapped name, so on a screen with tall cards its top edge climbed into "character creation"
 	# and struck through the words. The cascade reserves the overhang; this is the guarantee.
@@ -1441,7 +1446,11 @@ func _layout_column() -> void:
 	var over: float = vp.y * _sel_pad_top_frac()
 	if _col_row != null and is_instance_valid(_col_row):
 		_col_row.position.y = maxf(maxf(y, vp.y * _y_cards()), _title_bottom + over)
-		y = _col_row.position.y + _row_height() + gap
+		# ...and reserve the frame'"'"'s LOWER overhang too, or the description starts inside it. Only
+		# when a frame is actually drawn: a banded screen highlights the card'"'"'s own border instead
+		# and has no overhang to clear.
+		var under: float = 0.0 if _sel_uses_card_frame() else vp.y * _sel_pad_bot_frac()
+		y = _col_row.position.y + _row_height() + under + gap
 	y = _stack(_desc, maxf(y, vp.y * _y_desc()), gap)
 	if _warn != null and is_instance_valid(_warn) and _warn.text != "":
 		y = _stack(_warn, y, gap)
