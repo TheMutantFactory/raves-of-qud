@@ -4483,13 +4483,22 @@ const STUCK_NOISE_PX := 1.0        ## "tiny": one art pixel
 const STUCK_NOISE_SPEED := 0.55
 
 var _stuck_now := false          ## the player is stuck this snapshot (drives the sprite bloom)
+var _stuck_in_web := false       ## ...and it really is a web, so Qud's web art is honest
 var _stuck_noise: GPUParticles3D
 
 func _is_stuck(data: Dictionary) -> bool:
+	_stuck_in_web = false
+	var stuck := false
 	for e in data.get("effects", []):
-		if QudText.strip(String(e.get("name", ""))).to_lower().contains("stuck"):
-			return true
-	return false
+		var nm := QudText.strip(String(e.get("name", ""))).to_lower()
+		if nm.contains("stuck"):
+			stuck = true
+			# "stuck in a web" vs "stuck in a pool of asphalt" — Qud's own wording is the only
+			# place the CAUSE survives, and the cause decides whether its web art is a lie.
+			# Spider silk keeps it; tar does not.
+			if nm.contains("web"):
+				_stuck_in_web = true
+	return stuck
 
 ## The glow + noise, built once and thereafter moved and toggled. Untracked, like the dust: this
 ## belongs to a STATE, not to a turn, and rebuilding it every step would restart the noise burst
@@ -12046,6 +12055,14 @@ func _register_sprite_anim(obj: Dictionary, s: Sprite3D, tile: String, base_tex:
 			continue
 		var axes := String(kv[1]).split(";")
 		var ftile := String(axes[0]) if axes.size() > 0 else ""
+		# NO SPIDERWEBS IN THE DESERT. Daniel, twice, then with a screenshot: "it's flashing."
+		# That word is what found it. A FLASHING web is not an object in the cell — the inspector
+		# showed none and the web tile had not been exported in a month — it is a FRAME in the
+		# player's own tile schedule, which is why looking at the CELL could never have found it.
+		# Qud draws its generic stuck art whatever is holding you, so being mired in asphalt
+		# flashes a cobweb. Drop the frame when the thing holding the player is not a web.
+		if _stuck_now and not _stuck_in_web and tile_family(ftile).contains("web"):
+			continue
 		var tex: Texture2D = base_tex
 		if ftile != "" and ftile != tile:
 			var ft := _colored_tex_rgb(ftile, _obj_main(obj), _obj_detail(obj),
