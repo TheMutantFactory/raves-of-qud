@@ -206,7 +206,7 @@ func _show_modal() -> void:
 	box.color = Color8(0x0A, 0x2E, 0x2D)
 	box.position = Vector2(vp.x * 0.5 - w * 0.5, vp.y * 0.455)
 	box.size = Vector2(w, h)
-	# CLICKABLE. Daniel: "the user can'"'"'t click the modal 'You embark for the Caves of Qud'. They
+	# CLICKABLE. Daniel: "the user can't click the modal 'You embark for the Caves of Qud'. They
 	# can only hit space." A box that says "press [Space]" is still a thing on screen that a
 	# player will click, and there is exactly one way out of it, so a click can only mean that.
 	# The hit target is the BOX, not the whole overlay: a click on the world-build text behind it

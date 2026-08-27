@@ -273,12 +273,12 @@ func _build() -> void:
 	dim.color = dc
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	dim.mouse_filter = Control.MOUSE_FILTER_STOP
-	# CLICK THE MODAL. Daniel: "the user can'"'"'t click the modal 'You embark for the Caves of Qud'.
+	# CLICK THE MODAL. Daniel: "the user can't click the modal 'You embark for the Caves of Qud'.
 	# They can only hit space." Qud sends that one with an EMPTY buttons array — it is a plain
 	# message whose only exit is Accept — so there was no button to click, and the row that would
 	# normally carry the clickable cells was empty.
 	#
-	# The dimmer is where this belongs: the panel'"'"'s own children are IGNORE, so a click anywhere
+	# The dimmer is where this belongs: the panel's own children are IGNORE, so a click anywhere
 	# over the box falls through to here, while the button cells and menu rows (both STOP) still
 	# take their own clicks first and are unaffected.
 	dim.gui_input.connect(_on_dim_click)
@@ -1124,7 +1124,7 @@ func _highlight_option() -> void:
 
 ## A click on the popup box, for the popups where a click can only mean one thing.
 ##
-## Deliberately NOT a blanket "click anywhere to dismiss": a menu popup'"'"'s rows and a confirm'"'"'s
+## Deliberately NOT a blanket "click anywhere to dismiss": a menu popup's rows and a confirm's
 ## two buttons are already clickable individually, and accepting one of several answers because
 ## the click missed them would answer FOR the player. So this fires only when there is a single
 ## way out — no option list, no text field, at most one button — and only inside the box, not on

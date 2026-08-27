@@ -432,7 +432,7 @@ func _check_camera_game(data: Dictionary) -> void:
 		return
 	# INCLUDING from "" — the empty stored id means the saved camera belongs to no game we can
 	# name, which is exactly the case where it should not be inherited. Skipping it was why a
-	# fresh session'"'"'s first game still came up in whatever mode the file happened to hold.
+	# fresh session's first game still came up in whatever mode the file happened to hold.
 	if _cam_rig != null:
 		_cam_rig._compass_yaw = _cam_rig.COMPASS_YAW_DEFAULT
 		# ...and through _set_mode, not by assigning _mode: that is what lays the billboards down,

@@ -130,7 +130,8 @@ var _body_bot := 0.0          # panel screens: the bottom of their own content (
 var _body_nodes: Array = []   # panel screens: everything their body drew, so the cascade can push it
 var _body_top_home := 0.0     # ...and the y its first row was built at
 var _title_bottom := 0.0      # filled by the cascade; the selection frame may not rise above it
-var _sub_top := 0.0           # ...and prefers to sit above this, in the title-to-subtitle gap
+var _sub_top := 0.0           # the subtitle row; the frame is kept BELOW it (see _layout_column)
+var _sub_bottom := 0.0
 var _refusal: Control      # the red X flashed over a refused card
 ## Qud's own red — its palette 'R' (#d74200), not a hand-picked one, so the X belongs to the
 ## same 18 colours as everything else on screen.
@@ -228,7 +229,7 @@ func _sel_pad_top_frac() -> float: return 0.024
 ## ...and how far it reaches BELOW the card. Hoisted out of _position_sel_frame so the cascade can
 ## reserve the same number the frame draws with: this pad used to be a literal there, with a
 ## comment claiming it "stops above the flavour line", and on a screen with tall cards it stopped
-## doing exactly that — the frame'"'"'s bottom edge crossed the first line of the description.
+## doing exactly that — the frame's bottom edge crossed the first line of the description.
 func _sel_pad_bot_frac() -> float: return 0.0185
 
 ## The three-dot deco's measured HOME, as a fraction of viewport height. Qud puts it lower on the
@@ -280,7 +281,7 @@ func _build_screen() -> void:
 		_build_guide()
 	_init_sel_frame_deferred()   # awaits layout, then boxes the selected card
 	# EVERY screen, not just the card ones: _build_center draws the title and subtitle for all of
-	# them, and a panel screen'"'"'s deco has the same job to do as a card screen'"'"'s.
+	# them, and a panel screen's deco has the same job to do as a card screen's.
 	_layout_column.call_deferred()
 
 ## RESPONSIVE, by rebuilding. Every row on this screen is sized and placed from the viewport at
@@ -1086,14 +1087,11 @@ func _position_sel_frame() -> void:
 	# NEVER ABOVE THE TITLE. The frame is drawn from the card COLUMN, which grows with its own
 	# wrapped name, so on a screen with tall cards its top edge climbed into "character creation"
 	# and struck through the words. The cascade reserves the overhang; this is the guarantee.
-	# The rail wants the GAP between the title and the subtitle: below the title'"'"'s ink, above the
-	# subtitle'"'"'s. Clamped to the title first, because clearing the title is the guarantee and
-	# missing the subtitle is only the preference — when the gap is too small for both, the
-	# subtitle is the one Qud draws inside the frame anyway.
-	var top: float = maxf(r.position.y - pt, _title_bottom + 2.0)
-	if _sub_top > _title_bottom + 4.0:
-		top = minf(top, _sub_top - 2.0)
-	top = maxf(top, _title_bottom + 2.0)
+	# BELOW THE SUBTITLE, always. The cascade reserves the overhang under the ":choose …:" line
+	# (see _layout_column, and the divergence note there), and this is the guarantee: whatever the
+	# cards do, the frame's top edge never climbs into the menu name — nor, therefore, into the
+	# title above it.
+	var top: float = maxf(r.position.y - pt, _sub_bottom + 2.0)
 	_sel_frame.position = Vector2(r.position.x - pl, top)
 	_sel_frame.size = Vector2(r.size.x + pl + pr, r.position.y + r.size.y + pb - top)
 	_sel_frame.modulate = BRIGHT_GOLD if (_onboard_active and _sel == onboard_index) else SEL_GOLD
@@ -1428,6 +1426,7 @@ func _layout_column() -> void:
 	_title_bottom = y - gap
 	_sub_top = maxf(y, vp.y * (_y_subtitle() + SUB_EXTRA))
 	y = _stack(_col_sub, _sub_top, gap)
+	_sub_bottom = y - gap
 	# A PANEL BODY MOVES AS A BLOCK. Its rows are built at measured offsets relative to each other,
 	# so the cascade must not re-place them individually — but it does have to push the whole block
 	# clear of a header that has grown. Without this the widened title gap slid the subtitle down
@@ -1440,14 +1439,19 @@ func _layout_column() -> void:
 					(n as Control).position.y += shift
 			_body_bot += shift
 			_body_top_home += shift
-	# THE SELECTION FRAME reaches ABOVE the card row, and that overhang is what was landing on the
-	# title. Reserve it here so the frame has somewhere to be. Qud lets the frame enclose the
-	# SUBTITLE, so only the title has to be cleared.
+	# THE SELECTION FRAME reaches ABOVE the card row, and that overhang has to go somewhere.
+	#
+	# A DELIBERATE DIVERGENCE FROM QUD (Daniel, 2026-08-26). Qud draws its frame AROUND the
+	# ":choose …:" line — measured off its own Choose Starting Location, brackets either side of
+	# the subtitle — and Raves reproduced that faithfully. Daniel wants the menu name clear of it:
+	# "the selection frame is overlapping the menu type." So the row reserves the overhang below
+	# the SUBTITLE now rather than below the title, and _position_sel_frame clamps to match.
+	# Clearing the subtitle clears the title as well, so the old title clamp is subsumed.
 	var over: float = vp.y * _sel_pad_top_frac()
 	if _col_row != null and is_instance_valid(_col_row):
-		_col_row.position.y = maxf(maxf(y, vp.y * _y_cards()), _title_bottom + over)
-		# ...and reserve the frame'"'"'s LOWER overhang too, or the description starts inside it. Only
-		# when a frame is actually drawn: a banded screen highlights the card'"'"'s own border instead
+		_col_row.position.y = maxf(maxf(y, vp.y * _y_cards()), _sub_bottom + gap + over)
+		# ...and reserve the frame's LOWER overhang too, or the description starts inside it. Only
+		# when a frame is actually drawn: a banded screen highlights the card's own border instead
 		# and has no overhang to clear.
 		var under: float = 0.0 if _sel_uses_card_frame() else vp.y * _sel_pad_bot_frac()
 		y = _col_row.position.y + _row_height() + under + gap
