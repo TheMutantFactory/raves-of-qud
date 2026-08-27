@@ -102,6 +102,12 @@ func _ready() -> void:
 	_rt.focus_mode = Control.FOCUS_NONE   # reaching the player (the command-bar rule)
 	# a RichTextLabel only reports [url] clicks when it can feel the mouse at all
 	_rt.mouse_filter = Control.MOUSE_FILTER_STOP
+	# ...but NOT underlined. Daniel: "now they are underlined. I don't want the underline."
+	# The underline is RichTextLabel's default for a [url] and it earns its keep on the footer
+	# hints, where it marks which words of a sentence do something. A list where every actionable
+	# row is a link does not need marking — the rows ARE the affordance, and underlining all of
+	# them just adds a rule under every name.
+	_rt.meta_underlined = false
 	_rt.meta_clicked.connect(func(meta: Variant): object_activated.emit(String(meta)))
 	_rt.size_flags_vertical = Control.SIZE_SHRINK_BEGIN   # height comes from _fit_user_height
 	_rt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
