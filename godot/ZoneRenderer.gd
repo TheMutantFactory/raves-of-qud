@@ -4264,14 +4264,37 @@ func _smoke_on() -> bool:
 # that is how the spec is written — a particle is on for 2..6 tiles, so the velocity range and the
 # lifetime are derived from that pair rather than tuned independently and hoped to agree.
 const DUST_PX := 2.0             ## 2x2 art pixels
-const DUST_LIFE := 3.0           ## seconds a mote lives
-const DUST_TILES_MIN := 2.0      ## ...over which it crosses this many tiles
-const DUST_TILES_MAX := 6.0
+## SLOWER, both ends. Daniel: "lower the maximum velocity and the minimum velocity." Done by
+## lengthening the LIFE rather than shortening the distances, because the distances are his earlier
+## observation of the effect ("on for about 2-6 horizontal tiles") and the speeds are not — a mote
+## still crosses the same ground, it just takes longer over it. 3.0s -> 5.0s is 40% off both ends.
+const DUST_LIFE := 5.0           ## seconds a mote lives
+const DUST_TILES_MIN := 2.0      ## the SLOWEST row crosses this many tiles in that time
 const DUST_AMOUNT := 220         ## motes alive across a zone (80x25)
 const DUST_H_MIN := 0.05         ## it blows along the ground, not overhead
 const DUST_H_MAX := 0.55
+const DUST_ROW_JITTER := 0.06    ## speed spread WITHIN a row, so motes still differ from each other
 
-var _dust: GPUParticles3D
+## ONE PRIME PER ZONE ROW, and they are the row speeds' RATIOS, not multipliers of a base.
+##
+## Daniel: "use prime numbers to create natural patterns that don't repeat. Use a different base
+## number for each zone row. Can you figure out something workable, or are the numbers too big?"
+##
+## They are not too big, because NOTHING EVER EVALUATES THE PERIOD. Two rows whose speeds are
+## distinct primes fall back into step only after p_i * p_j lifetimes; across 25 rows the whole
+## field realigns after the product of all 25, about 1e32 lifetimes. "Never repeats" is therefore
+## free at runtime — it is a property of the choice of numbers, not something computed.
+##
+## The real constraint runs the other way: a prime cannot MULTIPLY a base speed, or row 25 would
+## blow three times faster than dust has any business moving. So the primes are mapped through as
+## ratios inside the speed band — row speed = TILES_MIN * p / p[0] — which keeps p_i/p_j exactly
+## and lands the band at 2.00 .. 5.70 tiles. That is the reason for choosing 25 primes spanning a
+## ~3x ratio (67..191, ratio 2.851): the ratio of the SET is what sets the top of the band, and it
+## had to match the 2..6 tiles the effect was specified with.
+const DUST_PRIMES := [67, 71, 73, 79, 83, 89, 97, 101, 103, 107, 109, 113, 127,
+	131, 137, 139, 149, 151, 157, 163, 167, 173, 179, 181, 191]
+
+var _dust_rows: Array = []       ## one emitter per zone row, each with its own prime
 var _dust_on := false
 
 ## Which zones blow dust. Qud names its zones ("salt dunes", "desert canyon", "salt marsh,
@@ -4289,12 +4312,21 @@ func _dusty(terrain: String) -> bool:
 			return true
 	return false
 
-## The zone's dust, created once and then only toggled. NOT tracked for per-turn cleanup: it is a
-## property of the place, not of the turn, and rebuilding an emitter every step would restart every
-## mote's life in lockstep — which reads as a pulse, not as wind.
-func _ensure_dust() -> void:
-	if _dust != null and is_instance_valid(_dust):
+## One emitter PER ZONE ROW, created once and thereafter only pointed and toggled. Not tracked for
+## per-turn cleanup: the wind is a property of the place, not of the turn, and rebuilding the
+## emitters every step would restart every mote's life in lockstep — which reads as a pulse rather
+## than as wind, and would also destroy the whole point of the primes by re-syncing the rows.
+func _ensure_dust(rows: int) -> void:
+	if _dust_rows.size() == rows:
 		return
+	for d in _dust_rows:
+		if d != null and is_instance_valid(d):
+			d.queue_free()
+	_dust_rows.clear()
+	for r in rows:
+		_dust_rows.append(_make_dust_row(r))
+
+func _make_dust_row(r: int) -> GPUParticles3D:
 	var mesh := QuadMesh.new()
 	mesh.size = Vector2(DUST_PX * PIXEL_SIZE, DUST_PX * PIXEL_SIZE)
 	var mat := StandardMaterial3D.new()
@@ -4303,49 +4335,55 @@ func _ensure_dust() -> void:
 	mat.blend_mode = BaseMaterial3D.BLEND_MODE_MIX
 	mat.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
 	mat.billboard_keep_scale = true          # 2x2 pixels means 2x2 pixels, at any camera angle
-	mat.vertex_color_use_as_albedo = true    # the ramp below drives colour AND alpha
+	mat.vertex_color_use_as_albedo = true    # the ramp drives colour AND alpha
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	mat.render_priority = 2                  # same reason as the smoke: after the wall mesh
 	mesh.material = mat
 	var pm := ParticleProcessMaterial.new()
 	pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
 	pm.direction = Vector3(1, 0, 0)          # WEST TO EAST: cells map to world x east, y south
-	pm.spread = 4.0                          # a few degrees, so the field is not a comb
+	pm.spread = 3.0
 	pm.gravity = Vector3.ZERO
-	# DIFFERENT SPEEDS, and the range IS the 2..6 tiles: distance = velocity * life.
-	pm.initial_velocity_min = DUST_TILES_MIN * CELL / DUST_LIFE
-	pm.initial_velocity_max = DUST_TILES_MAX * CELL / DUST_LIFE
+	# THIS ROW'S PRIME, as a ratio inside the band (see DUST_PRIMES). The jitter keeps motes within
+	# a row from marching in step with each other without disturbing the row's own base.
+	var prime: float = float(DUST_PRIMES[r % DUST_PRIMES.size()])
+	var tiles: float = DUST_TILES_MIN * prime / float(DUST_PRIMES[0])
+	var v: float = tiles * CELL / DUST_LIFE
+	pm.initial_velocity_min = v * (1.0 - DUST_ROW_JITTER)
+	pm.initial_velocity_max = v * (1.0 + DUST_ROW_JITTER)
 	pm.scale_min = 0.8
 	pm.scale_max = 1.2
-	_dust = GPUParticles3D.new()
-	_dust.draw_pass_1 = mesh
-	_dust.process_material = pm
-	_dust.amount = DUST_AMOUNT
-	_dust.lifetime = DUST_LIFE
-	_dust.preprocess = DUST_LIFE             # arrive mid-flight, not as a wave from the west edge
-	_dust.visible = false
-	_dust.emitting = false
-	add_child(_dust)
+	var g := GPUParticles3D.new()
+	g.draw_pass_1 = mesh
+	g.process_material = pm
+	g.lifetime = DUST_LIFE
+	# STAGGERED PREPROCESS, by the row's own prime. Identical preprocess on every row would start
+	# them all at the same phase, which is exactly the lockstep the primes exist to avoid — they
+	# would drift apart eventually, but the first few seconds after a zone loads are when someone
+	# is looking at it.
+	g.preprocess = DUST_LIFE * (0.15 + 0.85 * fmod(prime * 0.37, 1.0))
+	g.visible = false
+	g.emitting = false
+	add_child(g)
+	return g
 
 ## Point the dust at the live zone and switch it on or off. Called every snapshot; cheap when
-## nothing changed, because the emitter is reused.
+## nothing changed, because the emitters are reused.
 func _update_dust(data: Dictionary) -> void:
 	var stats: Dictionary = data.get("stats", {})
 	var terrain := QudText.strip(String(stats.get("terrain", "")))
 	# USER MODE ONLY. 1:1 is Qud's own screen and Qud blows no dust across it.
 	var want: bool = _dusty(terrain) and not _one_to_one and not _flat_2d and not _world_map
 	if not want:
-		if _dust != null and is_instance_valid(_dust):
-			_dust.emitting = false
-			_dust.visible = false
+		for d in _dust_rows:
+			if d != null and is_instance_valid(d):
+				d.emitting = false
+				d.visible = false
 		_dust_on = false
 		return
-	_ensure_dust()
 	var w: float = maxf(_live_w, 1.0)
-	var h: float = maxf(_live_h, 1.0)
-	var pm := _dust.process_material as ParticleProcessMaterial
-	# the whole zone, in a low band above the floor
-	pm.emission_box_extents = Vector3(w * 0.5, (DUST_H_MAX - DUST_H_MIN) * 0.5, h * 0.5)
+	var rows: int = int(maxf(_live_h, 1.0))
+	_ensure_dust(rows)
 	# FADES OUT TO THE BG COLOUR, which is what the field reads as when nothing covers it — the
 	# same choice the memory wash and the door-frame cap make. Teal-grey through, alpha in and out
 	# so a mote neither pops into existence nor snaps off at the end of its run.
@@ -4361,10 +4399,19 @@ func _update_dust(data: Dictionary) -> void:
 		Color(bg.r, bg.g, bg.b, 0.0)])
 	var gt := GradientTexture1D.new()
 	gt.gradient = grad
-	pm.color_ramp = gt
-	_dust.position = Vector3(w * 0.5 - 0.5, FLOOR_Y + (DUST_H_MIN + DUST_H_MAX) * 0.5, h * 0.5 - 0.5)
-	_dust.visible = true
-	_dust.emitting = true
+	var per: int = maxi(1, int(round(float(DUST_AMOUNT) / float(rows))))
+	for r in rows:
+		var d: GPUParticles3D = _dust_rows[r]
+		if d == null or not is_instance_valid(d):
+			continue
+		var pm := d.process_material as ParticleProcessMaterial
+		# the row is one cell deep and the whole zone wide
+		pm.emission_box_extents = Vector3(w * 0.5, (DUST_H_MAX - DUST_H_MIN) * 0.5, 0.5)
+		pm.color_ramp = gt
+		d.amount = per
+		d.position = Vector3(w * 0.5 - 0.5, FLOOR_Y + (DUST_H_MIN + DUST_H_MAX) * 0.5, float(r))
+		d.visible = true
+		d.emitting = true
 	_dust_on = true
 
 func _build_smoke_resources() -> void:
