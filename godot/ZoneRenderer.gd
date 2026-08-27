@@ -1042,6 +1042,11 @@ func render_snapshot(data: Dictionary, neighbors: Array = []) -> void:
 	# player's own sprite (see _add_glow at the billboard build), which is what "the glow effect
 	# as on a glowfish" means — a bloom over the silhouette, not a mark on the ground.
 	_update_stuck(data)
+	# ...and a lurch, if Qud just said the last attempt to move failed.
+	if _stuck_now and _stuck_bumped(data):
+		_begin_bump.call_deferred()   # deferred: the dynamic pass re-seats the sprite this frame
+	elif not _stuck_now:
+		_stuck_bumped(data)           # keep the message counter current while free
 
 ## Build one zone's STATIC geometry (walls + non-creature nonwalls + lights) into the
 ## current bank, cells shifted by `offset`. `skip_creatures` drops mobile actors —
@@ -4548,6 +4553,93 @@ func _update_stuck(data: Dictionary) -> void:
 	_stuck_noise.visible = true
 	_stuck_noise.emitting = true
 
+## THE STUCK BUMP. Daniel: "when you're stuck and you try to move and you don't succeed, I'd love to
+## see a movement bump out and back to stuck. When that happens the outer glow expands at the
+## apogee."
+##
+## The trigger is Qud's OWN WORDS, not an inference. A failed move while stuck prints "You are stuck
+## in a pool of asphalt!", so the bump fires when a NEW message says so — which means it fires
+## exactly when Qud says the attempt failed, never on a turn spent doing something else, and never
+## on a move that worked.
+const BUMP_DUR := 0.34        ## out and back
+const BUMP_REACH := 0.30      ## cells, at the apogee
+const BUMP_GLOW := 1.9        ## halo multiplier at the apogee — the glow "expands"
+var _bump_t := 0.0            ## counts DOWN through the bump
+var _bump_node: Node3D        ## the player's billboard, captured when the bump starts
+var _bump_home := Vector3.ZERO
+var _bump_dir := Vector3.RIGHT
+var _bump_mat: ShaderMaterial ## its glow quad's material, so the halo can swell with it
+var _bump_halo := 1.5
+var _msg_count := -1
+
+## Did Qud just say the player failed to move? Reads the message tail, and only the part that is
+## NEW since the last snapshot — a "stuck" line still sitting in the log is not a fresh attempt.
+func _stuck_bumped(data: Dictionary) -> bool:
+	var total := int(data.get("msgCount", 0))
+	var prev := _msg_count
+	_msg_count = total
+	if prev < 0 or total <= prev:
+		return false
+	var lines: Array = data.get("messages", [])
+	var fresh: int = mini(total - prev, lines.size())
+	for i in range(lines.size() - fresh, lines.size()):
+		if i < 0:
+			continue
+		if QudText.strip(String(lines[i])).to_lower().contains("you are stuck"):
+			return true
+	return false
+
+## Start a bump on the player's billboard. The node is captured HERE rather than looked up each
+## frame: sprites are pooled and re-seated every turn, but a bump is a third of a second inside one
+## turn, so the node that was the player when it started is the node for its whole life.
+func _begin_bump() -> void:
+	if _dynamic_root == null or _player_cell.x < -9000:
+		return
+	var px := float(_player_cell.x)
+	var pz := float(_player_cell.y)
+	_bump_node = null
+	_bump_mat = null
+	for c in _dynamic_root.get_children():
+		var n3 := c as Node3D
+		if n3 == null:
+			continue
+		if absf(n3.position.x - px) <= 0.5 and absf(n3.position.z - pz) <= 0.5:
+			_bump_node = n3
+			for g in n3.get_children():
+				var mi := g as MeshInstance3D
+				if mi != null and mi.material_override is ShaderMaterial:
+					_bump_mat = mi.material_override as ShaderMaterial
+					_bump_halo = float(_bump_mat.get_shader_parameter("halo_amt"))
+			break
+	if _bump_node == null:
+		return
+	_bump_home = _bump_node.position
+	# lurch the way the sprite faces, so it reads as an attempt to go somewhere rather than a twitch
+	_bump_dir = Vector3(-1.0 if _player_hflip else 1.0, 0.0, 0.0)
+	_bump_t = BUMP_DUR
+
+## Out and back, with the glow swelling at the apogee. One sine hump does both: it is zero at each
+## end and one in the middle, which is exactly the shape of "out and back" and of "expands at the
+## apogee" — so the two cannot drift out of step.
+func _animate_bump(dt: float) -> void:
+	if _bump_t <= 0.0:
+		return
+	_bump_t -= dt
+	if _bump_node == null or not is_instance_valid(_bump_node):
+		_bump_t = 0.0
+		return
+	if _bump_t <= 0.0:
+		_bump_node.position = _bump_home
+		if _bump_mat != null:
+			_bump_mat.set_shader_parameter("halo_amt", _bump_halo)
+		_bump_node = null
+		_bump_mat = null
+		return
+	var hump: float = sin(PI * (1.0 - _bump_t / BUMP_DUR))
+	_bump_node.position = _bump_home + _bump_dir * (BUMP_REACH * hump)
+	if _bump_mat != null:
+		_bump_mat.set_shader_parameter("halo_amt", _bump_halo * lerpf(1.0, BUMP_GLOW, hump))
+
 func _build_smoke_resources() -> void:
 	# A flat grey square, billboarded — matches Qud's pixel smoke rather than a soft puff.
 	var sm := StandardMaterial3D.new()
@@ -5134,6 +5226,7 @@ func _process(_dt: float) -> void:
 		_animate_1to1()          # Qud's per-frame render programs (blinks, flashes, sparkles)
 	_animate_float(_dt)          # ...and anything riding above its cell (see FLY_LIFT)
 	_animate_dust(_dt)           # the zone's wind rising and falling (see DUST_LFO_PERIODS)
+	_animate_bump(_dt)           # a stuck player lurching against whatever holds them
 	_aim_held()                  # ...and the torch, which is offset in SCREEN space
 	if _ib_active:
 		_ib_step()               # advance the incremental live-static build one chunk per frame
