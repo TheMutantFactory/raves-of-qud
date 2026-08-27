@@ -215,6 +215,7 @@ func _ready() -> void:
 	# The cursor's verb (boots / speech bubble / hand / stairs arrow) — see MouseAssist.
 	_assist = load("res://MouseAssist.gd").new()
 	add_child(_assist)
+	_assist.setup(renderer)   # the box + billboard live under the renderer, for its z-stretch
 	# The name-plates sit on their own HUD layer, which no modal covers — so they have to stand
 	# down themselves. Same predicate the rest of the app asks (see _modal_owns_input), plus the
 	# tombstone, which is the one full-screen thing that is not a modal.
@@ -956,22 +957,17 @@ func _walk_answer(d: String) -> bool:
 ## frames to draw them in. The position is read from the viewport rather than remembered from an
 ## event, so it stays right when the world moves under a still pointer.
 func _assist_step() -> void:
-	if _assist == null or not _assist.enabled():
+	if _assist == null:
+		return
+	if not _assist.enabled():
+		_assist.hover(Vector2.ZERO, null)   # feature off mid-session: put the system arrow back
 		return
 	var pos: Vector2 = get_viewport().get_mouse_position()
 	var cell = _playfield_cell(pos)
 	# THE ICON MARKS THE TILE, so it is placed from the TILE — unprojected the same way `screenpos`
 	# does it — rather than from the pointer. Anchoring it to the cursor meant it moved within the
 	# tile as the pointer did, and sat under the arrow while it was there.
-	var at := pos
-	if cell != null and _cam_rig != null and _cam_rig._cam != null:
-		# A WHOLE CELL ABOVE THE GROUND, in WORLD units rather than screen pixels: the pointer can be
-		# anywhere inside the tile it is standing in, so any fixed pixel lift is only clear of it at
-		# the zoom it was chosen at. One unit up is one tile up at every zoom, which is more than the
-		# pointer can ever be from the tile's own centre.
-		at = _cam_rig._cam.unproject_position(
-			Vector3(float(cell.x), 1.0, float(cell.y) * _cam_rig.zstretch()))
-	_assist.hover(at, cell)
+	_assist.hover(pos, cell)
 
 ## Move the player relative to the camera. `intent` is (strafe, forward) in screen
 ## space: (0,1)=forward, (0,-1)=back, (1,0)=right, (-1,0)=left.

@@ -23,17 +23,25 @@ extends Node
 
 signal verb_changed(verb: String)
 
-const ICON_PX := 22.0
-## The icon marks the TILE, not the pointer — Daniel's own words were "the target tile is shown with
-## shoes/boots icon" — and riding the cursor put it exactly where the arrow's body lies: "The main
-## mouse pointer is occluding the boots cursor image." A macOS arrow points up-left and fills the
-## space down-right of its hotspot, so the icon hangs ABOVE the tile, which is the one direction
-## always clear of it. `at` arrives already lifted a whole world unit (see Main._assist_step); this
-## is the last few pixels of air under it.
-const ICON_LIFT := 2.0
+## IN THE TILE, AT TILE SCALE. Daniel: "The sprite is too big. Let's draw a box outline of the
+## selected tile and put the sprite as a billboard in that tile."
+##
+## Two presentations came before this and each said the wrong thing. A 2D marker floating above the
+## tile read as DISTANCE in a perspective view — "it looks like you're walking to the cell behind".
+## A hardware cursor at 32x48 was simply a large cursor, and it lived in screen space where the
+## thing it describes lives in the world.
+##
+## A box on the ground says WHICH TILE with no ambiguity at all, because it is drawn on that tile;
+## the sprite stands inside it at the size everything else in that cell is drawn at, so it reads as
+## a thing in the world rather than an annotation over it.
+const BOX_COLOR := Color(0.72, 0.84, 0.81, 0.85)
+const BOX_LIFT := 0.012        # clear of the floor quads, under everything that stands on them
+const SPRITE_PX := 0.9         # a hair under a cell: unmistakably inside the box it sits in
+const SPRITE_Y := 0.55         # standing in the tile, not lying on it
 
-var _hud: CanvasLayer
-var _icon: TextureRect
+var _box: MeshInstance3D       # the footprint outline, parented under the renderer
+var _mark: Sprite3D            # the verb, standing in the tile
+var _renderer: Node3D
 var _tiles: RefCounted
 var _cells := {}               # "x,y" -> Array of objects, from the live snapshot
 var _verb := ""
@@ -43,15 +51,25 @@ var tiles_dir := ""
 
 func _ready() -> void:
 	_tiles = load("res://QudTiles.gd").new()
-	_hud = CanvasLayer.new()
-	_hud.name = "MouseAssist"
-	_hud.layer = 2               # over the 3D and the beacon plates, under the frame chrome
-	add_child(_hud)
-	_icon = TextureRect.new()
-	_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	_icon.visible = false
-	_hud.add_child(_icon)
+
+## PARENTED UNDER THE RENDERER, the way the inspector's own marker is: that is what makes the box
+## inherit the z-stretch in top-down and stay square with the cells it is drawn over.
+func setup(renderer: Node3D) -> void:
+	_renderer = renderer
+	var host: Node = renderer if renderer != null else self
+	_box = MeshInstance3D.new()
+	_box.mesh = _box_mesh()
+	_box.material_override = _line_material()
+	_box.visible = false
+	host.add_child(_box)
+	_mark = Sprite3D.new()
+	_mark.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	_mark.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	_mark.shaded = false
+	_mark.no_depth_test = true      # a hint about a tile you can see is not itself hidden by it
+	_mark.render_priority = 3
+	_mark.visible = false
+	host.add_child(_mark)
 
 ## ON in user mode, never in parity mode: Qud's cursor says nothing, and 1:1 says what Qud says.
 func enabled() -> bool:
@@ -78,17 +96,27 @@ func hover(at: Vector2, cell: Variant) -> void:
 	if v != _verb or c != _cell:
 		_cell = c
 		_verb = v
-		if v != "":
-			_icon.texture = _icon_for(v)
 		verb_changed.emit(v)
-	_icon.visible = v != ""
-	if _icon.visible:
-		_icon.size = Vector2(ICON_PX, ICON_PX)
-		_icon.position = at - Vector2(ICON_PX * 0.5, ICON_PX + ICON_LIFT)
+	if _box == null:
+		return
+	var show: bool = v != ""
+	_box.position = Vector3(float(c.x), 0.0, float(c.y))
+	_box.visible = show
+	_mark.position = Vector3(float(c.x), SPRITE_Y, float(c.y))
+	_mark.visible = show
+	if show:
+		var tex := _icon_for(v)
+		_mark.texture = tex
+		# Scaled to the CELL, not to the art: the boots tile is 16x24 and the hand 16x18, and a
+		# shared pixel_size would draw them at two different heights in the same box.
+		if tex != null and tex.get_height() > 0:
+			_mark.pixel_size = SPRITE_PX / float(tex.get_height())
 
 func _clear() -> void:
-	if _icon != null:
-		_icon.visible = false
+	if _box != null:
+		_box.visible = false
+	if _mark != null:
+		_mark.visible = false
 	if _verb != "":
 		_verb = ""
 		verb_changed.emit("")
@@ -157,6 +185,33 @@ func _icon_for(v: String) -> Texture2D:
 	if tex != null:
 		_icons[v] = tex
 	return tex
+
+## The footprint outline: a square line loop just clear of the floor, in cell-local space so the
+## instance can simply be moved to the cell.
+func _box_mesh() -> ArrayMesh:
+	var y := ZoneRenderer.FLOOR_Y + BOX_LIFT
+	var h := 0.5
+	var c := [Vector3(-h, y, -h), Vector3(h, y, -h), Vector3(h, y, h), Vector3(-h, y, h)]
+	var pts := PackedVector3Array()
+	for i in 4:
+		pts.append(c[i])
+		pts.append(c[(i + 1) % 4])
+	var mesh := ArrayMesh.new()
+	var arr := []
+	arr.resize(Mesh.ARRAY_MAX)
+	arr[Mesh.ARRAY_VERTEX] = pts
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_LINES, arr)
+	return mesh
+
+func _line_material() -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.vertex_color_use_as_albedo = false
+	m.albedo_color = BOX_COLOR
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.no_depth_test = true     # the tile you are pointing at is one you can see
+	m.render_priority = 3
+	return m
 
 func _title_png(fname: String) -> Texture2D:
 	var path := InputModel.support_dir().path_join("title").path_join(fname)
