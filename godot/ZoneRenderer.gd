@@ -1033,6 +1033,9 @@ func render_snapshot(data: Dictionary, neighbors: Array = []) -> void:
 	# Parasang-scale surface landmarks (giant Spindle / Red Rock) at their world offset.
 	_rebuild_landmarks(data.get("zone", {}))
 
+	# ...and the wind, if this is a zone that has any. See _update_dust.
+	_update_dust(data)
+
 ## Build one zone's STATIC geometry (walls + non-creature nonwalls + lights) into the
 ## current bank, cells shifted by `offset`. `skip_creatures` drops mobile actors —
 ## always true here; creatures render separately in _rebuild_dynamics. Inspector
@@ -4251,6 +4254,119 @@ func _smoke_on() -> bool:
 
 ## Build the shared draw-mesh + process material once; every sconce's emitter reuses them
 ## (each GPUParticles3D still has its own seed, so plumes aren't in lockstep).
+# ── desert dust ────────────────────────────────────────────────────────────────
+#
+# Daniel's spec, verbatim: "2x2 pixels in teal/grey. The particles have different speeds, they all
+# move in the wind direction which is west to east. They fade out to the bg color. They seem to be
+# on for about 2-6 horizontal tiles."
+#
+# Every number below is one of those sentences. The lifetime is expressed as a DISTANCE because
+# that is how the spec is written — a particle is on for 2..6 tiles, so the velocity range and the
+# lifetime are derived from that pair rather than tuned independently and hoped to agree.
+const DUST_PX := 2.0             ## 2x2 art pixels
+const DUST_LIFE := 3.0           ## seconds a mote lives
+const DUST_TILES_MIN := 2.0      ## ...over which it crosses this many tiles
+const DUST_TILES_MAX := 6.0
+const DUST_AMOUNT := 220         ## motes alive across a zone (80x25)
+const DUST_H_MIN := 0.05         ## it blows along the ground, not overhead
+const DUST_H_MAX := 0.55
+
+var _dust: GPUParticles3D
+var _dust_on := false
+
+## Which zones blow dust. Qud names its zones ("salt dunes", "desert canyon", "salt marsh,
+## surface"), so the terrain string is the honest source — a marsh is wet and gets none. Keyword
+## list rather than an enum because Qud's names are prose and this is a one-line edit when a zone
+## turns out to belong on it.
+const DUST_TERRAIN := ["desert", "dune", "canyon", "waste", "flats", "sand", "scrub"]
+
+func _dusty(terrain: String) -> bool:
+	var t := terrain.to_lower()
+	if t.contains("marsh") or t.contains("river") or t.contains("water"):
+		return false
+	for k in DUST_TERRAIN:
+		if t.contains(k):
+			return true
+	return false
+
+## The zone's dust, created once and then only toggled. NOT tracked for per-turn cleanup: it is a
+## property of the place, not of the turn, and rebuilding an emitter every step would restart every
+## mote's life in lockstep — which reads as a pulse, not as wind.
+func _ensure_dust() -> void:
+	if _dust != null and is_instance_valid(_dust):
+		return
+	var mesh := QuadMesh.new()
+	mesh.size = Vector2(DUST_PX * PIXEL_SIZE, DUST_PX * PIXEL_SIZE)
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.blend_mode = BaseMaterial3D.BLEND_MODE_MIX
+	mat.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	mat.billboard_keep_scale = true          # 2x2 pixels means 2x2 pixels, at any camera angle
+	mat.vertex_color_use_as_albedo = true    # the ramp below drives colour AND alpha
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.render_priority = 2                  # same reason as the smoke: after the wall mesh
+	mesh.material = mat
+	var pm := ParticleProcessMaterial.new()
+	pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	pm.direction = Vector3(1, 0, 0)          # WEST TO EAST: cells map to world x east, y south
+	pm.spread = 4.0                          # a few degrees, so the field is not a comb
+	pm.gravity = Vector3.ZERO
+	# DIFFERENT SPEEDS, and the range IS the 2..6 tiles: distance = velocity * life.
+	pm.initial_velocity_min = DUST_TILES_MIN * CELL / DUST_LIFE
+	pm.initial_velocity_max = DUST_TILES_MAX * CELL / DUST_LIFE
+	pm.scale_min = 0.8
+	pm.scale_max = 1.2
+	_dust = GPUParticles3D.new()
+	_dust.draw_pass_1 = mesh
+	_dust.process_material = pm
+	_dust.amount = DUST_AMOUNT
+	_dust.lifetime = DUST_LIFE
+	_dust.preprocess = DUST_LIFE             # arrive mid-flight, not as a wave from the west edge
+	_dust.visible = false
+	_dust.emitting = false
+	add_child(_dust)
+
+## Point the dust at the live zone and switch it on or off. Called every snapshot; cheap when
+## nothing changed, because the emitter is reused.
+func _update_dust(data: Dictionary) -> void:
+	var stats: Dictionary = data.get("stats", {})
+	var terrain := QudText.strip(String(stats.get("terrain", "")))
+	# USER MODE ONLY. 1:1 is Qud's own screen and Qud blows no dust across it.
+	var want: bool = _dusty(terrain) and not _one_to_one and not _flat_2d and not _world_map
+	if not want:
+		if _dust != null and is_instance_valid(_dust):
+			_dust.emitting = false
+			_dust.visible = false
+		_dust_on = false
+		return
+	_ensure_dust()
+	var w: float = maxf(_live_w, 1.0)
+	var h: float = maxf(_live_h, 1.0)
+	var pm := _dust.process_material as ParticleProcessMaterial
+	# the whole zone, in a low band above the floor
+	pm.emission_box_extents = Vector3(w * 0.5, (DUST_H_MAX - DUST_H_MIN) * 0.5, h * 0.5)
+	# FADES OUT TO THE BG COLOUR, which is what the field reads as when nothing covers it — the
+	# same choice the memory wash and the door-frame cap make. Teal-grey through, alpha in and out
+	# so a mote neither pops into existence nor snaps off at the end of its run.
+	var teal := Color(0.44, 0.56, 0.55)
+	var grey := Color(0.58, 0.60, 0.59)
+	var bg := _world_bg
+	var grad := Gradient.new()
+	grad.offsets = PackedFloat32Array([0.0, 0.12, 0.65, 1.0])
+	grad.colors = PackedColorArray([
+		Color(teal.r, teal.g, teal.b, 0.0),
+		Color(teal.r, teal.g, teal.b, 0.55),
+		Color(grey.r, grey.g, grey.b, 0.38),
+		Color(bg.r, bg.g, bg.b, 0.0)])
+	var gt := GradientTexture1D.new()
+	gt.gradient = grad
+	pm.color_ramp = gt
+	_dust.position = Vector3(w * 0.5 - 0.5, FLOOR_Y + (DUST_H_MIN + DUST_H_MAX) * 0.5, h * 0.5 - 0.5)
+	_dust.visible = true
+	_dust.emitting = true
+	_dust_on = true
+
 func _build_smoke_resources() -> void:
 	# A flat grey square, billboarded — matches Qud's pixel smoke rather than a soft puff.
 	var sm := StandardMaterial3D.new()
