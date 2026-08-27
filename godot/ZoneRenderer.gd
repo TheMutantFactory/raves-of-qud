@@ -755,8 +755,8 @@ func _pool_mask(lit: Dictionary, cx: int, cy: int, n: int) -> String:
 ##
 ## Cached on (n, mask): a zone has many torches, most share a radius, and any two standing in open
 ## ground share a mask as well.
-func _pool_texture(cells: int, mask := "") -> Texture2D:
-	var key := "%d|%s" % [cells, mask]
+func _pool_texture(cells: int, mask := "", tint := POOL_TINT) -> Texture2D:
+	var key := "%d|%s|%s" % [cells, mask, tint.to_html(false)]
 	if _pool_tex.has(key):
 		return _pool_tex[key]
 	var img := Image.create(cells, cells, false, Image.FORMAT_RGBA8)
@@ -769,7 +769,7 @@ func _pool_texture(cells: int, mask := "") -> Texture2D:
 			# what a caller with no cells to hand gets.
 			if mask != "" and mask[y * cells + x] == "0":
 				a = 0.0
-			img.set_pixel(x, y, Color(POOL_TINT.r, POOL_TINT.g, POOL_TINT.b, a))
+			img.set_pixel(x, y, Color(tint.r, tint.g, tint.b, a))
 	var tex := ImageTexture.create_from_image(img)
 	_pool_tex[key] = tex
 	return tex
@@ -4467,7 +4467,8 @@ func _update_dust(data: Dictionary) -> void:
 # what this reads: the player's own effect names, which is also the only place the distinction
 # between "stuck in a web" and "stuck in a pool of asphalt" survives.
 const STUCK_GLOW := Color8(0xB1, 0xC9, 0xC3)   ## Daniel's colour
-const STUCK_GLOW_CELLS := 1.9      ## how wide the glow spreads, in cells
+const STUCK_GLOW_CELLS := 3.0      ## how wide the pool is; _pool_cells snaps it to whole ODD cells
+const STUCK_GLOW_MUL := 0.30       ## ...and how much of it lands (additive, on a light colour)
 const STUCK_NOISE_AMOUNT := 34     ## motes of grey noise alive at once
 const STUCK_NOISE_LIFE := 0.9
 const STUCK_NOISE_PX := 1.0        ## "tiny": one art pixel
@@ -4475,7 +4476,6 @@ const STUCK_NOISE_SPEED := 0.55
 
 var _stuck_glow: MeshInstance3D
 var _stuck_noise: GPUParticles3D
-var _stuck_tex: Texture2D
 
 func _is_stuck(data: Dictionary) -> bool:
 	for e in data.get("effects", []):
@@ -4489,23 +4489,22 @@ func _is_stuck(data: Dictionary) -> bool:
 func _ensure_stuck() -> void:
 	if _stuck_glow != null and is_instance_valid(_stuck_glow):
 		return
-	if _stuck_tex == null:
-		# the same radial the torch pools use — an honest soft disc rather than a square that
-		# happens to be translucent
-		_stuck_tex = _make_radial(64, STUCK_GLOW, 1.0)
+	# A FLOOR POOL, TILED — not a smooth disc. Daniel: "the glow is closer to the glowfishes glow
+	# than a floor glow." He is right, and it was literally that: _make_radial at 64x64 is the
+	# airbrushed texture the bioluminescent motes wear. This view is made of whole cells, and the
+	# torch pools already solved it — ask the SAME falloff for one texel per cell and turn
+	# filtering off, and every texel IS a cell. _pool_texture takes a tint now so there is still
+	# only one falloff function to keep in step, which was the point of building it that way.
+	var n := _pool_cells(STUCK_GLOW_CELLS)
 	var q := QuadMesh.new()
-	q.size = Vector2(STUCK_GLOW_CELLS, STUCK_GLOW_CELLS)
-	var m := StandardMaterial3D.new()
-	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	m.blend_mode = BaseMaterial3D.BLEND_MODE_ADD    # a GLOW adds light; it does not paint over
-	m.albedo_texture = _stuck_tex
-	m.albedo_color = Color(1, 1, 1, 0.55)
-	m.cull_mode = BaseMaterial3D.CULL_DISABLED
-	m.render_priority = 1                           # under the sprite, over the ground
-	q.material = m
+	q.size = Vector2(n, n)
 	_stuck_glow = MeshInstance3D.new()
 	_stuck_glow.mesh = q
+	# DIMMED. _fx_material blends ADDITIVE, and #b1c9c3 is a light colour — at full strength the
+	# pool stopped being a glow and became a white platform the character stood on.
+	var gmat := _fx_material(_pool_texture(n, "", STUCK_GLOW), true)
+	gmat.albedo_color = Color(STUCK_GLOW_MUL, STUCK_GLOW_MUL, STUCK_GLOW_MUL, 1.0)
+	_stuck_glow.material_override = gmat
 	# BEHIND the player means ON THE GROUND under them, not a billboard at their height: a
 	# billboarded glow would sit in front of the sprite from most compass headings.
 	_stuck_glow.rotation_degrees = Vector3(-90, 0, 0)
@@ -12744,7 +12743,14 @@ const COAT_CODES := ["K", "w", "G", "g"]     ## asphalt/ink/oil/ooze, sludge/hon
 const COAT_TAIL := 0.80       ## a coat barely thins toward the bottom...
 const COAT_HEAD := 0.95       ## ...and never quite reaches pure stain, so the art still shows
 const COAT_COL_STEP := 1      ## every column is a candidate
-const COAT_ODDS := 0.80       ## ...and most take it
+## EVERY COLUMN COATS. At 0.80 the fifth of columns that failed the roll survived as full-height
+## bright vertical lines, and against the blackened silhouette those strands read as a SPIDERWEB —
+## which is what Daniel was looking at when he asked about "the stuck animation". It was never a
+## web and never Qud's: it was this number. A coat that skips whole columns is a set of stripes.
+const COAT_ODDS := 1.0        ## ...and all of them take it
+## What varies instead is where each run STARTS: up to this many pixels below the top of the art,
+## so the coat's upper edge is ragged rather than a clean line across the shoulders.
+const COAT_RAGGED := 4
 const COAT_REACH := 0.75      ## a run covers this much of the art below where it starts
 
 func _stain_coats(code: String) -> bool:
@@ -12785,6 +12791,8 @@ func _stained_tex(tile: String, main: Color, detail: Color, key: String, fill: i
 		if top < 0:
 			continue
 		# a coat sheets most of the way down from where it starts; a drip runs a little way and stops
+		if coats:
+			top += rng.randi_range(0, COAT_RAGGED)   # ragged upper edge, not a clean shoulder line
 		var run: int = int(round(float(h - top) * COAT_REACH)) if coats \
 			else rng.randi_range(2, DRIP_ROWS_MAX)
 		for k in run:
