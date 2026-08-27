@@ -38,6 +38,7 @@ func _ready() -> void:
 	_markup_palette_is_seeded()
 	_box_heights_match_qud()
 	_long_message_wraps_like_qud()
+	_long_options_stay_inside_the_window()
 	await _last_line_survives_the_clip()
 	_answer_names_the_popup()
 	await _outside_field_owns_the_keyboard()
@@ -229,6 +230,53 @@ func _long_message_wraps_like_qud() -> void:
 
 	# The wrapper itself, since the sizes above only see its longest line.
 	_wrap_checks()
+
+
+## A MENU WHOSE ROWS ARE PROSE MUST NOT GROW WIDER THAN THE WINDOW. Qud sizes an option menu to its
+## widest row and nothing else, which is right for the item menus this overlay was modelled on
+## ("equip", "get", "look") and wrong for its mutation picker, where every option carries its whole
+## description on one unbroken line. Daniel, with that menu on screen and the first choice running
+## off the right edge: "We need to make the size of the popup depend on the size of the window, i.e.
+## it should not overflow."
+##
+## The fixture is that menu's shape — three options, each a paragraph — and the check is the one
+## thing the report was about: the box fits the window, and it fits because the rows WRAPPED rather
+## than because they were cut off (a clipped row would pass a width check and fail the reader).
+func _long_options_stay_inside_the_window() -> void:
+	var ov := PopupOverlay.new()
+	add_child(ov)
+	ov.show_popup(_mutation_menu(), _palette())
+	var win: float = float(ProjectSettings.get_setting("display/window/size/viewport_width", 1600))
+	_check("prose menu: box fits the window", ov._box_w <= win,
+		"box %.2f wide against a %.0f window" % [ov._box_w, win])
+	var wrapped := false
+	var tallest := 0.0
+	for row in ov._opt_box.get_children():
+		var h: float = (row as Control).custom_minimum_size.y
+		tallest = maxf(tallest, h)
+		if (row.get_meta("lines", []) as Array).size() > 1:
+			wrapped = true
+	_check("prose menu: rows wrapped rather than clipped", wrapped,
+		"every row is still one line, so the text is being cut off instead")
+	_check("prose menu: box is tall enough for the wrapped rows", ov._box_h > tallest,
+		"box %.2f is shorter than its tallest row %.2f" % [ov._box_h, tallest])
+	ov.queue_free()
+
+## Qud's "Choose a mutation." picker, whose options are whole paragraphs on one line.
+func _mutation_menu() -> Dictionary:
+	return {
+		"type": "popup", "active": true, "id": 91, "kind": "menu",
+		"message": "Choose a mutation.", "title": "", "input": false, "inputDefault": "",
+		"buttons": [],
+		"options": [
+			{"text": "{{W|Time Dilation}} - You distort time around your person in order to slow down your enemies.Creatures within 9 tiles are slowed according to how close they are to you.Distance 1: creatures receive a -12 quickness penalty.",
+				"command": "option:0", "hotkey": ""},
+			{"text": "{{W|Temporal Fugue}} - You quickly pass back and forth through time creating multiple copies of yourself.Duration: 20 roundsCopies: 1Cooldown: 200 rounds",
+				"command": "option:1", "hotkey": ""},
+			{"text": "{{W|Flaming Ray}} - You emit a ray of flame.Emits a 9-square ray of flame in the direction of your choice.Damage: 1d4+1Cooldown: 10 roundsMelee attacks heat opponents by 2d8 degrees.",
+				"command": "option:2", "hotkey": ""},
+		],
+	}
 
 
 ## The item popup's wear/tear line ("Perfect") vanished — feedback 2026-08-10. The frame is

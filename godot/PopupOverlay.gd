@@ -155,6 +155,16 @@ const ROOT_H := 9.0          # outer strokes
 const ROOT_H_MID := 11.0     # the middle one runs 2px further
 const TITLE_SP := 10.0             # PolatFrameSuperHeader spacing
 const ROW_H := 26.0                # MenuOptionText(Clone) in the options area
+## THE POPUP MAY NOT BE WIDER THAN THE WINDOW. Qud sizes an option menu to its widest row and
+## nothing else, which is fine for the item menus this was modelled on ("equip", "get", "look") and
+## catastrophic for a menu whose rows are prose: Qud's mutation picker ships each option with its
+## whole description on one unbroken line, so the box came out wider than 1920 and the first choice
+## ran off the screen with no frame on either side. Daniel: "We need to make the size of the popup
+## depend on the size of the window, i.e. it should not overflow."
+##
+## A FRACTION OF THE WINDOW, not a constant: the thing it must not exceed is the window, and that
+## is the only number that knows how big the window is.
+const OPT_W_FRAC := 0.92
 const ROW_TEXT_X := 15.0           # padL 2 + cursor 8 + spacing 5
 ## THE ROW'S OWN SPRITE. Qud fills QudMenuItem.icon for menus whose entries are THINGS rather than
 ## verbs — "Go to which point of interest?" ships a tile for every creature and object in the list —
@@ -625,7 +635,13 @@ func _measure_box(is_input: bool) -> void:
 	# An ABSENT inputbox takes its spacing with it (the item menu's Content is 0 + 2 + 222
 	# = 224); an empty options area does NOT (the wish's is 20.12 + 2 + 0 + 2 + 17.6).
 	var n := _options.size()
-	var opts_h := (ROW_H * n + 2.0 * (n - 1)) if n > 0 else 0.0
+	# SUMMED, not n * ROW_H: a wrapped option is more than one line tall, and a box measured off
+	# the row COUNT would clip the very rows that made it necessary.
+	var opts_h := 0.0
+	if n > 0:
+		for c in _opt_box.get_children():
+			opts_h += (c as Control).custom_minimum_size.y
+		opts_h += 2.0 * float(n - 1)
 	var msg_h := _msg_h
 	var content_h := msg_h + 2.0 + opts_h
 	if is_input:
@@ -1125,9 +1141,15 @@ func _build_options() -> void:
 			if _icon_tex(o) != null:
 				_icon_x = ICON_W + ICON_GAP
 				break
+	var cols := _opt_cols(f)
 	for i in _options.size():
 		var runs: Array = QudText.runs(str(_options[i].get("text", "")), _palette, C_PALE)
-		var tw := _runs_width(f, runs, 16)
+		# WRAPPED TO THE WINDOW, and a row that already fits comes back as one line with the same
+		# runs — so every menu Qud was measured against is untouched and only the prose ones move.
+		var lines: Array = _wrap_runs(runs, cols)
+		var tw := 0.0
+		for ln in lines:
+			tw = maxf(tw, _runs_width(f, ln, 16))
 		var row := Control.new()
 		# The row's WIDTH is the thing that sizes the whole box (Qud: box = 67 + widest
 		# option text), so it is measured with the font and kept FRACTIONAL. A
@@ -1135,11 +1157,12 @@ func _build_options() -> void:
 		# max(own, content): that 0.79px of rounding on the cloth robe's widest row made
 		# the box 279 instead of 278.21, which pushed its centred left edge a whole pixel
 		# out and took the top rule, the divider and the item name with it.
-		row.custom_minimum_size = Vector2(_snap(ROW_TEXT_X + _icon_x + tw + CROME_PAD_L), ROW_H)
+		row.custom_minimum_size = Vector2(_snap(ROW_TEXT_X + _icon_x + tw + CROME_PAD_L),
+			ROW_H * float(lines.size()))
 		row.set_meta("exact_w", ROW_TEXT_X + _icon_x + tw + CROME_PAD_L)
 		row.mouse_filter = Control.MOUSE_FILTER_STOP
 		row.clip_contents = true
-		row.set_meta("runs", runs)
+		row.set_meta("lines", lines)
 		row.set_meta("icon", _icon_tex(_options[i]))
 		var idx := i
 		row.draw.connect(_draw_option_row.bind(row, idx))
@@ -1148,6 +1171,80 @@ func _build_options() -> void:
 				_answer_option(idx))
 		row.mouse_entered.connect(func(): _sel = idx; _highlight_option())
 		_opt_box.add_child(row)
+
+## How many characters an option line may hold before it must wrap — derived from the WINDOW, less
+## everything the box puts either side of the text. Never below a dozen: a window too narrow to hold
+## a word is a window nothing can be laid out in, and a zero here would loop forever.
+func _opt_cols(f: Font) -> int:
+	# HOW WIDE IS THE WINDOW, asked of three sources in order of how much they know, because the
+	# first two can both answer nonsense at the moment rows are built. _root is a full-rect Control
+	# and its width IS the window's — once it has been laid out, and rows are built before that. The
+	# viewport rect is right in a real run and came back 64 wide under --headless, which wrapped
+	# every menu to twelve columns and grew two Qud-measured box heights by half. The project's
+	# configured viewport is the last word: it is what the window was opened at.
+	#
+	# A CAP WE CANNOT TRUST IS WORSE THAN NO CAP — an unreadably narrow answer here would wrap
+	# menus that fit perfectly well, so anything implausible falls through to the next source.
+	const MIN_PLAUSIBLE := 640.0
+	var vw := 0.0
+	var vp := get_viewport()
+	if vp != null:
+		vw = vp.get_visible_rect().size.x
+	if vw < MIN_PLAUSIBLE and _root != null:
+		vw = _root.size.x
+	if vw < MIN_PLAUSIBLE:
+		vw = float(ProjectSettings.get_setting("display/window/size/viewport_width", 1600))
+	var avail: float = vw * OPT_W_FRAC - 2.0 * BOX_PAD_LR - 2.0 * CONTENT_PAD_LR \
+		- ROW_TEXT_X - _icon_x - CROME_PAD_L
+	return maxi(12, int(floorf(avail / maxf(1.0, _pitch(f, 16)))))
+
+## Break a coloured run list into lines of at most `cols` characters, keeping each fragment's own
+## colour. Words move whole; a single word longer than a line is broken by character, because the
+## alternative is a line that overflows anyway and the point of this is that nothing does.
+##
+## Everything advances on the same pitch the drawing does (_runs_width and _draw_option_row both
+## count characters), so "columns" here is the same unit the box is measured in — no second idea of
+## width to disagree with the first.
+static func _wrap_runs(runs: Array, cols: int) -> Array:
+	var lines: Array = []
+	var cur: Array = []
+	var used := 0
+	for run in runs:
+		var col: Color = run[1]
+		var text: String = String(run[0])
+		var i := 0
+		while i < text.length():
+			var sp := text.find(" ", i)
+			var word := text.substr(i, (sp - i) if sp >= 0 else text.length() - i)
+			var trail := ""
+			if sp >= 0:
+				trail = " "
+				i = sp + 1
+			else:
+				i = text.length()
+			# A word wider than the line: hand out full lines of it until the tail fits.
+			while word.length() > cols:
+				if used > 0:
+					lines.append(cur)
+					cur = []
+					used = 0
+				cur.append([word.substr(0, cols), col])
+				lines.append(cur)
+				cur = []
+				used = 0
+				word = word.substr(cols)
+			if used > 0 and used + word.length() > cols:
+				lines.append(cur)
+				cur = []
+				used = 0
+			if word != "" or trail != "":
+				cur.append([word + trail, col])
+				used += word.length() + trail.length()
+	if not cur.is_empty():
+		lines.append(cur)
+	if lines.is_empty():
+		lines.append([])
+	return lines
 
 func _draw_option_row(row: Control, idx: int) -> void:
 	var f := row.get_theme_default_font()
@@ -1161,19 +1258,23 @@ func _draw_option_row(row: Control, idx: int) -> void:
 	if idx == _sel:
 		row.draw_string(f, Vector2(CROME_PAD_L, base), ">",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 16, C_GOLD)
-	var ic: Texture2D = row.get_meta("icon", null)
+	# has_meta FIRST: set_meta(key, null) REMOVES the key in Godot 4, so an iconless row has no
+	# "icon" meta at all and get_meta(…, null) logs an error for every one of them, every redraw.
+	var ic: Texture2D = row.get_meta("icon") if row.has_meta("icon") else null
 	if ic != null:
 		# Centred in the row's 26 against the tile's 24 — the half pixel is snapped away rather
 		# than left to the rasteriser, which is what keeps the column's edges straight.
 		row.draw_texture_rect(ic, Rect2(Vector2(ROW_TEXT_X, floorf((ROW_H - ICON_H) * 0.5)),
 			Vector2(ICON_W, ICON_H)), false)
 	var pitch := _pitch(f, 16)
-	var px := ROW_TEXT_X + _icon_x
-	var runs: Array = row.get_meta("runs", [])
-	for run in runs:
-		var txt: String = run[0]
-		row.draw_string(f, Vector2(px, base), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, run[1])
-		px += pitch * txt.length()
+	var lines: Array = row.get_meta("lines", [])
+	for li in lines.size():
+		var px := ROW_TEXT_X + _icon_x
+		var y := base + ROW_H * float(li)
+		for run in (lines[li] as Array):
+			var txt: String = run[0]
+			row.draw_string(f, Vector2(px, y), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, run[1])
+			px += pitch * txt.length()
 
 ## One row's recoloured sprite, or null when the row has no icon (or the feature is off). The wire
 ## carries a TILE PATH and colours, not a rendered image — the same shape every other panel loads.
