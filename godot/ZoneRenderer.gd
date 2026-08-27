@@ -882,6 +882,9 @@ func render_snapshot(data: Dictionary, neighbors: Array = []) -> void:
 	# after the band is built). The south neighbour's slot computed one zone off, the band
 	# saw its ground as unvisited, and painted the fog slab over it for a full turn.
 	# Daniel: "the zone to the south is reloading or something. There is a green/grey flash."
+	# BEFORE anything builds: the dynamic pass needs to know, because the stuck glow rides the
+	# player's own sprite and that sprite is built during it.
+	_stuck_now = _is_stuck(data)
 	_nb_off_now.clear()
 	for nbo in neighbors:
 		_nb_off_now[String(nbo.get("id", ""))] = Vector2i(nbo.get("offset", Vector2i.ZERO))
@@ -1035,7 +1038,9 @@ func render_snapshot(data: Dictionary, neighbors: Array = []) -> void:
 
 	# ...and the wind, if this is a zone that has any. See _update_dust.
 	_update_dust(data)
-	# ...and the marks on a player who cannot move. See _update_stuck.
+	# ...and the noise a player makes who cannot move. The GLOW is not here: it rides the
+	# player's own sprite (see _add_glow at the billboard build), which is what "the glow effect
+	# as on a glowfish" means — a bloom over the silhouette, not a mark on the ground.
 	_update_stuck(data)
 
 ## Build one zone's STATIC geometry (walls + non-creature nonwalls + lights) into the
@@ -4467,14 +4472,12 @@ func _update_dust(data: Dictionary) -> void:
 # what this reads: the player's own effect names, which is also the only place the distinction
 # between "stuck in a web" and "stuck in a pool of asphalt" survives.
 const STUCK_GLOW := Color8(0xB1, 0xC9, 0xC3)   ## Daniel's colour
-const STUCK_GLOW_CELLS := 3.0      ## how wide the pool is; _pool_cells snaps it to whole ODD cells
-const STUCK_GLOW_MUL := 0.30       ## ...and how much of it lands (additive, on a light colour)
 const STUCK_NOISE_AMOUNT := 34     ## motes of grey noise alive at once
 const STUCK_NOISE_LIFE := 0.9
 const STUCK_NOISE_PX := 1.0        ## "tiny": one art pixel
 const STUCK_NOISE_SPEED := 0.55
 
-var _stuck_glow: MeshInstance3D
+var _stuck_now := false          ## the player is stuck this snapshot (drives the sprite bloom)
 var _stuck_noise: GPUParticles3D
 
 func _is_stuck(data: Dictionary) -> bool:
@@ -4487,30 +4490,8 @@ func _is_stuck(data: Dictionary) -> bool:
 ## belongs to a STATE, not to a turn, and rebuilding it every step would restart the noise burst
 # on every keypress.
 func _ensure_stuck() -> void:
-	if _stuck_glow != null and is_instance_valid(_stuck_glow):
+	if _stuck_noise != null and is_instance_valid(_stuck_noise):
 		return
-	# A FLOOR POOL, TILED — not a smooth disc. Daniel: "the glow is closer to the glowfishes glow
-	# than a floor glow." He is right, and it was literally that: _make_radial at 64x64 is the
-	# airbrushed texture the bioluminescent motes wear. This view is made of whole cells, and the
-	# torch pools already solved it — ask the SAME falloff for one texel per cell and turn
-	# filtering off, and every texel IS a cell. _pool_texture takes a tint now so there is still
-	# only one falloff function to keep in step, which was the point of building it that way.
-	var n := _pool_cells(STUCK_GLOW_CELLS)
-	var q := QuadMesh.new()
-	q.size = Vector2(n, n)
-	_stuck_glow = MeshInstance3D.new()
-	_stuck_glow.mesh = q
-	# DIMMED. _fx_material blends ADDITIVE, and #b1c9c3 is a light colour — at full strength the
-	# pool stopped being a glow and became a white platform the character stood on.
-	var gmat := _fx_material(_pool_texture(n, "", STUCK_GLOW), true)
-	gmat.albedo_color = Color(STUCK_GLOW_MUL, STUCK_GLOW_MUL, STUCK_GLOW_MUL, 1.0)
-	_stuck_glow.material_override = gmat
-	# BEHIND the player means ON THE GROUND under them, not a billboard at their height: a
-	# billboarded glow would sit in front of the sprite from most compass headings.
-	_stuck_glow.rotation_degrees = Vector3(-90, 0, 0)
-	_stuck_glow.visible = false
-	add_child(_stuck_glow)
-
 	var nm := QuadMesh.new()
 	nm.size = Vector2(STUCK_NOISE_PX * PIXEL_SIZE, STUCK_NOISE_PX * PIXEL_SIZE)
 	var nmat := StandardMaterial3D.new()
@@ -4556,8 +4537,6 @@ func _update_stuck(data: Dictionary) -> void:
 	var on: bool = _is_stuck(data) and not _one_to_one and not _world_map \
 		and _player_cell.x > -9000
 	if not on:
-		if _stuck_glow != null and is_instance_valid(_stuck_glow):
-			_stuck_glow.visible = false
 		if _stuck_noise != null and is_instance_valid(_stuck_noise):
 			_stuck_noise.emitting = false
 			_stuck_noise.visible = false
@@ -4565,8 +4544,6 @@ func _update_stuck(data: Dictionary) -> void:
 	_ensure_stuck()
 	var px := float(_player_cell.x)
 	var py := float(_player_cell.y)
-	_stuck_glow.position = Vector3(px, FLOOR_Y + 0.012, py)
-	_stuck_glow.visible = true
 	_stuck_noise.position = Vector3(px, FLOOR_Y + 0.18, py)
 	_stuck_noise.visible = true
 	_stuck_noise.emitting = true
@@ -4991,7 +4968,7 @@ void fragment() {
 
 ## Hang the glow bloom over a glowfish sprite `s`, matched to its cropped region so the
 ## glowing shape lines up with the fish exactly.
-func _add_glow(s: Sprite3D, tex: Texture2D, tile := "") -> void:
+func _add_glow(s: Sprite3D, tex: Texture2D, tile := "", colour := Color(0.4, 1.0, 0.85)) -> void:
 	# REPLACE, never stack: the sprite is pooled and re-seated across turns —
 	# a bloom built for an earlier seat carries that seat's region (measured:
 	# a full-band window twice the height of the submerged crop, the "cropped
@@ -5021,6 +4998,7 @@ func _add_glow(s: Sprite3D, tex: Texture2D, tile := "") -> void:
 	mat.set_shader_parameter("uv_min", Vector2(full.position.x / tw, full.position.y / th))
 	mat.set_shader_parameter("uv_size", Vector2(full.size.x / tw, full.size.y / th))
 	mat.set_shader_parameter("pad", GLOW_PAD)
+	mat.set_shader_parameter("glow_color", Vector3(colour.r, colour.g, colour.b))
 	mat.set_shader_parameter("y_lock", 0.0 if _top_down else 1.0)
 	mat.set_shader_parameter("water_v", water_v)
 	var q := MeshInstance3D.new()
@@ -9238,6 +9216,12 @@ func _place_nonwall(obj: Dictionary, cx: int, cy: int, idx: int, in_wall: bool, 
 				s.render_priority = 20
 			if glowing:
 				_add_glow(s, btex, tile)        # crisp bioluminescent bloom (glowfish, glowpad, tagged tiles)
+			elif _stuck_now and Vector2i(cx, cy) == _player_cell:
+				# STUCK wears the SAME bloom as a glowfish, in its own colour. Daniel: "I want the
+				# glow effect as on a glowfish. Not the mote. The glow." The floor pool this
+				# replaced was a miscommunication on my side twice over — first the airbrushed
+				# mote texture, then a correctly-tiled pool that was still on the FLOOR.
+				_add_glow(s, btex, tile, STUCK_GLOW)
 			_track(s)
 			# STATIC plant/scenery billboard (tree, brinestalk): register it to be dimmed by
 			# its cell's light EACH TURN (creatures get modulate directly; static sprites don't,
