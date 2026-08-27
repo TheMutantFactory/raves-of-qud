@@ -1035,6 +1035,8 @@ func render_snapshot(data: Dictionary, neighbors: Array = []) -> void:
 
 	# ...and the wind, if this is a zone that has any. See _update_dust.
 	_update_dust(data)
+	# ...and the marks on a player who cannot move. See _update_stuck.
+	_update_stuck(data)
 
 ## Build one zone's STATIC geometry (walls + non-creature nonwalls + lights) into the
 ## current bank, cells shifted by `offset`. `skip_creatures` drops mobile actors —
@@ -4454,6 +4456,121 @@ func _update_dust(data: Dictionary) -> void:
 		d.visible = true
 		d.emitting = true
 	_dust_on = true
+
+# ── "stuck" ────────────────────────────────────────────────────────────────────
+#
+# Daniel: "let's work on the stuck animation. It's currently a spiderweb. That's fine if there are
+# spiders. Let's add a background glow effect #b1c9c3 behind the player, to represent stuck. Maybe
+# add a particle generator in the center that spits out tiny grey noise in all directions."
+#
+# Qud says stuck through the ACTIVE EFFECTS list, not through anything on the object, so that is
+# what this reads: the player's own effect names, which is also the only place the distinction
+# between "stuck in a web" and "stuck in a pool of asphalt" survives.
+const STUCK_GLOW := Color8(0xB1, 0xC9, 0xC3)   ## Daniel's colour
+const STUCK_GLOW_CELLS := 1.9      ## how wide the glow spreads, in cells
+const STUCK_NOISE_AMOUNT := 34     ## motes of grey noise alive at once
+const STUCK_NOISE_LIFE := 0.9
+const STUCK_NOISE_PX := 1.0        ## "tiny": one art pixel
+const STUCK_NOISE_SPEED := 0.55
+
+var _stuck_glow: MeshInstance3D
+var _stuck_noise: GPUParticles3D
+var _stuck_tex: Texture2D
+
+func _is_stuck(data: Dictionary) -> bool:
+	for e in data.get("effects", []):
+		if QudText.strip(String(e.get("name", ""))).to_lower().contains("stuck"):
+			return true
+	return false
+
+## The glow + noise, built once and thereafter moved and toggled. Untracked, like the dust: this
+## belongs to a STATE, not to a turn, and rebuilding it every step would restart the noise burst
+# on every keypress.
+func _ensure_stuck() -> void:
+	if _stuck_glow != null and is_instance_valid(_stuck_glow):
+		return
+	if _stuck_tex == null:
+		# the same radial the torch pools use — an honest soft disc rather than a square that
+		# happens to be translucent
+		_stuck_tex = _make_radial(64, STUCK_GLOW, 1.0)
+	var q := QuadMesh.new()
+	q.size = Vector2(STUCK_GLOW_CELLS, STUCK_GLOW_CELLS)
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.blend_mode = BaseMaterial3D.BLEND_MODE_ADD    # a GLOW adds light; it does not paint over
+	m.albedo_texture = _stuck_tex
+	m.albedo_color = Color(1, 1, 1, 0.55)
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	m.render_priority = 1                           # under the sprite, over the ground
+	q.material = m
+	_stuck_glow = MeshInstance3D.new()
+	_stuck_glow.mesh = q
+	# BEHIND the player means ON THE GROUND under them, not a billboard at their height: a
+	# billboarded glow would sit in front of the sprite from most compass headings.
+	_stuck_glow.rotation_degrees = Vector3(-90, 0, 0)
+	_stuck_glow.visible = false
+	add_child(_stuck_glow)
+
+	var nm := QuadMesh.new()
+	nm.size = Vector2(STUCK_NOISE_PX * PIXEL_SIZE, STUCK_NOISE_PX * PIXEL_SIZE)
+	var nmat := StandardMaterial3D.new()
+	nmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	nmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	nmat.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	nmat.billboard_keep_scale = true
+	nmat.vertex_color_use_as_albedo = true
+	nmat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	nmat.render_priority = 2
+	nm.material = nmat
+	var pm := ParticleProcessMaterial.new()
+	# IN ALL DIRECTIONS: a full sphere of emission with no gravity, so the noise struggles outward
+	# from the middle and dies rather than falling or drifting one way.
+	pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+	pm.emission_sphere_radius = 0.12
+	pm.direction = Vector3(0, 0, 0)
+	pm.spread = 180.0
+	pm.gravity = Vector3.ZERO
+	pm.initial_velocity_min = STUCK_NOISE_SPEED * 0.35
+	pm.initial_velocity_max = STUCK_NOISE_SPEED
+	pm.damping_min = 0.6
+	pm.damping_max = 1.4                            # it does not get far — that is the point of stuck
+	var g := Gradient.new()
+	g.offsets = PackedFloat32Array([0.0, 0.25, 1.0])
+	g.colors = PackedColorArray([
+		Color(0.72, 0.74, 0.73, 0.0),
+		Color(0.66, 0.68, 0.67, 0.75),
+		Color(0.55, 0.57, 0.56, 0.0)])
+	var gt := GradientTexture1D.new(); gt.gradient = g
+	pm.color_ramp = gt
+	_stuck_noise = GPUParticles3D.new()
+	_stuck_noise.draw_pass_1 = nm
+	_stuck_noise.process_material = pm
+	_stuck_noise.amount = STUCK_NOISE_AMOUNT
+	_stuck_noise.lifetime = STUCK_NOISE_LIFE
+	_stuck_noise.visible = false
+	_stuck_noise.emitting = false
+	add_child(_stuck_noise)
+
+## Put the stuck marks on the player, or take them away. Called every snapshot.
+func _update_stuck(data: Dictionary) -> void:
+	var on: bool = _is_stuck(data) and not _one_to_one and not _world_map \
+		and _player_cell.x > -9000
+	if not on:
+		if _stuck_glow != null and is_instance_valid(_stuck_glow):
+			_stuck_glow.visible = false
+		if _stuck_noise != null and is_instance_valid(_stuck_noise):
+			_stuck_noise.emitting = false
+			_stuck_noise.visible = false
+		return
+	_ensure_stuck()
+	var px := float(_player_cell.x)
+	var py := float(_player_cell.y)
+	_stuck_glow.position = Vector3(px, FLOOR_Y + 0.012, py)
+	_stuck_glow.visible = true
+	_stuck_noise.position = Vector3(px, FLOOR_Y + 0.18, py)
+	_stuck_noise.visible = true
+	_stuck_noise.emitting = true
 
 func _build_smoke_resources() -> void:
 	# A flat grey square, billboarded — matches Qud's pixel smoke rather than a soft puff.
