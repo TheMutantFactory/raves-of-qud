@@ -4282,6 +4282,23 @@ const DUST_H_MAX := 0.55
 ## That is the weighting, without a second emitter per band: mean lands at about 0.72 of the base.
 ##
 ## The old ±6% was not variation, it was a rounding error. A row read as one speed.
+const DUST_BASE_COLOR := Color8(0x15, 0x53, 0x52)   ## Daniel's pick
+
+## THE GUST: one slow oscillation for the whole zone, so the wind rises and falls as weather rather
+## than blowing at one strength forever. Daniel: "a combo LFO made of primes that speed up/slow
+## down all the dust in a zone at once. It should transition slowly. Like 10-20 seconds."
+##
+## PRIME PERIODS, for the same reason the rows carry primes: four sines at 11/13/17/19 seconds sum
+## to a waveform whose own period is their product — 46189 seconds, thirteen hours — so the wind
+## never repeats a pattern anyone could sit through. Each component is inside the 10-20s he asked
+## for; it is the SUM that is long, and nothing computes it.
+##
+## The transition is slower than the LFO looks, and for free: changing initial_velocity only
+## affects motes emitted from now on, so a gust eases in over a mote lifetime (5s) as the old
+## population blows out. The wind changes like wind, not like a slider.
+const DUST_LFO_PERIODS := [11.0, 13.0, 17.0, 19.0]
+const DUST_LFO_DEPTH := 0.45     ## +-45% on the whole zone at the extremes
+
 const DUST_ROW_SLOW := 0.35      ## a mote can be this fraction of its row's base speed...
 const DUST_ROW_FAST := 1.10      ## ...or this much of it, and no faster
 
@@ -4305,6 +4322,8 @@ const DUST_PRIMES := [67, 71, 73, 79, 83, 89, 97, 101, 103, 107, 109, 113, 127,
 	131, 137, 139, 149, 151, 157, 163, 167, 173, 179, 181, 191]
 
 var _dust_rows: Array = []       ## one emitter per zone row, each with its own prime
+var _dust_base: Array = []       ## ...and that row's un-gusted speed, for the LFO to scale
+var _dust_t := 0.0               ## the gust's own clock
 var _dust_on := false
 
 ## Which zones blow dust. Qud names its zones ("salt dunes", "desert canyon", "salt marsh,
@@ -4333,6 +4352,7 @@ func _ensure_dust(rows: int) -> void:
 		if d != null and is_instance_valid(d):
 			d.queue_free()
 	_dust_rows.clear()
+	_dust_base.clear()
 	for r in rows:
 		_dust_rows.append(_make_dust_row(r))
 
@@ -4368,6 +4388,7 @@ func _make_dust_row(r: int) -> GPUParticles3D:
 	var v: float = tiles * CELL / DUST_LIFE
 	pm.initial_velocity_min = v * DUST_ROW_SLOW
 	pm.initial_velocity_max = v * DUST_ROW_FAST
+	_dust_base.append(v)
 	pm.scale_min = 0.8
 	pm.scale_max = 1.2
 	var g := GPUParticles3D.new()
@@ -4404,7 +4425,10 @@ func _update_dust(data: Dictionary) -> void:
 	# FADES OUT TO THE BG COLOUR, which is what the field reads as when nothing covers it — the
 	# same choice the memory wash and the door-frame cap make. Teal-grey through, alpha in and out
 	# so a mote neither pops into existence nor snaps off at the end of its run.
-	var teal := Color(0.44, 0.56, 0.55)
+	# Daniel's colour, verbatim: #155352. Kept as the BASE — the shade a mote wears for most of
+	# its life — with the lighter grey still carrying the mid-life highlight, so a mote reads
+	# against ground that is nearly the same value.
+	var teal := DUST_BASE_COLOR
 	var grey := Color(0.58, 0.60, 0.59)
 	var bg := _world_bg
 	var grad := Gradient.new()
@@ -5000,6 +5024,7 @@ func _process(_dt: float) -> void:
 	if _one_to_one or not _anim_sprites.is_empty() or not _anim_items.is_empty():
 		_animate_1to1()          # Qud's per-frame render programs (blinks, flashes, sparkles)
 	_animate_float(_dt)          # ...and anything riding above its cell (see FLY_LIFT)
+	_animate_dust(_dt)           # the zone's wind rising and falling (see DUST_LFO_PERIODS)
 	_aim_held()                  # ...and the torch, which is offset in SCREEN space
 	if _ib_active:
 		_ib_step()               # advance the incremental live-static build one chunk per frame
@@ -12692,3 +12717,29 @@ func _qud_color(code: String) -> Color:
 	if _palette.has(ch):
 		return Color(String(_palette[ch]))
 	return COLORS.get(ch, Color.WHITE)
+
+## THE GUST, applied. Four prime-period sines summed into one multiplier on every row at once, so
+## the whole zone breathes together while the rows keep their own relative speeds.
+##
+## Rewritten onto the materials rather than tracked per particle: initial_velocity is read when a
+## mote is BORN, so this only steers the ones emitted from here on and the existing population
+## finishes its run at the old speed. That is what makes the transition slow without any easing
+## code — the field turns over across a lifetime.
+func _animate_dust(dt: float) -> void:
+	if not _dust_on or _dust_rows.is_empty():
+		return
+	_dust_t += dt
+	var sum := 0.0
+	for per in DUST_LFO_PERIODS:
+		sum += sin(TAU * _dust_t / float(per))
+	var gust: float = 1.0 + DUST_LFO_DEPTH * sum / float(DUST_LFO_PERIODS.size())
+	for r in mini(_dust_rows.size(), _dust_base.size()):
+		var d: GPUParticles3D = _dust_rows[r]
+		if d == null or not is_instance_valid(d) or not d.emitting:
+			continue
+		var pm := d.process_material as ParticleProcessMaterial
+		if pm == null:
+			continue
+		var v: float = float(_dust_base[r]) * gust
+		pm.initial_velocity_min = v * DUST_ROW_SLOW
+		pm.initial_velocity_max = v * DUST_ROW_FAST
