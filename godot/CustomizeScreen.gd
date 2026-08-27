@@ -100,14 +100,38 @@ func _refresh_rows() -> void:
 		_row_labels[i].text = "[center]%s[color=#%s]%s: %s[/color][/center]" % [
 			caret, col.to_html(false), names[i], vals[i]]
 
+## THE NAME FIELD IS PART OF THE LAYOUT NOW. Daniel: "Add the text input box to the 'flexbox' to
+## ensure it fits within the dialog box."
+##
+## It used to be placed at two hardcoded viewport fractions — x 0.40, y 0.444, width 0.20 — which is
+## the one thing every other row on these screens stopped doing when the cascade went in. Two things
+## follow from that, and both are the report:
+##
+##   IT DID NOT FIT WHAT IT HELD. max_length is 60 characters and 20% of the viewport is about 40
+##   at body pitch, so a long name simply scrolled out of its own box. The field is now sized to
+##   the text it is allowed to contain, capped to the row it sits on.
+##
+##   IT DID NOT FOLLOW THE ROW. 0.444 was where the Name row happened to be BEFORE the cascade
+##   could push it; anything that moved that row — a longer subtitle, a different font scale — left
+##   the field behind, editing one line while floating over another. It now takes the row's own
+##   laid-out rect, which is the whole point of having a layout pass.
 func _begin_name_edit() -> void:
-	var vp := get_viewport_rect().size
+	var row: Control = _row_labels[0]
 	_edit = LineEdit.new()
 	_edit.text = _cname
 	_edit.max_length = 60
 	_edit.alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_edit.position = Vector2(vp.x * 0.40, vp.y * 0.444)
-	_edit.size = Vector2(vp.x * 0.20, UiFont.px(get_viewport(), "body") * 1.6)
+	var px := UiFont.px(get_viewport(), "body")
+	var f := get_theme_default_font()
+	# The font's own advance, measured the way the popup measures Qud's: ten characters over ten,
+	# so a proportional fallback face cannot make this a guess about "M" or "i".
+	var pitch: float = (f.get_string_size("AAAAAAAAAA", HORIZONTAL_ALIGNMENT_LEFT, -1, px).x / 10.0) \
+		if f != null else float(px) * 0.6
+	var w: float = minf(pitch * float(_edit.max_length + 2), maxf(row.size.x - 2.0 * px, pitch * 12.0))
+	var h: float = float(px) * 1.6
+	_edit.size = Vector2(w, h)
+	_edit.position = Vector2(row.position.x + (row.size.x - w) * 0.5,
+		row.position.y + (maxf(row.size.y, h) - h) * 0.5)
 	_edit.add_theme_color_override("font_color", NAME_SEL)
 	add_child(_edit)
 	_edit.grab_focus()

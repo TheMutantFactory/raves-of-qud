@@ -963,11 +963,21 @@ func show_popup(data: Dictionary, palette: Dictionary) -> void:
 		# on words. Measured on the security-door message: Qud's box is 789.20 and its Message
 		# 739.20, i.e. 77 columns, wrapped at 82. Raves capped at a flat 1240 and never re-measured,
 		# so a long message drew one 1250px slab where Qud draws five wrapped lines.
-		msg_lines = _wrap(msg_lines, int(floorf(MSG_W_MAX / pitch)))
+		# WRAP AT THE WIDTH IT WILL ACTUALLY BE LAID OUT AT. An AskString's message is not sized by
+		# its own text — the box is sized by the INPUT BOX (see msg_w below) and the label ends up
+		# EDIT_W wide, not MSG_W_MAX. Counting lines at 739px and drawing them at 600px would leave
+		# the slot short by however many lines the second wrap adds.
+		#
+		# LATENT, not the cause of anything reported: measured on the quit confirmation, Qud sends
+		# that message ALREADY broken at ~58 columns, so both widths count the same lines and the box
+		# is unchanged either way. Fixed because a wrap width that is not the layout width is a
+		# coincidence waiting to stop holding, not because it was the bug being chased.
+		var lay_w: float = EDIT_W if is_input else MSG_W_MAX
+		msg_lines = _wrap(msg_lines, int(floorf(lay_w / pitch)))
 		var natural := 0.0
 		for ln in msg_lines:
 			natural = maxf(natural, pitch * String(ln).length())
-		var msg_w := minf(natural, MSG_W_MAX)
+		var msg_w := minf(natural, lay_w)
 		if is_input:
 			msg_w = EDIT_W          # an AskString is sized by its inputbox, not its prompt
 		var lines := maxf(1.0, float(msg_lines.size()))
