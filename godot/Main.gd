@@ -1638,6 +1638,27 @@ func _unhandled_input(event: InputEvent) -> void:
 		# tile — it was w a while ago"). The mod's own moveto command does the travelling —
 		# Qud's pathing and hostile-interrupts, exactly as a click-to-travel would — and the
 		# cursor closes, its job done. Takes W from the camera dolly only while looking.
+		# INTERACT WITH WHAT YOU ARE LOOKING AT. Daniel: "the look feature needs to be able to look
+		# at adjacent objects and interact with them." Looking already named them — look_line lists
+		# every object on the cell — but there was no way to act on one without leaving the mode,
+		# walking over and using the mouse.
+		#
+		# Enter (and Space) send Qud's own `interact` for the cursor's cell, which is the same verb
+		# a right-click sends: AdventureMouseInteract decides what the cell means — twiddle a
+		# thing, take a default action, or nudge at empty ground — so Raves never has to guess
+		# which of those an object wants, and an adjacent creature, item or door each behave the
+		# way Qud already makes them behave.
+		#
+		# The cursor closes behind it, like the walk key: the menu that opens IS the next thing to
+		# look at, and leaving a look marker under a popup was the old Looker trap in miniature.
+		if inspector != null and inspector.look_on() \
+				and event.keycode in [KEY_ENTER, KEY_KP_ENTER, KEY_SPACE]:
+			var ic: Vector2i = inspector.look_cell()
+			if ic.x >= 0 and ic.y >= 0:
+				client.send_command("interact", {"x": ic.x, "y": ic.y})
+				look_toggle()
+				print("[look] interact at (%d,%d)" % [ic.x, ic.y])
+			return
 		if event.keycode == KEY_W and inspector != null and inspector.look_on():
 			var wc: Vector2i = inspector.look_cell()
 			if wc.x >= 0 and wc.y >= 0 and wc.x < int(renderer._live_w) and wc.y < int(renderer._live_h):

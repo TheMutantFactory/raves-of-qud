@@ -1088,7 +1088,10 @@ func _on_look_changed(on: bool, _cell: Vector2i, line: String) -> void:
 		_msglog.set_action_button("", Callable())
 		_msglog.add_message("{{K|look: off}}")
 		return
-	_msglog.add_message("{{C|look:}} " + line)
+	# SAY WHAT THE MODE CAN DO, every time the cursor moves. A mode with no window has nowhere
+	# else to put its controls, and "interact" is not guessable from a marker on the ground.
+	_msglog.add_message("{{C|look:}} " + line
+		+ "  {{K|[Enter] interact · [W] walk here · [Esc] done}}")
 	_msglog.set_action_button("report tile", func(): if _holo != null: _holo.look_report())
 
 func _on_camera_changed(_mode: int, controls: String) -> void:
