@@ -8343,6 +8343,24 @@ func _is_creature(obj: Dictionary) -> bool:
 func _is_glowfish(obj: Dictionary) -> bool:
 	return String(obj.get("tile", "")).to_lower().contains("glowfish")
 
+## THINGS THAT ARE LYING DOWN. Report 2525dc88, filed on Items/sw_splat2.bmp: "Corpses should be
+## on the floor."
+##
+## A corpse is an ITEM, and items are layer 5 — well above the floor cut-off — so every one of them
+## stood up on end. The inspector said it plainly: a dog corpse at (39,3) came back "RENDERED
+## billboard, fill=interior 21px". Whatever else a corpse is, it is not standing.
+##
+## Both halves of the test earn their keep. The NAME catches Qud's corpses, which it names "<thing>
+## corpse" — bear corpse, leech corpse, segmented mirthworm corpse — and the TILE catches the splat
+## art itself, which is also what gore and viscera wear: a splatter has no upright reading either.
+##
+## A filed verdict still wins outright (the caller gates on verdict == ""), so anything this gets
+## wrong can be answered from the report form without a build.
+func _lies_flat(obj: Dictionary, tile: String) -> bool:
+	if tile.to_lower().contains("splat"):
+		return true
+	return String(obj.get("display", obj.get("name", ""))).to_lower().contains("corpse")
+
 ## Should this object get the bioluminescent GLOW bloom? True for built-in glow-* tiles
 ## (glowfish, glowpad, glowmoth, …), for anything Qud NAMES a glow-something, and for any tile
 ## the user tagged "glow" via the report form (an `effect` override). Purely visual — separate
@@ -9127,7 +9145,8 @@ func _place_nonwall(obj: Dictionary, cx: int, cy: int, idx: int, in_wall: bool, 
 	var upright_ground: bool = bool(obj.get("ground", false)) and _is_vegetation(tile)
 	if verdict == "billboard":
 		upright_ground = true        # force it off the floor path
-	var as_floor: bool = _flat_2d or (layer <= FLOOR_LAYER_MAX and not upright_ground) or verdict == "floor"
+	var as_floor: bool = _flat_2d or (layer <= FLOOR_LAYER_MAX and not upright_ground) \
+		or verdict == "floor" or (verdict == "" and _lies_flat(obj, tile))
 
 	if as_floor:
 		if in_wall and not ground_show:
