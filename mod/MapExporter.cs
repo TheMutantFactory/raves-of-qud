@@ -107,6 +107,79 @@ namespace RavesOfQud
         /// With nothing selected, Qud's map is not sitting at the map's middle — it shows the
         /// player's own region (Joppa's salt marsh for a Joppa start). Centring on the texture's
         /// centre instead put Raves several parasangs away looking at forest.</summary>
+        public static string PlacesPath => System.IO.Path.Combine(
+            Directory.GetParent(TileExporter.Dir).FullName, "places.json");
+
+        /// <summary>
+        /// PLACES THE PLAYER HAS ACTUALLY BEEN, which is a different list from the journal's.
+        ///
+        /// Qud files a map note when the game TELLS you about somewhere — gossip, a water ritual, a
+        /// quest — so a character can have slept in Joppa and stood in Red Rock with neither in the
+        /// journal. Daniel: "I'm at Red Rock, but for some reason, It's not discovered, and I can't
+        /// add it as a beacon. Same with Joppa. I'd like to be able to return to Joppa by following
+        /// the beacon."
+        ///
+        /// The game's own record is ZoneManager.VisitedTime, a zone id -> when. Its KEYS are the
+        /// travel log; the parasang is in the id. Two earlier guesses were wrong and are worth
+        /// naming: the world map's `explored` flag covers most of Qud whether you have been there or
+        /// not, and the world-map CELLS' objects come back under blueprint names (TerrainHills,
+        /// TerrainSixDayStilt) rather than display names. GetTerrainObjectForZone gives the same
+        /// object the status bar names, so "Red Rock" comes out as Red Rock.
+        /// </summary>
+        public static void ExportPlaces()
+        {
+            try
+            {
+                var j = new JsonWriter();
+                j.BeginObject();
+                InventoryExporter.WritePalette(j);
+                j.Name("places").BeginArray();
+                var zm = The.Game?.ZoneManager;
+                var seen = new System.Collections.Generic.HashSet<string>();
+                if (zm != null)
+                {
+                    foreach (var id in zm.VisitedTime.Keys)
+                    {
+                        if (string.IsNullOrEmpty(id)) continue;
+                        var parts = id.Split('.');
+                        // "JoppaWorld.11.20.1.2.10" — world, parasang x/y, zone x/y, stratum. Named
+                        // worlds with no parasang (the tutorial's, "NorthSheva") simply skip.
+                        if (parts.Length < 3) continue;
+                        if (!int.TryParse(parts[1], out int wx) || !int.TryParse(parts[2], out int wy)) continue;
+                        string key = parts[0] + "." + wx + "." + wy;
+                        if (!seen.Add(key)) continue;   // one row per PARASANG, not per zone under it
+                        XRL.World.GameObject t = null;
+                        try { t = ZoneManager.GetTerrainObjectForZone(wx, wy, parts[0]); } catch { }
+                        if (t == null) continue;
+                        j.BeginObject()
+                            .Member("world", parts[0])
+                            .Member("mx", wx).Member("my", wy)
+                            .Member("name", t.DisplayNameOnly ?? "");
+                        try
+                        {
+                            var r = t.GetPart<XRL.World.Parts.Render>();
+                            if (r != null)
+                            {
+                                string tile = r.Tile ?? "";
+                                if (tile.Length > 0) TileExporter.Ensure(tile);
+                                j.Member("tile", tile)
+                                 .Member("color", r.ColorString ?? "")
+                                 .Member("tilecolor", r.TileColor ?? "")
+                                 .Member("detail", r.DetailColor ?? "");
+                            }
+                        }
+                        catch { }
+                        j.EndObject();
+                    }
+                }
+                j.EndArray();
+                WritePlayerPos(j);
+                j.EndObject();
+                File.WriteAllText(PlacesPath, j.ToString());
+            }
+            catch (Exception e) { Log("places export: " + e.Message); }
+        }
+
         public static void WritePlayerPos(JsonWriter j)
         {
             try

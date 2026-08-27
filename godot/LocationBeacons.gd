@@ -257,7 +257,11 @@ func _track_plates() -> void:
 			lab.visible = false
 			continue
 		var p := cam.unproject_position(head)
-		if _hole.size.x > 1.0 and not _hole.has_point(p):
+		# HORIZONTALLY out of the play area means the beacon is not on screen at all — hide it, or
+		# the name slides under the opaque side panels. VERTICALLY is different and is clamped
+		# below: a marker two parasangs off is 45 cells tall in a frame that only shows the horizon,
+		# so its head leaves the top long before the beacon does, and the name went with it.
+		if _hole.size.x > 1.0 and (p.x < _hole.position.x or p.x > _hole.end.x):
 			lab.visible = false
 			continue
 		# THE NAME TAKES THE DEPTH CUE TOO. The slab shrinks with distance on its own now; a plate
@@ -272,8 +276,11 @@ func _track_plates() -> void:
 			lab.add_theme_constant_override("outline_size", maxi(3, px / 3))
 			lab.reset_size()
 		var sz := lab.get_minimum_size()
+		var at := p - Vector2(sz.x * 0.5, sz.y)        # centred on the slab, sitting above its head
+		if _hole.size.x > 1.0:
+			at.y = clampf(at.y, _hole.position.y + 2.0, _hole.end.y - sz.y - 2.0)
 		lab.visible = true
-		lab.position = p - Vector2(sz.x * 0.5, sz.y)   # centred on the slab, sitting above its head
+		lab.position = at
 
 func _make_mark(t: Dictionary) -> Node3D:
 	var root := Node3D.new()

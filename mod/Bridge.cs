@@ -1636,6 +1636,20 @@ namespace RavesOfQud
                         }, 0);
                     return;
                 }
+                if (name == "places")
+                {
+                    // Where the player has BEEN — the Locations panel polls this beside `journal`,
+                    // and the two lists are merged there. Reads ZoneManager.VisitedTime plus the
+                    // world map's terrain objects; no game state is touched.
+                    var gmp = GameManager.Instance;
+                    if (gmp != null && gmp.uiQueue != null)
+                        gmp.uiQueue.queueTask(() =>
+                        {
+                            try { MapExporter.ExportPlaces(); }
+                            catch (Exception e) { try { Server.Log("places export failed: " + e.Message); } catch { } }
+                        }, 0);
+                    return;
+                }
                 if (name == "journal")
                 {
                     // Re-export the JOURNAL ONLY. `export` re-runs every exporter — blueprints,

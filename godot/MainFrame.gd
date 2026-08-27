@@ -1871,7 +1871,8 @@ func _row_main() -> Control:
 			_holo.set_beacons(t))
 	_locations.refresh_requested.connect(func() -> void:
 		if _holo != null:
-			_holo.request_journal())
+			_holo.request_journal()
+			_holo.request_places())
 	# Qud decided the player is lost (or found). The pin lives in the nav strip, not the panel, so
 	# it has to be told — and it says so in the log, because a control that silently stops working
 	# is the shape of a bug.

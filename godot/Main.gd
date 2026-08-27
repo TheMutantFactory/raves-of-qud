@@ -1051,6 +1051,12 @@ func request_journal() -> void:
 	if client != null:
 		client.send_command("journal", {})
 
+## Re-export QUD'S TRAVEL LOG — the parasangs it records the player as having visited, with the
+## world map's own name for each. The other half of the Locations list; see the panel.
+func request_places() -> void:
+	if client != null:
+		client.send_command("places", {})
+
 ## The Locations panel's ticked rows -> the horizon markers.
 func set_beacons(targets: Array) -> void:
 	if _beacons != null:

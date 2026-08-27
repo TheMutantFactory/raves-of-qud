@@ -62,7 +62,26 @@ var _sig := ""                # what the last rebuild was built from — see _re
 var _one_to_one := false
 var _mtime := 0
 var _since := 0.0
-var _entries: Array = []       # [{id, name, category, mx, my}] — the journal's Locations tab
+var _journal: Array = []       # [{id, name, category, mx, my}] — the journal's Locations tab
+## PLACES YOU HAVE BEEN, which is not the same list and never was. Daniel, standing in Red Rock:
+## "I'm at Red Rock, but for some reason, It's not discovered, and I can't add it as a beacon. Same
+## with Joppa. I'd like to be able to return to Joppa by following the beacon."
+##
+## Qud's journal files a map note when the game TELLS you about somewhere — gossip, a water ritual,
+## a quest. Walking into a place is not one of those, so Red Rock and Joppa can be homes you have
+## slept in and still not be in the journal. That is Qud being consistent about what a journal is;
+## it is no use at all to someone who wants to walk back.
+##
+## So the panel shows both lists. The travel log is QUD'S OWN — ZoneManager.VisitedTime, exported as
+## places.json — not a record Raves keeps as you walk: a log that only started when this feature did
+## would have been empty of every place Daniel had already been, which is the entire request.
+## A beacon does not care which list a place came from.
+var _visited: Array = []       # [{name, mx, my, tile, color, detail}] — places.json
+var _pmtime := 0
+## A visited row shows the world-map sprite Qud draws for that place — the row IS the place, and a
+## line of text is a poorer thing to recognise than the pictograph you saw on the map.
+var _tiles: RefCounted         # QudTiles; built in _ready
+var _entries: Array = []       # the two, merged and deduped by parasang
 var _on := {}                  # id -> true, the ticked rows (persisted per game)
 var _game := ""
 var _zone := {}
@@ -73,6 +92,7 @@ var _player := Vector2i(-1, -1)
 var metrics_cb: Callable = Callable()
 
 func _ready() -> void:
+	_tiles = load("res://QudTiles.gd").new()
 	_apply_panel_box()
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 4)
@@ -114,6 +134,7 @@ func _ready() -> void:
 	_refresh_title()
 	_apply_height()
 	_reload(true)
+	_reload_places(true)
 	set_process(true)
 
 ## Uniform panel entry — MainFrame feeds every side panel the same way.
@@ -125,11 +146,14 @@ func set_snapshot(data: Dictionary) -> void:
 		# camera heading follows (Main._check_camera_game).
 		_game = gid
 		_on = _load_ticks()
-		_rebuild()
+		_reload_places(true)
 	_zone = data.get("zone", {})
 	var p: Dictionary = data.get("player", {})
 	_player = Vector2i(int(p.get("x", -1)), int(p.get("y", -1)))
 	_set_lost(bool(p.get("lost", false)))
+	if _tiles != null:
+		_tiles.tiles_dir = String(data.get("tilesDir", _tiles.tiles_dir))
+		_tiles.palette = data.get("palette", _tiles.palette)
 	_refresh_metrics()
 
 ## THE POLL RUNS WHILE COLLAPSED. The beacons are armed from this list, and they stand in the world
@@ -144,6 +168,7 @@ func _process(dt: float) -> void:
 	_since = 0.0
 	refresh_requested.emit()
 	_reload()
+	_reload_places()
 
 ## 1:1 is Qud's screen, and Qud has no locations panel — so this one is simply not there.
 func set_one_to_one(on: bool) -> void:
@@ -310,9 +335,8 @@ func _reload(force := false) -> void:
 	if sig == _sig:
 		return
 	_sig = sig
-	_entries = found
-	_sorted = false
-	_rebuild()
+	_journal = found
+	_merge()
 
 ## A STABLE KEY FOR A ROW — which the entry's own id would be, if it had one. Measured: every map
 ## note Qud files comes back with ID = "", so keying the ticks and the beacon nodes on it would give
@@ -340,6 +364,61 @@ func _plain(s: String) -> String:
 		i += 1
 	return out.strip_edges()
 
+## One list out of two. The journal wins a tie: it carries Qud's own wording and its category, and a
+## place you have BOTH been told about and stood in should read as the game describes it.
+func _merge() -> void:
+	var out: Array = _journal.duplicate()
+	var taken := {}
+	for e in out:
+		taken["%d,%d" % [int(e["mx"]), int(e["my"])]] = true
+	for v in _visited:
+		var nm := String(v["name"])
+		var k := "%d,%d" % [int(v["mx"]), int(v["my"])]
+		if taken.has(k):
+			continue
+		taken[k] = true
+		out.append({
+			"id": "v:" + k,               # keyed on the PARASANG, which is what a beacon points at
+			"name": String(nm),
+			"note": "somewhere you have been",
+			"category": "Visited",
+			"mx": int(v["mx"]), "my": int(v["my"]),
+			"art": v,
+		})
+	if out.size() > MAX_ROWS:
+		out.resize(MAX_ROWS)
+	_entries = out
+	_sorted = false
+	_rebuild()
+
+## Qud's travel log, from places.json. Same shape as the journal read below it: the file only moves
+## when the export runs, and the export runs because this panel asked.
+func _reload_places(force := false) -> void:
+	var path := InputModel.support_dir().path_join("places.json")
+	if not FileAccess.file_exists(path):
+		return
+	var mt := FileAccess.get_modified_time(path)
+	if not force and mt == _pmtime:
+		return
+	_pmtime = mt
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return
+	var raw: Variant = JSON.parse_string(f.get_as_text())
+	f.close()
+	if not (raw is Dictionary):
+		return
+	var found: Array = []
+	for pl in (raw as Dictionary).get("places", []):
+		var nm := _plain(String(pl.get("name", "")))
+		if nm == "":
+			continue
+		found.append({"name": nm, "mx": int(pl.get("mx", 0)), "my": int(pl.get("my", 0)),
+			"tile": String(pl.get("tile", "")), "color": String(pl.get("color", "")),
+			"tilecolor": String(pl.get("tilecolor", "")), "detail": String(pl.get("detail", ""))})
+	_visited = found
+	_merge()
+
 # ── the rows ───────────────────────────────────────────────────────────────────
 
 func _rebuild() -> void:
@@ -365,9 +444,20 @@ func _sort_entries() -> void:
 	for e in _entries:
 		keyed.append([float(metrics_cb.call(int(e["mx"]), int(e["my"])).get("para", 0.0)), e])
 	keyed.sort_custom(func(a, b): return a[0] < b[0])
+	# ONE ROW PER NAME, once the distances are known — and the NEAREST one, which is why this waits
+	# for the sort. A walk across a marsh visits five parasangs all called "salt marsh"; five rows
+	# for it is five ways to say the same thing, and the useful one is the nearest. Journal entries
+	# are never collapsed: Qud wrote those, and two notes sharing a name are still two notes.
 	var out: Array = []
+	var named := {}
 	for k in keyed:
-		out.append(k[1])
+		var e: Dictionary = k[1]
+		var nm := String(e["name"])
+		if e.has("art"):
+			if named.has(nm):
+				continue
+			named[nm] = true
+		out.append(e)
 	_entries = out
 
 func _make_row(e: Dictionary) -> Control:
@@ -381,6 +471,12 @@ func _make_row(e: Dictionary) -> Control:
 	cb.clip_text = true
 	cb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	cb.add_theme_font_size_override("font_size", UiFont.px(get_viewport(), "body"))
+	var art: Dictionary = e.get("art", {})
+	if not art.is_empty() and String(art.get("tile", "")) != "":
+		var tex: Texture2D = _tiles.texture_for(art, true)
+		if tex != null:
+			cb.icon = tex
+			cb.expand_icon = false
 	var note := String(e.get("note", ""))
 	cb.tooltip_text = "%s\n%s\nTick to stand a beacon on the horizon" % [
 		String(e.get("category", "Location")), note] if note != "" \
