@@ -45,6 +45,14 @@ namespace RavesOfQud
         /// runs the full markup/adjective pipeline on some objects, and a
         /// snapshot must never be the thing that breaks someone's game.
         /// </summary>
+        /// Does this object have something to say — i.e. would Qud open a conversation with it?
+        /// Asked of the part rather than of a name list, so a modded talker answers correctly.
+        private static bool HasConversation(GameObject go)
+        {
+            try { return go != null && go.HasPart<XRL.World.Parts.ConversationScript>(); }
+            catch { return false; }
+        }
+
         private static string DisplayNameOf(GameObject go)
         {
             try { return go.DisplayNameOnly ?? ""; }
@@ -1951,6 +1959,11 @@ namespace RavesOfQud
                             // mobile actor: the client drops these from a REMEMBERED
                             // neighbour zone (they've wandered off since it was live).
                             .Member("creature", go.IsCreature)
+                            // CAN YOU TALK TO IT? A cave spider is a creature and a watervine farmer
+                            // is a creature; only one of them has anything to say. The mouse-assist
+                            // cursor draws a speech bubble over one and a hand over the other, and
+                            // "IsCreature" cannot tell them apart — the conversation can.
+                            .Member("talks", HasConversation(go))
                             // liquid pool (has a LiquidVolume). Volatile: it spreads/evaporates and,
                             // crucially, SLOSHES onto every cell a wet player wades through — so the
                             // client must exclude it from the STATIC signature or a wet walk rebuilds

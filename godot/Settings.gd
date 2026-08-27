@@ -129,6 +129,9 @@ const QOL_FEATURES := {
 	# not draw it — the points-of-interest list ships a real tile for every creature and object in
 	# it. Showing them is a divergence, so it is a feature: 1:1 keeps Qud's text-only rows.
 	"popupicons": ["Menu popups: show each row's sprite", true],
+	# ON by default. The cursor carries the verb — boots, a speech bubble, a hand, a stairs arrow —
+	# and a click follows it. Qud's own cursor says nothing, so 1:1 keeps that silence.
+	"mouseassist": ["Mouse assist: the cursor shows what a click will do", true],
 }
 
 ## WHERE USER MODE STOPS CLONING 1:1 — the two questions, and they are NOT the same question.

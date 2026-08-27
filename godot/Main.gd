@@ -67,6 +67,8 @@ var _sky_grade                     # SkyGrade (Node3D); created in _ready
 ## in the world, not an overlay: a beacon is a thing standing on the ground four parasangs away, and
 ## the camera has to be able to look away from it.
 var _beacons                       # LocationBeacons (Node3D); created in _ready
+var _assist                        # MouseAssist (Node); created in _ready
+var _assist_pos := Vector2(-1, -1) # last pointer position, re-read once a frame (see _process)
 
 const SURFACE_Z := 10
 var _depth := SURFACE_Z            # current stratum (zone.z); >SURFACE_Z is underground
@@ -210,6 +212,9 @@ func _ready() -> void:
 
 	_beacons = load("res://LocationBeacons.gd").new()   # the Locations panel's horizon markers
 	add_child(_beacons)
+	# The cursor's verb (boots / speech bubble / hand / stairs arrow) — see MouseAssist.
+	_assist = load("res://MouseAssist.gd").new()
+	add_child(_assist)
 	# The name-plates sit on their own HUD layer, which no modal covers — so they have to stand
 	# down themselves. Same predicate the rest of the app asks (see _modal_owns_input), plus the
 	# tombstone, which is the one full-screen thing that is not a modal.
@@ -495,6 +500,8 @@ func _on_snapshot(data: Dictionary) -> void:
 	# popup payload, so the overlay is told here rather than made to wait for one.
 	if _popup != null:
 		_popup.tiles_dir = String(data.get("tilesDir", _popup.tiles_dir))
+	if _assist != null:
+		_assist.set_snapshot(data)
 	# Route the render through the store: draw the live zone plus any remembered
 	# neighbours (same stratum) the player has visited, placed by global offset.
 	Profiler.add_us("server", int(data.get("serverUs", 0)))
@@ -848,6 +855,7 @@ const BG_DRAW_INTERVAL := 0.05   # ~20fps forced draws while unfocused
 func _process(dt: float) -> void:
 	_remote.poll(dt)
 	_hold_step(dt)   # Final-Fantasy hold-to-walk: a held direction keeps stepping
+	_assist_step()   # the cursor's verb, re-read at most once a frame
 	if _picker.is_picking():
 		_picker.update_cursor()
 	# Keep the viewer rendering while its window is UNFOCUSED, so it stays live beside
@@ -942,6 +950,16 @@ func _walk_answer(d: String) -> bool:
 	if d != "":
 		client.send_command("walk", {"dir": d})
 	return true
+
+## Ask the mouse assist what is under the pointer. ONCE A FRAME, not once per motion event: the
+## answer needs a raycast, and a mouse crossing the window emits far more events than there are
+## frames to draw them in. The position is read from the viewport rather than remembered from an
+## event, so it stays right when the world moves under a still pointer.
+func _assist_step() -> void:
+	if _assist == null or not _assist.enabled():
+		return
+	var pos: Vector2 = get_viewport().get_mouse_position()
+	_assist.hover(pos, _playfield_cell(pos))
 
 ## Move the player relative to the camera. `intent` is (strafe, forward) in screen
 ## space: (0,1)=forward, (0,-1)=back, (1,0)=right, (-1,0)=left.
@@ -1301,11 +1319,34 @@ func _interact_click(pos: Vector2) -> void:
 ##
 ## The cell comes from the INSPECTOR's picking, not a second mapping of our own: travel then lands
 ## on exactly the cell Ctrl+click reports, wall-snapping included.
+## A left click on the playfield. THE CURSOR ALREADY SAID WHAT THIS WOULD DO, so this does that:
+## the icon and the action come from one answer (MouseAssist.verb_at), which is the only way the
+## promise can be kept. Without assist it stays what it always was — a walk order.
+##
+## REACH DECIDES TALK-VERSUS-WALK. Qud's own interact handler acts on an ADJACENT cell; asked about
+## a person across the room it does nothing at all, and a cursor that promised a conversation would
+## have lied. So out of reach every verb walks you there, which is the first half of what you wanted
+## anyway, and the icon is then telling you what you will find when you arrive.
 func _travel_click(pos: Vector2) -> void:
 	var cell = _playfield_cell(pos)
 	if cell == null:
 		return
-	client.send_command("moveto", {"x": cell.x, "y": cell.y})
+	var c := Vector2i(cell.x, cell.y)
+	var verb: String = _assist.verb_at(c) if (_assist != null and _assist.enabled()) else "walk"
+	var pc: Dictionary = store.live_record().get("snapshot", {}).get("player", {})
+	var here := Vector2i(int(pc.get("x", -999)), int(pc.get("y", -999)))
+	var adjacent: bool = maxi(absi(c.x - here.x), absi(c.y - here.y)) <= 1
+	match verb:
+		"down", "up":
+			# Standing on them, use them; otherwise walk over and the arrow will still be there.
+			if c == here:
+				client.send_command("command", {"command": "CmdMoveD" if verb == "down" else "CmdMoveU"})
+				return
+		"talk", "use":
+			if adjacent:
+				client.send_command("interact", {"x": c.x, "y": c.y})
+				return
+	client.send_command("moveto", {"x": c.x, "y": c.y})
 
 
 ## The zone cell a playfield click lands on, or null if this click is not the playfield's to have.
