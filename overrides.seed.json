@@ -20,6 +20,9 @@
   "sw_giantdragonfly": {
    "position": "POS: FLOAT centered in the tile"
   },
+  "sw_ground_dune": {
+   "shape": "should be an UPRIGHT BILLBOARD sprite"
+  },
   "sw_honey_sign": {
    "shape": "build it as a SIGNPOST (two posts + slab)"
   },
