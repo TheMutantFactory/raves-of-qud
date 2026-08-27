@@ -24,7 +24,13 @@ extends Node
 signal verb_changed(verb: String)
 
 const ICON_PX := 22.0
-const ICON_DY := 14.0          # below-right of the pointer, clear of the hotspot
+## The icon marks the TILE, not the pointer — Daniel's own words were "the target tile is shown with
+## shoes/boots icon" — and riding the cursor put it exactly where the arrow's body lies: "The main
+## mouse pointer is occluding the boots cursor image." A macOS arrow points up-left and fills the
+## space down-right of its hotspot, so the icon hangs ABOVE the tile, which is the one direction
+## always clear of it. `at` arrives already lifted a whole world unit (see Main._assist_step); this
+## is the last few pixels of air under it.
+const ICON_LIFT := 2.0
 
 var _hud: CanvasLayer
 var _icon: TextureRect
@@ -62,7 +68,8 @@ func set_snapshot(data: Dictionary) -> void:
 
 ## The pointer moved (or the cell under it changed). `cell` is null when the pointer is not over the
 ## playfield at all — chrome, a modal, off the hole — and the icon goes away with it.
-func hover(screen_pos: Vector2, cell: Variant) -> void:
+## `at` is where the TILE lands on screen, not where the pointer is.
+func hover(at: Vector2, cell: Variant) -> void:
 	if not enabled() or cell == null:
 		_clear()
 		return
@@ -77,7 +84,7 @@ func hover(screen_pos: Vector2, cell: Variant) -> void:
 	_icon.visible = v != ""
 	if _icon.visible:
 		_icon.size = Vector2(ICON_PX, ICON_PX)
-		_icon.position = screen_pos + Vector2(ICON_DY, ICON_DY)
+		_icon.position = at - Vector2(ICON_PX * 0.5, ICON_PX + ICON_LIFT)
 
 func _clear() -> void:
 	if _icon != null:
