@@ -8816,6 +8816,14 @@ func _place_nonwall(obj: Dictionary, cx: int, cy: int, idx: int, in_wall: bool, 
 			# the ground texture above. This is the billboard the dogthorn tree is drawn as.
 			var btex := _colored_tex_rgb(tile, bac[0], bac[1], bac[2],
 				_fill_for(tile, Fill.INTERIOR), _cutout_for(tile), _remembered_build)
+			# ...and if it is stained, the stain is IN it — see _stained_tex. Not while remembered:
+			# a memory is a flat-K glyph, and blood on a memory is detail the player never saw.
+			var scode := _stain_code(obj)
+			if scode != "" and not _remembered_build:
+				var stex := _stained_tex(tile, bac[0], bac[1], bac[2],
+					_fill_for(tile, Fill.INTERIOR), scode)
+				if stex != null:
+					btex = stex
 			if btex == null:
 				btex = tex
 			var s := _take_sprite()
@@ -11643,8 +11651,11 @@ func _register_anim(win: Dictionary, cx: int, cy: int) -> void:
 	var flip := bool(win.get("hflip", false))
 	# Smear flash: liquid-covered objects flash the covering liquid's colour 9 frames in 60
 	# (convalessence '&C', protean gunk '&c' — RenderSmearPrimary; water's smear is a no-op).
+	# NO SMEAR OVERLAY IN USER MODE. The stain is painted into the sprite's own texture instead
+	# (_stained_tex), which is the only copy guaranteed to share its size, facing and seat. 1:1
+	# keeps the flash — that is Qud's screen, and its cell IS a quad, so the overlay fits it.
 	var sm := String(win.get("animSmear", ""))
-	if sm != "":
+	if sm != "" and _one_to_one:
 		var fc := _qud_color("&" + sm)
 		var tex := _colored_tex_rgb(tile, fc, fc, "anim~s" + sm + "~" + _color_key(win), _fill_for(tile, Fill.NONE))
 		if tex != null:
@@ -12354,6 +12365,75 @@ func _obj_detail(obj: Dictionary) -> Color:
 ## Cache key for an object's colours — the painted rgb when present, else the
 ## colour codes. Must distinguish the two, or a painted and an unpainted object
 ## sharing a tile would collide in the texture cache.
+## BLOOD (and any staining liquid) PAINTED ONTO THE SPRITE ITSELF.
+##
+## Daniel, on the bloodied creature: "it's a flashing red sprite, facing the wrong way, with the
+## wrong size. Let's just red paint drips to the existing sprite."
+##
+## What it was: Qud's RenderSmearPrimary flashes a liquid-covered thing in the liquid's colour for
+## 9 frames in 60, and Raves reproduced that as a SEPARATE overlay quad wearing a recoloured copy
+## of the tile. A second quad is a second set of answers to where-does-this-face and how-big-is-it,
+## and it got both wrong: the billboard carries the object's own pixel_size, tree scale, hflip and
+## seat, while the overlay is a 1x1 plane hung at the layer height. Nothing about that is fixable
+## by nudging the overlay — the only copy that is guaranteed to match the sprite is the sprite.
+##
+## So the stain goes INTO the texture. Same image, same size, same facing, same seat, by
+## construction, and no flash: a bloodied thing is bloodied, not blinking.
+##
+## The drips are DETERMINISTIC per tile+colour (the RNG is seeded from the cache key), because this
+## texture is cached and reused across every creature wearing it — a per-frame roll would shimmer,
+## and two dromads stained by the same pool should not be arguing about where the blood ran.
+const DRIP_ROWS_MAX := 6      ## longest run, in art pixels
+const DRIP_TRIES := 5         ## candidate columns per sprite; a 16px sprite wants few
+
+func _stained_tex(tile: String, main: Color, detail: Color, key: String, fill: int,
+		stain_code: String) -> ImageTexture:
+	var skey := key + "~blood" + stain_code
+	if _tex_cache.has(skey):
+		return _tex_cache[skey]
+	var base := _colored_tex_rgb(tile, main, detail, key, fill)
+	if base == null:
+		return null
+	var img := base.get_image().duplicate()
+	var stain := _qud_color("&" + stain_code)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(skey)
+	var w: int = img.get_width()
+	var h: int = img.get_height()
+	for _i in DRIP_TRIES:
+		var x: int = rng.randi_range(0, w - 1)
+		# start at the TOP of the art in this column: a drip runs down the thing, so it begins
+		# where the thing begins, not at some floating row inside it
+		var top: int = -1
+		for y in h:
+			if img.get_pixel(x, y).a > 0.5:
+				top = y
+				break
+		if top < 0:
+			continue
+		var run: int = rng.randi_range(2, DRIP_ROWS_MAX)
+		for k in run:
+			var y: int = top + k
+			if y >= h:
+				break
+			# ONLY ON THE ART. Painting past the silhouette would grow the sprite's outline — the
+			# exact class of mistake the overlay was making, in miniature.
+			var p: Color = img.get_pixel(x, y)
+			if p.a <= 0.5:
+				break
+			# the head of the run is the wettest; it dries out as it goes
+			var t: float = 0.85 - 0.5 * (float(k) / float(run))
+			img.set_pixel(x, y, p.lerp(stain, t))
+	var tex := ImageTexture.create_from_image(img)
+	_tex_cache[skey] = tex
+	return tex
+
+## The staining liquid's colour code for this object, or "" when it is not stained. Reads the same
+## field the flash overlay used to (mod: LiquidStained / RenderSmearPrimary), so nothing changes
+## about WHEN a thing is stained — only how it is drawn.
+func _stain_code(obj: Dictionary) -> String:
+	return String(obj.get("animSmear", ""))
+
 func _color_key(obj: Dictionary) -> String:
 	var hex := String(obj.get("fgHex", ""))
 	if hex != "":
