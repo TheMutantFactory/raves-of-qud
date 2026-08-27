@@ -409,9 +409,7 @@ func _build() -> void:
 	_edit.gui_input.connect(func(e: InputEvent):
 		if e is InputEventKey and e.pressed and e.keycode == KEY_ESCAPE:
 			_cancel())
-	# same fixed-slot trick as the Message: a LineEdit's minimum is its FONT height (21),
-	# and Qud's inputbox is 17.60, so a container child would make the box 4px too tall
-	# before anything else went wrong.
+	# Same fixed-slot trick as the Message — but the height is asked for, not asserted: see _edit_h.
 	_edit_slot = Control.new()
 	_edit_slot.clip_contents = true
 	_edit_slot.custom_minimum_size = Vector2(EDIT_W, _snap(EDIT_H))
@@ -603,6 +601,25 @@ func _draw_emblem(off: Vector2, cx: float) -> void:
 ## against Qud's 407.12/278.21, 379.12/239.81, 435.12/433.61 and 76.72/650.00. The data
 ## disk is the one that proves the width rule is not just "the widest command": its box is
 ## sized by the ITEM NAME, 393.61 against a command area that only asks for 199.81.
+## HOW TALL THE INPUT SLOT HAS TO BE, which is a question about OUR font and not only about Qud's.
+##
+## Qud's AskString inputbox is 17.60, and the slot used to be pinned to it with clip_contents on —
+## the note here said a LineEdit's own minimum is its font height, 21, and that letting it through
+## "would make the box 4px too tall". It did keep the box 4px shorter. It also cut 4px off the
+## bottom of everything anyone typed into it: empty, the field looks perfect, and the crop only
+## appears once there is a word in it. Daniel, with "This text is cropped" typed into the quit
+## confirmation: "Problem not solved. Observe the cropped text."
+##
+## REPRODUCING QUD'S BOX WHILE CLIPPING OUR TEXT IS NOT PARITY. Qud's 17.60 holds Qud's glyphs;
+## it does not hold ours, and a number copied across from a different renderer stops being a
+## measurement the moment it stops describing what is drawn. So the slot takes Qud's height or the
+## height this font needs, whichever is larger — and the BOX is measured from the same answer, which
+## is what makes the field fit inside the dialog rather than merely inside its own slot.
+func _edit_h() -> float:
+	if _edit == null:
+		return EDIT_H
+	return maxf(EDIT_H, _edit.get_combined_minimum_size().y)
+
 func _measure_box(is_input: bool) -> void:
 	# Scroll View / Content: Message + 2 + options area + 2 + inputbox, pad L5 R5.
 	# An ABSENT inputbox takes its spacing with it (the item menu's Content is 0 + 2 + 222
@@ -612,7 +629,10 @@ func _measure_box(is_input: bool) -> void:
 	var msg_h := _msg_h
 	var content_h := msg_h + 2.0 + opts_h
 	if is_input:
-		content_h += 2.0 + EDIT_H
+		var eh := _edit_h()
+		if _edit_slot != null:
+			_edit_slot.custom_minimum_size = Vector2(EDIT_W, _snap(eh))
+		content_h += 2.0 + eh
 	var content_w := maxf(_msg_w, EDIT_W if is_input else 0.0)
 	for c in _opt_box.get_children():
 		content_w = maxf(content_w, float((c as Control).get_meta("exact_w", 0.0)))
