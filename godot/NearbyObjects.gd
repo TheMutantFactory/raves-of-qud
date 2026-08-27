@@ -100,6 +100,9 @@ func _ready() -> void:
 	_rt.scroll_active = true
 	_rt.selection_enabled = false   # a selectable RTL grabs focus on click and the arrows stop
 	_rt.focus_mode = Control.FOCUS_NONE   # reaching the player (the command-bar rule)
+	# a RichTextLabel only reports [url] clicks when it can feel the mouse at all
+	_rt.mouse_filter = Control.MOUSE_FILTER_STOP
+	_rt.meta_clicked.connect(func(meta: Variant): object_activated.emit(String(meta)))
 	_rt.size_flags_vertical = Control.SIZE_SHRINK_BEGIN   # height comes from _fit_user_height
 	_rt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	v.add_child(_rt)
@@ -162,12 +165,31 @@ func set_snapshot(data: Dictionary) -> void:
 		_fit_user_height(0)
 		return
 
+	# IDS COME FROM QUD'S FINDER LIST, not from the scan. The scan's objects carry no id — the mod
+	# writes one only into the `nearby` array — and it would not help if they did: TwiddleNearby
+	# resolves an id against that same finder list, so an id for something the finder does not
+	# hold (ground cover, walls) could never be acted on. Matching by stripped display name
+	# attaches an id to exactly the rows Qud can act on and leaves the rest inert, which is the
+	# truth of it rather than a row that looks clickable and does nothing.
+	var id_by_name := {}
+	for nb in data.get("nearby", []):
+		var nbn := QudText.strip(String(nb.get("name", "")))
+		var nbi := String(nb.get("id", ""))
+		if nbn != "" and nbi != "" and not id_by_name.has(nbn):
+			id_by_name[nbn] = nbi
 	var img_h := UiFont.px(get_viewport(), "body") * 2   # match the message log's inline icon size
 	var img_w := int(round(img_h * 16.0 / 24.0))   # Qud tiles are 16x24
 	_rt.clear()
 	for i in mini(names.size(), MAX_ROWS):
 		var e: Dictionary = found[names[i]]
 		var o: Dictionary = e["obj"]
+		# CLICKABLE, in the mode people actually play in. The 1:1 list is one owner-drawn surface
+		# and gets its hit test from _row_id_at; the user panel is a RichTextLabel, so a row is
+		# made a target the way every other clickable text in Raves is — a [url] carrying the
+		# object's own id, which is exactly what request_nearby wants.
+		var oid := String(id_by_name.get(String(names[i]), ""))
+		if oid != "":
+			_rt.push_meta(oid)
 		_rt.append_text(String(e["arrow"]) + " ")
 		# Perceived icon by default (unidentified -> "unknown" tile via tileP); real tile in full mode.
 		var tex: Texture2D = _tiles.texture_for(o, _full)
@@ -176,7 +198,10 @@ func set_snapshot(data: Dictionary) -> void:
 		else:
 			_rt.append_text(_tiles.glyph_for(o, _full).replace("[", "[lb]"))   # fallback glyph
 		var suffix: String = ("  ×%d" % e["count"]) if e["count"] > 1 else ""
-		_rt.append_text(" " + QudText.to_bbcode(String(e["raw"]), _palette) + suffix + "\n")
+		_rt.append_text(" " + QudText.to_bbcode(String(e["raw"]), _palette) + suffix)
+		if oid != "":
+			_rt.pop()
+		_rt.append_text("\n")
 	_fit_user_height(mini(names.size(), MAX_ROWS))
 
 ## SHRINK TO WHAT IS ACTUALLY NEARBY. Daniel: "let the Nearby objects window shrink to fit what's
@@ -299,10 +324,13 @@ func _build_grab_strip() -> void:
 	add_child(_grab)
 
 func _gui_input(e: InputEvent) -> void:
-	if not _one_to_one:
-		return
+	# THE 1:1 GATE BELONGED TO THE DRAG, NOT TO THE ROWS. This handler used to return outright
+	# unless parity mode was on, which meant clicking a nearby object worked in the one mode whose
+	# whole point is to reproduce Qud's screen and not in the mode people play. Daniel: "I can't
+	# seem to click on nearby objects." The grab bar IS 1:1-only — it resizes the side column that
+	# only parity mode draws — so that half keeps its gate and row activation loses it.
 	if e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT:
-		if e.pressed and e.position.x < float(SEP_MARGIN_1TO1):
+		if _one_to_one and e.pressed and e.position.x < float(SEP_MARGIN_1TO1):
 			_dragging = true
 			_press = e.position
 			accept_event()
@@ -320,7 +348,7 @@ func _gui_input(e: InputEvent) -> void:
 				if id != "":
 					object_activated.emit(id)
 					accept_event()
-	elif e is InputEventMouseMotion and _dragging:
+	elif e is InputEventMouseMotion and _dragging and _one_to_one:
 		left_edge_drag.emit(e.relative.x)
 		accept_event()
 
