@@ -12607,6 +12607,32 @@ const DRIP_ROWS_MAX := 10     ## longest run, in art pixels
 const DRIP_COL_STEP := 2      ## a candidate column every N: half the sprite's columns can carry one
 const DRIP_ODDS := 0.65       ## ...and this many of those actually do
 
+## COATING LIQUIDS GET A LOT MORE OF IT. Daniel, stuck in a pool of asphalt: "let's work on the
+## tarred coloring. It's like the blood drip but a lot more. It's also asphalt colored."
+##
+## Blood spatters; tar COATS. Same painter, different amount: every column carries a run, the runs
+## go the whole way down, and the tail stays nearly as dark as the head — which is what a thing
+## pulled out of an asphalt pool looks like, versus one that has been bled on.
+##
+## Keyed on the smear COLOUR CODE, which is the only thing the wire carries about the liquid, and
+## which happens to group them the right way: 'K' is asphalt, ink, oil, ooze and putrescence — all
+## of them things that coat — while 'r' is blood and stays a drip. 'w' (sludge, honey, cider) coats
+## too; cider is the odd one in that set and is not worth a wire change to separate.
+const COAT_CODES := ["K", "w", "G", "g"]     ## asphalt/ink/oil/ooze, sludge/honey, goo, slime
+## A LOT MORE, NOT EVERYTHING. The first attempt ran every column the full height at full strength
+## and turned the figure into a black rectangle with the missed pixels reading as noise — the worst
+## of both, neither a coated creature nor a streaked one. "Like the blood drip but a lot more" is
+## more RUNS and LONGER runs, not the end of the silhouette: tar sheets off a thing, and you can
+## still see what the thing is.
+const COAT_TAIL := 0.80       ## a coat barely thins toward the bottom...
+const COAT_HEAD := 0.95       ## ...and never quite reaches pure stain, so the art still shows
+const COAT_COL_STEP := 1      ## every column is a candidate
+const COAT_ODDS := 0.80       ## ...and most take it
+const COAT_REACH := 0.75      ## a run covers this much of the art below where it starts
+
+func _stain_coats(code: String) -> bool:
+	return COAT_CODES.has(code)
+
 func _stained_tex(tile: String, main: Color, detail: Color, key: String, fill: int,
 		stain_code: String) -> ImageTexture:
 	var skey := key + "~blood" + stain_code
@@ -12623,8 +12649,13 @@ func _stained_tex(tile: String, main: Color, detail: Color, key: String, fill: i
 	var h: int = img.get_height()
 	# COVERAGE, not a handful of dots. Walking the columns instead of picking a few random ones
 	# also spreads them across the whole silhouette rather than clumping wherever the rolls fell.
-	for cx0 in range(0, w, DRIP_COL_STEP):
-		if rng.randf() > DRIP_ODDS:
+	var coats := _stain_coats(stain_code)
+	var step: int = COAT_COL_STEP if coats else DRIP_COL_STEP
+	var odds: float = COAT_ODDS if coats else DRIP_ODDS
+	var tail: float = COAT_TAIL if coats else DRIP_TAIL
+	var head: float = COAT_HEAD if coats else DRIP_HEAD
+	for cx0 in range(0, w, step):
+		if rng.randf() > odds:
 			continue
 		var x: int = cx0
 		# start at the TOP of the art in this column: a drip runs down the thing, so it begins
@@ -12636,7 +12667,9 @@ func _stained_tex(tile: String, main: Color, detail: Color, key: String, fill: i
 				break
 		if top < 0:
 			continue
-		var run: int = rng.randi_range(2, DRIP_ROWS_MAX)
+		# a coat sheets most of the way down from where it starts; a drip runs a little way and stops
+		var run: int = int(round(float(h - top) * COAT_REACH)) if coats \
+			else rng.randi_range(2, DRIP_ROWS_MAX)
 		for k in run:
 			var y: int = top + k
 			if y >= h:
@@ -12648,7 +12681,7 @@ func _stained_tex(tile: String, main: Color, detail: Color, key: String, fill: i
 				break
 			# the head of the run is the wettest; it dries out as it goes, but never so far that
 			# it stops being the liquid's colour
-			var t: float = lerpf(DRIP_HEAD, DRIP_TAIL, float(k) / float(run))
+			var t: float = lerpf(head, tail, float(k) / float(run))
 			img.set_pixel(x, y, p.lerp(stain, t))
 	var tex := ImageTexture.create_from_image(img)
 	_tex_cache[skey] = tex
