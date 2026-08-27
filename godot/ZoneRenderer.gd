@@ -3564,6 +3564,7 @@ func _all_dirs(suf: String) -> bool:
 const VERDICT_KEYS := [
 	["waterwheel", "waterwheel"],
 	["wall", "wall"],
+	["arch", "arch"],
 	["n–s", "panel_ns"],
 	["e–w", "panel_ew"],
 	["billboard", "billboard"],
@@ -4977,6 +4978,90 @@ var _door_tile_at := {}
 ## the report form's "door" verdict can force or override it per family.
 func _is_door(tile: String) -> bool:
 	return tile_family(tile).contains("door")
+
+## Is this tile an ARCHWAY? Family-name test, like _is_door; the report form's "arch" verdict can
+## force or override it per family.
+func _is_arch(tile: String) -> bool:
+	return tile_family(tile).contains("arch")
+
+## THE ARCHWAY, built as the wall it visually is.
+##
+## Daniel, filing on the tile (feedback cb498c5c): "Archway. Open area stays open. The rest of the
+## arch should extend to the wall. All one color."
+##
+## Qud does not call it a wall — the cell report reads wall=0 occluding=0 solid=0, because you can
+## walk through an archway — so Raves drew it the way it draws anything that is not a wall: an
+## upright billboard. A flat sprite of an arch, standing in the gap of a stone run. What it should
+## be is the run CONTINUING, with a hole in it.
+##
+## So the art's opaque pixels become geometry at FULL CELL DEPTH — the wall's own thickness — and
+## the transparent middle stays empty. One rule does both halves of the report: the arch reaches
+## the wall because it is as deep as the wall, and the opening stays open because there was never
+## anything there to build.
+##
+## ONE COLOUR, because an extruded mask has no business wearing the sprite's shading. Faces and
+## edges take the same material and the relief comes from the geometry, exactly as it does for the
+## rock either side of it.
+##
+## Reuses the door's mask-to-boxes machinery (_door_boxes / _door_face / _door_edges), which is
+## already a general "extrude an art mask into a slab" and was only ever named after its first
+## caller. The arch needs no leaf, no hinge and no cap: every box carries its own four edges, so
+## the boundary of the opening is built by the boxes that surround it.
+func _place_arch(tile: String, main_c: String, _detail_c: String, cx: int, cy: int,
+		light_frac: float) -> bool:
+	var mask := _mask(tile)
+	if mask == null:
+		return false
+	var w := float(mask.get_width())
+	var h := float(mask.get_height())
+	var opaque := {}
+	var y0 := mask.get_height()
+	var y1 := -1
+	for y in mask.get_height():
+		for x in mask.get_width():
+			if mask.get_pixel(x, y).a > 0.5:
+				opaque[Vector2i(x, y)] = true
+				y0 = mini(y0, y)
+				y1 = maxi(y1, y)
+	if y1 < y0:
+		return false
+	var boxes := _door_boxes(opaque, 0, mask.get_width() - 1, y0, y1)
+	if boxes.is_empty():
+		return false
+	# Spans its run the way a door does: the axis with more adjacent walls wins, so the arch
+	# continues the wall it sits in rather than facing whichever way its art was drawn.
+	var ew := _door_span_ew(cx, cy)
+	var lf := clampf(light_frac, 0.0, 1.0)
+	var col := func(c: float) -> float: return c / w - 0.5
+	# scaled over the arch's OWN rows, so its top reaches wall height — a derived shape sizes
+	# against the wall it joins, not against the 24 art rows it was drawn in
+	var row := func(r: float) -> float: return (float(y1) + 1.0 - r) / float(y1 - y0 + 1) * WALL_H
+	var d := 0.5   # HALF-depth: one full cell across, meeting the wall on both faces
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for b in boxes:
+		var bx0 := float(b[0])
+		var bx1 := float(b[1]) + 1.0
+		var br0 := float(b[2])
+		var br1 := float(b[3]) + 1.0
+		_door_face(st, bx0, bx1, br0, br1, d, ew, col, row, w, h)
+		_door_edges(st, bx0, bx1, br0, br1, d, ew, col, row, w, h)
+	var mi := MeshInstance3D.new()
+	var mesh := ArrayMesh.new()
+	st.commit(mesh)
+	mi.mesh = mesh
+	var c := _qud_color(main_c)
+	var mat: StandardMaterial3D = _color_material(c).duplicate()
+	mat.albedo_color = Color(c.r * lf, c.g * lf, c.b * lf)
+	mat.vertex_color_use_as_albedo = true   # the edge shades ride in as vertex colour
+	mi.material_override = mat
+	mi.position = Vector3(cx, 0, cy)
+	_spawn_parent().add_child(mi)
+	_track(mi)
+	# REGISTERED AS GEOMETRY, not as a sprite. The fog gate hides meshes per turn and only the door
+	# path was registering; anything else built as geometry showed straight through unexplored fog.
+	_track_door_mesh(mi, cx, cy)
+	return true
 
 ## Which way does a door span? The axis with MORE adjacent walls wins: a
 ## door in an E-W run has walls east+west and spans E-W (its faces look
@@ -8694,6 +8779,13 @@ func _place_nonwall(obj: Dictionary, cx: int, cy: int, idx: int, in_wall: bool, 
 			_place_door(tile, main_c, detail_c, cx, cy, idx, light_frac,
 				bool(obj.get("occluding", false)))
 			return
+		# ARCHWAYS become the wall run they sit in, with their opening left open — see _place_arch.
+		# Same gating as the door: a derived 3D shape is a user-mode thing, and 1:1 parity mode
+		# draws Qud's flat tile instead.
+		if (verdict == "arch" or (verdict == "" and _is_arch(tile))) \
+				and not _one_to_one and not _flat_2d and not _world_map and not in_wall:
+			if _place_arch(tile, main_c, detail_c, cx, cy, light_frac):
+				return
 		# directional connectors (fences, pipes, axles: family_<dirs>) ->
 		# orientation-locked standing panels, not billboards.
 		var dirs = _connector_dirs(tile) if _is_connector(obj, tile) else null
