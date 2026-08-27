@@ -8344,11 +8344,21 @@ func _is_glowfish(obj: Dictionary) -> bool:
 	return String(obj.get("tile", "")).to_lower().contains("glowfish")
 
 ## Should this object get the bioluminescent GLOW bloom? True for built-in glow-* tiles
-## (glowfish, glowpad, glowmoth, …) and for any tile the user tagged "glow" via the report
-## form (an `effect` override). Purely visual — separate from the motes above.
+## (glowfish, glowpad, glowmoth, …), for anything Qud NAMES a glow-something, and for any tile
+## the user tagged "glow" via the report form (an `effect` override). Purely visual — separate
+## from the motes above, which stay glowfish-only (report 87e418f5 asked for "body, not motes").
+##
+## THE NAME, because the art does not always say it. A glowcrow's tile is Creatures/sw_crow.bmp —
+## the same art an ordinary crow would wear — and only "glowcrow" says the bird is lit. Same shape
+## as the tree rule: when Qud has told us what a thing is, believe the word over the filename.
+##
+## This also keeps it OFF the floor-pool path (the callers above exclude glowing things), so a
+## glowcrow lights its own body and does not stain the ground under it.
 func _should_glow(obj: Dictionary) -> bool:
 	var tile := String(obj.get("tile", "")).to_lower()
 	if tile.contains("glow"):
+		return true
+	if String(obj.get("display", obj.get("name", ""))).to_lower().contains("glow"):
 		return true
 	return _glow_overrides.has(tile_family(tile))
 
