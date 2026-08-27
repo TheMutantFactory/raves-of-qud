@@ -5291,6 +5291,21 @@ func _is_prism(obj: Dictionary) -> bool:
 		return true
 	if ov != "":
 		return false          # any other verdict means "not a block"
+	# A TREE IS NEVER A BLOCK, however solidly it blocks. Daniel, beside a shimscale mangrove:
+	# "The tree is a block. It should be a billboard sprite, and giant, because it's blocking you."
+	#
+	# The mangrove reports wall + occluding + solid, so every test below says prism and it came out
+	# as a slab of bark-coloured rock. But "blocks you" and "is a wall" are different claims: a tree
+	# stops you the way a tree stops you, and drawing it as masonry loses the one thing that told
+	# you which it was. Falling through to the billboard path also earns it the 2x the blocker rule
+	# gives every sight-stopper, which is the "giant" half of the ask — a tree you cannot walk
+	# through should look like it.
+	#
+	# ...and it reads the NAME as well as the art, because the art does not say tree: the tiles are
+	# sw_mangrove1/2 and only "Shimscale Mangrove Tree" says what it is. Brinestalk stays a prism,
+	# which is what the line below has always meant by one.
+	if _is_tree_obj(obj):
+		return false
 	# a solid, sight-blocking wall -> render as a 3D prism (rock, metal, brinestalk).
 	if not (bool(obj.get("wall", false)) and bool(obj.get("occluding", false))):
 		return false
@@ -11994,10 +12009,19 @@ func _tree_scale(tile: String, obj: Dictionary = {}) -> float:
 	if _one_to_one or _flat_2d or _world_map:
 		return 1.0
 	var blocker: bool = bool(obj.get("wall", false)) or bool(obj.get("occluding", false))
-	var lower := tile.to_lower()
-	if not blocker and not lower.contains("tree") and not lower.contains("statue"):
+	if not blocker and not _is_tree_obj(obj, tile) and not tile.to_lower().contains("statue"):
 		return 1.0
 	return TREE_SCALE if Settings.qol_on("bigtrees") else 1.0
+
+## ONE DEFINITION OF "TREE", asked by both the prism test and the scale rule so the two can never
+## disagree about what a tree is. Art OR name: fattree1-3, talltree1-2, starappletree (Daniel's
+## strapple), tree_bulbs, tree_crystal and plastic_tree say it in the tile; the shimscale mangrove
+## says it only in the name.
+func _is_tree_obj(obj: Dictionary, tile := "") -> bool:
+	if String(obj.get("name", "")).to_lower().contains("tree"):
+		return true
+	var t: String = tile if tile != "" else String(obj.get("tile", ""))
+	return t.to_lower().contains("tree")
 
 
 func _take_sprite() -> Sprite3D:
