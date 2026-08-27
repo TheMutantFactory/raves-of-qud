@@ -1976,6 +1976,18 @@ func _connect_holodeck() -> void:
 	_holo.connect("tombstone_changed", _on_tombstone_changed)
 	_holo.connect("camera_changed", _on_camera_changed)   # print the new camera's controls to the log
 	_holo.connect("look_changed", _on_look_changed)       # the look cursor -> the log + its button
+	# W armed a walk and is waiting for a direction. The mode has no window, so the log IS the
+	# prompt — the same rule the look cursor's controls line follows.
+	_holo.connect("walk_prompt", func(armed: bool, dir: String) -> void:
+		if _msglog == null:
+			return
+		if armed:
+			_msglog.add_message("{{C|walk:}} which way?"
+				+ "  {{K|[arrows / numpad] go · any other key cancels}}")
+		elif dir != "":
+			_msglog.add_message("{{C|walk:}} " + dir + " {{K|until something stops you}}")
+		else:
+			_msglog.add_message("{{K|walk: cancelled}}"))
 	# a system-menu pick of "Control Mapping" mirrors into Raves' own screen (Qud
 	# opens its KeybindsScreen from the same answer). BOTH modes — user mode gets
 	# the extra RAVES section (golden restore) that 1:1 hides.

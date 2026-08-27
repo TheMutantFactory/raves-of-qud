@@ -46,6 +46,11 @@ const DEFAULTS := {
 	# The see-through BUBBLE around the player: walls within this many cells, on the camera
 	# side, fade regardless of light — the narrow-cave answer. 0 turns it off.
 	"cutaway_bubble": 2.5,
+	# FINAL-FANTASY HOLD-TO-WALK: how many steps a second a held direction key takes. Daniel:
+	# "holding down the direction key will cause the player to walk in that direction, 1 tile at a
+	# time. User setting for auto-walk rate." Stated as steps PER SECOND rather than seconds per
+	# step, because the number people want to turn up is the speed.
+	"auto_walk_rate": 6.0,
 	"cutaway_bubble_on": true,   # the master switch; the radius slider stays the size knob
 	"penumbra_divisions": 1,
 	# SHADOW SHOWS ON THE ART, NOT ON THE GROUND. With this on, a remembered cell's ground keeps

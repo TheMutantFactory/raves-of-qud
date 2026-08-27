@@ -847,6 +847,7 @@ const BG_DRAW_INTERVAL := 0.05   # ~20fps forced draws while unfocused
 
 func _process(dt: float) -> void:
 	_remote.poll(dt)
+	_hold_step(dt)   # Final-Fantasy hold-to-walk: a held direction keeps stepping
 	if _picker.is_picking():
 		_picker.update_cursor()
 	# Keep the viewer rendering while its window is UNFOCUSED, so it stays live beside
@@ -867,6 +868,80 @@ func _process(dt: float) -> void:
 	_cam_rig.process(dt, _multiview.is_on(), TypingGuard.typing(get_viewport()))
 	if _multiview.is_on():
 		_multiview.update()
+
+# ── hold to walk, and walk-in-a-direction ─────────────────────────────────────
+#
+# TWO DIFFERENT WALKS, and they answer different questions.
+#
+# HOLD-TO-WALK is Final Fantasy's: keep the direction down and you keep stepping, one tile at a
+# time, at a rate the player sets. Daniel: "holding down the direction key will cause the player to
+# walk in that direction, 1 tile at a time. User setting for auto-walk rate." It is a Raves input
+# nicety — Qud sees ordinary single steps, so nothing about turns, interrupts or bookkeeping
+# changes; only the number of key presses your hand has to make does.
+#
+# THE KEYCODE IS WHAT IS HELD, not the direction. Re-running the same key each repeat means turning
+# the camera mid-walk turns the walk with it, because "forward" is a camera-relative question that
+# has to be re-asked, not a compass letter cached at the first press.
+#
+# WALK-IN-A-DIRECTION is Qud's own CmdWalk (bound to W): pick a direction and go until something
+# stops you. That one is the GAME's, interrupts and all, so it is a command sent once — see the
+# mod's `walk`.
+const HOLD_START := 0.28      # a tap must not become two steps; repeats begin after this
+var _hold_key := 0            # the movement key currently held down, 0 for none
+var _hold_intent := Vector2.ZERO   # its camera-relative intent (arrows), else ZERO
+var _hold_abs := ""           # ...or its absolute compass direction (numpad)
+var _hold_t := 0.0
+var _hold_started := false
+## True while W has been pressed and Raves is waiting for the direction to walk in.
+var _walk_pending := false
+
+## Remember what just moved the player, so holding the key keeps it moving. Called from the arrow
+## and numpad handlers with whichever of the two forms they used.
+func _hold_begin(key: int, intent: Vector2, abs_dir := "") -> void:
+	_hold_key = key
+	_hold_intent = intent
+	_hold_abs = abs_dir
+	_hold_t = 0.0
+	_hold_started = false
+
+## One tick of hold-to-walk. Polled rather than driven by the OS key-repeat, which has its own rate
+## the player cannot set and which `_unhandled_input` deliberately drops (`not event.echo`).
+func _hold_step(dt: float) -> void:
+	if _hold_key == 0:
+		return
+	# THE SAME GUARDS THE EVENT PATH USES. A polled walk that ignored them would keep stepping under
+	# an open status screen, which is the bug the modal check already exists to prevent.
+	if not Input.is_key_pressed(_hold_key) or _modal_owns_input() \
+			or TypingGuard.typing(get_viewport()):
+		_hold_key = 0
+		return
+	_hold_t += dt
+	var rate: float = maxf(1.0, float(Settings.get_value("auto_walk_rate", 6.0)))
+	if _hold_t < (1.0 / rate if _hold_started else HOLD_START):
+		return
+	_hold_t = 0.0
+	_hold_started = true
+	if _hold_abs != "":
+		client.send_command("move", {"dir": _hold_abs})
+	else:
+		_move_relative(_hold_intent)
+
+## W pressed: Qud's CmdWalk, in two halves. Raves collects the DIRECTION first and sends both at
+## once, because Qud's own flow opens a blocking direction prompt and a client that answered it late
+## would leave the game parked on a prompt nobody can see.
+func _walk_arm() -> void:
+	_walk_pending = true
+	walk_prompt.emit(true, "")
+
+## The direction for an armed walk. Returns true if it consumed the key.
+func _walk_answer(d: String) -> bool:
+	if not _walk_pending:
+		return false
+	_walk_pending = false
+	walk_prompt.emit(false, d)
+	if d != "":
+		client.send_command("walk", {"dir": d})
+	return true
 
 ## Move the player relative to the camera. `intent` is (strafe, forward) in screen
 ## space: (0,1)=forward, (0,-1)=back, (1,0)=right, (-1,0)=left.
@@ -1088,6 +1163,11 @@ signal camera_changed(mode: int, controls: String)
 ## the line to the message log and keeps its "report tile" button pointed at the same cell — the
 ## frame owns the log, and Main owns the cursor, so this is the seam between them.
 signal look_changed(on: bool, cell: Vector2i, line: String)
+
+## W has armed a walk and is waiting for a direction (or has stopped waiting). The frame prints the
+## prompt: this mode has no window of its own, and a key that silently changes what the NEXT key
+## means is the look cursor's trap all over again.
+signal walk_prompt(armed: bool, dir: String)
 
 func is_one_to_one() -> bool:
 	return _one_to_one
@@ -1715,8 +1795,15 @@ func _unhandled_input(event: InputEvent) -> void:
 				look_toggle()   # travel begins; the cursor's job is done
 				print("[look] walking to (%d,%d)" % [wc.x, wc.y])
 			return
+		# W IS QUD'S WALK KEY (CmdWalk, "Walk in a direction"), and in play modes that is what it
+		# does here — the same trade S and D already made, where the stairs commands took the keys
+		# from the camera's height controls. The forward dolly keeps working on SHIFT+W, beside X.
 		if _cam_rig._mode != CamMode.KEYBOARD and not _cam_locked() and event.keycode == KEY_W:
-			_cam_rig._cam_pan += _cam_rig.cam_forward() * _cam_rig.CAM_STEP; return
+			if event.shift_pressed:
+				_cam_rig._cam_pan += _cam_rig.cam_forward() * _cam_rig.CAM_STEP
+			else:
+				_walk_arm()
+			return
 		if _cam_rig._mode != CamMode.KEYBOARD and not _cam_locked() and event.keycode == KEY_X:
 			_cam_rig._cam_pan -= _cam_rig.cam_forward() * _cam_rig.CAM_STEP; return
 		# S / D = go UP / DOWN stairs (Qud's climb commands CmdMoveU / CmdMoveD; Down also
@@ -1795,35 +1882,84 @@ func _unhandled_input(event: InputEvent) -> void:
 		var mod: bool = event.ctrl_pressed or event.meta_pressed
 		var diag: bool = event.shift_pressed and not mod    # Shift alone -> diagonal move
 		var strafe_mod: bool = event.shift_pressed and mod  # Ctrl/Cmd+Shift -> strafe (first-person)
+		# A WALK IS ARMED — this key is its direction, not a step. Same keys, same camera-relative
+		# reading; only what happens with the answer differs.
+		if _walk_pending:
+			var wd := ""
+			match event.keycode:
+				KEY_UP:    wd = _cam_rig.relative_compass(Vector2(1, 1) if diag else Vector2(0, 1))
+				KEY_DOWN:  wd = _cam_rig.relative_compass(Vector2(-1, -1) if diag else Vector2(0, -1))
+				KEY_LEFT:  wd = _cam_rig.relative_compass(Vector2(-1, 1) if diag else Vector2(-1, 0))
+				KEY_RIGHT: wd = _cam_rig.relative_compass(Vector2(1, -1) if diag else Vector2(1, 0))
+				KEY_KP_8: wd = "N"
+				KEY_KP_2: wd = "S"
+				KEY_KP_4: wd = "W"
+				KEY_KP_6: wd = "E"
+				KEY_KP_7: wd = "NW"
+				KEY_KP_9: wd = "NE"
+				KEY_KP_1: wd = "SW"
+				KEY_KP_3: wd = "SE"
+				_:
+					# ANY OTHER KEY CANCELS, rather than being swallowed. An armed mode that eats
+					# unrelated keys is worse than one that gives up on the first sign of a change
+					# of mind — and Esc has its own handling further up, which this must not block.
+					_walk_answer("")
+					return
+			_walk_answer(wd)
+			return
 		match event.keycode:
-			KEY_UP:    _move_relative(Vector2(1, 1) if diag else Vector2(0, 1))      # NE / forward
-			KEY_DOWN:  _move_relative(Vector2(-1, -1) if diag else Vector2(0, -1))   # SW / back
+			KEY_UP:
+				_move_relative(Vector2(1, 1) if diag else Vector2(0, 1))      # NE / forward
+				_hold_begin(KEY_UP, Vector2(1, 1) if diag else Vector2(0, 1))
+			KEY_DOWN:
+				_move_relative(Vector2(-1, -1) if diag else Vector2(0, -1))   # SW / back
+				_hold_begin(KEY_DOWN, Vector2(-1, -1) if diag else Vector2(0, -1))
 			KEY_LEFT:
 				if diag:
 					_move_relative(Vector2(-1, 1))       # NW diagonal
+					_hold_begin(KEY_LEFT, Vector2(-1, 1))
 				elif _cam_rig._mode == CamMode.FIRST_PERSON and not strafe_mod:
 					_cam_rig._compass_yaw += PI * 0.25            # turn left 45°
 				elif _cam_rig._mode == CamMode.FOLLOW and not strafe_mod:
 					_cam_rig.turn_follow(PI * 0.25)               # FOLLOW turns like first-person
 				else:
 					_move_relative(Vector2(-1, 0))       # strafe left (or FP/FOLLOW Ctrl+Shift)
+					_hold_begin(KEY_LEFT, Vector2(-1, 0))
 			KEY_RIGHT:
 				if diag:
 					_move_relative(Vector2(1, -1))       # SE diagonal
+					_hold_begin(KEY_RIGHT, Vector2(1, -1))
 				elif _cam_rig._mode == CamMode.FIRST_PERSON and not strafe_mod:
 					_cam_rig._compass_yaw -= PI * 0.25            # turn right 45°
 				elif _cam_rig._mode == CamMode.FOLLOW and not strafe_mod:
 					_cam_rig.turn_follow(-PI * 0.25)
 				else:
 					_move_relative(Vector2(1, 0))        # strafe right
-			KEY_KP_8: client.send_command("move", {"dir": "N"})
-			KEY_KP_2: client.send_command("move", {"dir": "S"})
-			KEY_KP_4: client.send_command("move", {"dir": "W"})
-			KEY_KP_6: client.send_command("move", {"dir": "E"})
-			KEY_KP_7: client.send_command("move", {"dir": "NW"})
-			KEY_KP_9: client.send_command("move", {"dir": "NE"})
-			KEY_KP_1: client.send_command("move", {"dir": "SW"})
-			KEY_KP_3: client.send_command("move", {"dir": "SE"})
+					_hold_begin(KEY_RIGHT, Vector2(1, 0))
+			KEY_KP_8:
+				client.send_command("move", {"dir": "N"})
+				_hold_begin(KEY_KP_8, Vector2.ZERO, "N")
+			KEY_KP_2:
+				client.send_command("move", {"dir": "S"})
+				_hold_begin(KEY_KP_2, Vector2.ZERO, "S")
+			KEY_KP_4:
+				client.send_command("move", {"dir": "W"})
+				_hold_begin(KEY_KP_4, Vector2.ZERO, "W")
+			KEY_KP_6:
+				client.send_command("move", {"dir": "E"})
+				_hold_begin(KEY_KP_6, Vector2.ZERO, "E")
+			KEY_KP_7:
+				client.send_command("move", {"dir": "NW"})
+				_hold_begin(KEY_KP_7, Vector2.ZERO, "NW")
+			KEY_KP_9:
+				client.send_command("move", {"dir": "NE"})
+				_hold_begin(KEY_KP_9, Vector2.ZERO, "NE")
+			KEY_KP_1:
+				client.send_command("move", {"dir": "SW"})
+				_hold_begin(KEY_KP_1, Vector2.ZERO, "SW")
+			KEY_KP_3:
+				client.send_command("move", {"dir": "SE"})
+				_hold_begin(KEY_KP_3, Vector2.ZERO, "SE")
 		# LAST fallback: the player's own Qud keybindings (Control Mapping remaps).
 		# Qud stores a remap fine but Raves' hardcoded keys never consulted it, so a
 		# custom bind ("{" = Move east) died at our seam. Raves handlers above keep

@@ -941,6 +941,60 @@ namespace RavesOfQud
                         Keyboard.PushCommand("CmdMove" + dir, null);
                     return;
                 }
+                if (name == "walk")
+                {
+                    // WALK IN A DIRECTION UNTIL SOMETHING STOPS YOU — Qud's own CmdWalk, which is a
+                    // two-part command: the command opens a direction prompt, and the prompt is what
+                    // actually starts the walk. Both halves go into Qud's input queue here, IN ORDER,
+                    // so there is no window for the client to answer a prompt that has not opened yet.
+                    //
+                    // The prompt is answered with a CLICK AT THE ADJACENT CELL, the same way Raves
+                    // answers every other PickDirection (see `dir`) — Qud derives the direction from
+                    // the cell, so this needs no key table and no guess at the player's bindings.
+                    //
+                    // BUT IT HAS TO WAIT FOR THE PROMPT. Pushing the command and the answer together
+                    // does not work: they do not share a queue, and the answer was consumed before
+                    // CmdWalk had even run — measured, with Qud parked on `scene=PickTarget` until it
+                    // was escaped by hand. So the click is pumped on the uiQueue until the window is
+                    // actually up, which is the same self-requeuing watcher PopupBridge runs on.
+                    //
+                    // Interruption stays entirely Qud's — hostiles, terrain, a turn's worth of its
+                    // own reasons — which is the whole reason not to loop `move` from the client.
+                    f.TryGetValue("dir", out string wdir);
+                    if (string.IsNullOrEmpty(wdir) || !Dirs.Contains(wdir)) return;
+                    var wcell = The.Player?.CurrentCell;
+                    if (wcell == null) return;
+                    int wtx = wcell.X + (wdir.Contains("E") ? 1 : (wdir.Contains("W") ? -1 : 0));
+                    int wty = wcell.Y + (wdir.Contains("S") ? 1 : (wdir.Contains("N") ? -1 : 0));  // y grows SOUTH
+                    Keyboard.PushCommand("CmdWalk", null);
+                    var gmw = GameManager.Instance;
+                    if (gmw != null && gmw.uiQueue != null)
+                    {
+                        int wtries = 0;
+                        Action pumpWalk = null;
+                        pumpWalk = () =>
+                        {
+                            try
+                            {
+                                var pw = Qud.UI.PickTargetWindow.instance;
+                                if (pw != null && pw.Visible)
+                                {
+                                    Keyboard.PushMouseEvent("LeftClick", wtx, wty);
+                                    ForcePublishSoon = true;
+                                    return;
+                                }
+                                // GIVES UP RATHER THAN SPINS. If the prompt never opens (the command
+                                // was refused, something else took the turn) a watcher that requeued
+                                // forever would sit on the uiQueue for the rest of the session.
+                                if (++wtries < 240) gmw.uiQueue.queueTask(pumpWalk, 0);
+                                else Server.Log("walk: no direction prompt appeared");
+                            }
+                            catch (Exception e) { try { Server.Log("walk pump failed: " + e.Message); } catch { } }
+                        };
+                        gmw.uiQueue.queueTask(pumpWalk, 0);
+                    }
+                    return;
+                }
                 if (name == "wait")
                 {
                     // Wait one turn (Qud's CmdWait). Wakes the turn thread like a move, so it

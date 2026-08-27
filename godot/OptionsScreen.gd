@@ -35,6 +35,8 @@ const RAVES_ITEMS := [
 		"min": 0, "max": 30, "step": 0.5},
 	{"key": "adventure_angle", "label": "Adventure camera: angle (degrees down)", "type": "slider",
 		"min": 0, "max": 89, "step": 1},
+	{"key": "auto_walk_rate", "label": "Hold-to-walk speed (steps per second)", "type": "slider",
+		"min": 2, "max": 14, "step": 0.5},
 	{"key": "cutaway_bubble_on", "label": "See-through cutout (you + the look cursor)", "type": "toggle"},
 	{"key": "cutaway_bubble", "label": "See-through bubble radius (cells)",
 		"type": "slider", "min": 0, "max": 6, "step": 0.5},
