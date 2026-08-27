@@ -4968,7 +4968,13 @@ void fragment() {
 
 ## Hang the glow bloom over a glowfish sprite `s`, matched to its cropped region so the
 ## glowing shape lines up with the fish exactly.
-func _add_glow(s: Sprite3D, tex: Texture2D, tile := "", colour := Color(0.4, 1.0, 0.85)) -> void:
+## `outer_only` keeps the bloom OUTSIDE the silhouette and leaves the art alone — an outer glow.
+## The shader already separates the two: its fragment is
+##     fish_rgb * here * body_amt  +  glow_color * here * body_tint  +  glow_color * halo * halo_amt
+## where `here` is inside the silhouette and `halo` is outside, so zeroing the two BODY terms is
+## the whole change. The quad still draws over the sprite; it just adds nothing there.
+func _add_glow(s: Sprite3D, tex: Texture2D, tile := "", colour := Color(0.4, 1.0, 0.85),
+		outer_only := false) -> void:
 	# REPLACE, never stack: the sprite is pooled and re-seated across turns —
 	# a bloom built for an earlier seat carries that seat's region (measured:
 	# a full-band window twice the height of the submerged crop, the "cropped
@@ -4999,6 +5005,15 @@ func _add_glow(s: Sprite3D, tex: Texture2D, tile := "", colour := Color(0.4, 1.0
 	mat.set_shader_parameter("uv_size", Vector2(full.size.x / tw, full.size.y / th))
 	mat.set_shader_parameter("pad", GLOW_PAD)
 	mat.set_shader_parameter("glow_color", Vector3(colour.r, colour.g, colour.b))
+	if outer_only:
+		mat.set_shader_parameter("body_amt", 0.0)    # none of the art's own light
+		mat.set_shader_parameter("body_tint", 0.0)   # ...and no wash of glow over it either
+		# AND A TIGHTER HALO. Zeroing the body terms was necessary and not sufficient: at the
+		# glowfish's halo_uv the dilation reaches 0.12 of the art in every direction, which on a
+		# 16px sprite is most of the figure — so the "outer" glow still swallowed it. A rim reads
+		# as an outline; a cloud reads as fog with something in it.
+		mat.set_shader_parameter("halo_uv", 0.045)
+		mat.set_shader_parameter("halo_amt", 1.5)
 	mat.set_shader_parameter("y_lock", 0.0 if _top_down else 1.0)
 	mat.set_shader_parameter("water_v", water_v)
 	var q := MeshInstance3D.new()
@@ -9221,7 +9236,10 @@ func _place_nonwall(obj: Dictionary, cx: int, cy: int, idx: int, in_wall: bool, 
 				# glow effect as on a glowfish. Not the mote. The glow." The floor pool this
 				# replaced was a miscommunication on my side twice over — first the airbrushed
 				# mote texture, then a correctly-tiled pool that was still on the FLOOR.
-				_add_glow(s, btex, tile, STUCK_GLOW)
+				# OUTER glow: the halo reads as "stuck", the sprite underneath stays legible —
+				# which matters here more than anywhere, because the thing it is drawn over is a
+				# tarred figure whose whole point is that you can see the tar.
+				_add_glow(s, btex, tile, STUCK_GLOW, true)
 			_track(s)
 			# STATIC plant/scenery billboard (tree, brinestalk): register it to be dimmed by
 			# its cell's light EACH TURN (creatures get modulate directly; static sprites don't,
