@@ -104,7 +104,7 @@ const QOL_FEATURES := {
 	# ON by default, unlike its neighbours: Qud draws a tree in one cell because it has
 	# only one cell to draw it in, and at 1x a 3D tree reads as a shrub. 1:1 mode is
 	# unaffected — the renderer gates the scale out there, where pixels are measured.
-	"bigtrees": ["Trees & blocking plants (dandy caps) at 2x scale", true],
+	"bigtrees": ["Trees, blockers & statues at 2x scale", true],
 	# THE TWO SIDE PANELS, also ON by default. Both had working user-mode halves that had become
 	# unreachable: every panel was switched by the bare qud_shape(), which is TRUE in user mode, so
 	# the log's grouping toggle and Nearby's larger icons could not be turned on from anywhere.

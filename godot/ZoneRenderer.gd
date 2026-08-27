@@ -8960,6 +8960,19 @@ func _place_nonwall(obj: Dictionary, cx: int, cy: int, idx: int, in_wall: bool, 
 					_vox_mesh_cache[pkey] = pmesh
 			if pmesh != null:
 				var pmi := _vox_prop_mesh(pmesh, cx, cy, light_frac)
+				# STATUES STAND TALLER THAN A CELL. Daniel: "I saw a goat statue that was 2x. Is it
+				# possible to make the other statues 2x? I'm standing in front of one right now."
+				#
+				# The goat was a PETRIFIED CREATURE — creature art, solid, so the blocker rule sized
+				# it up on the billboard path. Every hand-carved statue takes this path instead and
+				# returned before that rule was ever asked, so the two kinds of statue were being
+				# sized by which rendering path they happened to fall down.
+				#
+				# _tree_scale WITHOUT the object, deliberately: that drops the blocker clause, so
+				# this is the tile-name half only and a prop does not grow merely for being solid.
+				var pscale := _tree_scale(tile)
+				if pscale != 1.0:
+					pmi.scale = Vector3(pscale, pscale, pscale)
 				# _wall_vox_mesh emits LOCAL vertices (the wall path positions its node); the
 				# tent-era builders _vox_prop_mesh grew up with bake world coords into the
 				# vertices and it never sets position — left unset, every statue in the zone
@@ -11947,26 +11960,42 @@ func set_top_down(on: bool) -> void:
 						"y_lock", 0.0 if on else 1.0)
 	_apply_wm_orient()   # world-map cards lie flat in top-down, stand up again otherwise (wins over the loop above)
 
-## How much to enlarge this tile's billboard. Trees only, and only in the 3D user view:
-## Qud draws a tree inside one cell because a grid has nowhere else to put it, and at 1x a
-## 3D tree reads as a shrub beside a wall that is a whole cell tall. Gated OUT of 1:1 (its
+## How much to enlarge this tile's billboard. THINGS THAT STAND UP, and only in the 3D user
+## view: Qud draws them inside one cell because a grid has nowhere else to put them, and at 1x
+## a 3D tree reads as a shrub beside a wall that is a whole cell tall. Gated OUT of 1:1 (its
 ## pixels are parity-measured against Qud), flat-2D (the tile grid) and the world map.
-## Matching on "tree" covers the whole set — fattree1-3, talltree1-2, starappletree
-## (Daniel's strapple), tree_bulbs, tree_crystal, plastic_tree — and nothing else.
-## _seat reads s.pixel_size, so a scaled tree still stands ON the ground rather than
-## sinking half its trunk.
+## _seat reads s.pixel_size, so a scaled sprite still stands ON the ground rather than sinking
+## half its trunk.
+##
+## Three ways in, and they are different KINDS of claim:
+##   trees    matching "tree" covers the whole set — fattree1-3, talltree1-2, starappletree
+##            (Daniel's strapple), tree_bulbs, tree_crystal, plastic_tree — and nothing else.
+##   blockers a dandy cap is a WALL — it stops you and it stops your line of sight — but it
+##            wears plant art and rendered at plant size, so nothing said "you cannot come
+##            through here." Daniel: "make them 2x in size like trees... it also accentuates
+##            the depth of line-of-sight interruption." Keyed on the wire's wall/occluding
+##            flags, so it is the OBJECT's blocking nature that earns the size.
+##   statues  a statue is a monument: something built taller than a person, on purpose.
+##
+## STATUES NEEDED THEIR OWN RULE because only some of them are solid. Daniel: "I saw a goat
+## statue that was 2x. Is it possible to make the other statues 2x?" The goat is a Statue
+## object and blocks, so it was already caught by the blocker rule; the Resheph shrine he was
+## standing in front of reports wall=false occluding=false — it is decorative terrain — and
+## rendered knee-high beside it. Two things the player reads as the same kind of thing were
+## being sized by whether you could walk through them.
+##
+## Matched on the TILE, not the name: that shrine's object name is "JoppaReshephShrine" with
+## no display name at all, while its art is Terrain/sw_resheph_sultanstatue.bmp. All 28 statue
+## tiles in the export carry "statue" — sultanstatue, nephilim_statue, oboroqoru_statue,
+## sw_statue1-6 — so the art is the reliable half.
 const TREE_SCALE := 2.0
 
 func _tree_scale(tile: String, obj: Dictionary = {}) -> float:
 	if _one_to_one or _flat_2d or _world_map:
 		return 1.0
-	# BLOCKERS COUNT AS TREES. A dandy cap is a WALL — it stops you and it stops your line of
-	# sight — but it wears plant art and rendered at plant size, so nothing said "you cannot
-	# come through here." Daniel: "make them 2x in size like trees... it also accentuates the
-	# depth of line-of-sight interruption." Keyed on the wire's wall/occluding flags, so it is
-	# the OBJECT's blocking nature, not a tile-name list, that earns the size.
 	var blocker: bool = bool(obj.get("wall", false)) or bool(obj.get("occluding", false))
-	if not blocker and not tile.to_lower().contains("tree"):
+	var lower := tile.to_lower()
+	if not blocker and not lower.contains("tree") and not lower.contains("statue"):
 		return 1.0
 	return TREE_SCALE if Settings.qol_on("bigtrees") else 1.0
 
