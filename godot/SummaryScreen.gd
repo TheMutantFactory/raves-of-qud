@@ -253,6 +253,7 @@ func _build_body(vp: Vector2) -> void:
 		add_child(rl)
 	# portrait + identity, centre column
 	var tile := str(pregen.get("tile", "")) if not pregen.is_empty() else str(_subtype().get("tile", ""))
+	var portrait_bot := 0.0
 	if tile != "":
 		var icons := _card_icon(tile, subtype_name)
 		var tex: Texture2D = icons.get("colored")
@@ -266,7 +267,12 @@ func _build_body(vp: Vector2) -> void:
 			pr.size = Vector2(pw, pw * 1.5)
 			pr.position = Vector2(vp.x * 0.5 - pw * 0.5, vp.y * 0.502)
 			add_child(pr)
-	var idy := vp.y * 0.567
+			portrait_bot = pr.position.y + pr.size.y
+	# BELOW THE PORTRAIT, always. The identity lines have a measured home at 0.567, and the
+	# portrait — sized from the viewport at pw x pw*1.5 — reaches 0.580, so the name printed
+	# through the sprite's feet. Same rule as the rest of the column: the measured home unless
+	# the thing above it reaches that far.
+	var idy: float = maxf(vp.y * 0.567, portrait_bot + vp.y * 0.006)
 	var top_line := str(pregen.get("name", "")) if not pregen.is_empty() else subtype_name
 	for line in [top_line, _genotype().get("display", genotype_name), "Humanoid"]:
 		var il := _text(str(line), NAME_SEL, "body")
@@ -278,7 +284,10 @@ func _build_body(vp: Vector2) -> void:
 	# THE BOTTOM OF THE PANEL, for the cascade: the three columns are independent and any of them
 	# can be the longest — six attributes, up to ten grants, three identity lines. Whichever wins
 	# is what the deco has to clear.
-	_body_bot = y0 + float(maxi(maxi(rows.size(), mini(lines.size(), 10)), 3)) * step
+	# THE BOTTOM OF THE PANEL, for the cascade: the three columns are independent and any of them
+	# can be the longest — six attributes, up to ten grants, three identity lines under a portrait
+	# that starts lower than they do.
+	_body_bot = maxf(y0 + float(maxi(rows.size(), mini(lines.size(), 10))) * step, idy)
 	_body_claim(mark, vp.y * 0.4932)   # the band headers are this panel's first row
 	_make_deco()   # created here, PLACED by the cascade (see _y_deco / _place_deco)
 	# footer affordances — stubs until the Library slice wires them
