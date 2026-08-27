@@ -116,6 +116,10 @@ const QOL_FEATURES := {
 	# untouched, which is the whole reason this is a feature and not an unconditional draw.
 	"overpaint": ["Title screen: spray RAVES OF MUD over the wordmark", true],
 	"nearby": ["Nearby objects: larger icons", true],
+	# ON by default, and a QoL feature rather than an unconditional panel for the usual reason: the
+	# Locations list and its horizon beacons are a RAVES navigation aid built on a 3D world Qud does
+	# not have, so parity mode must not grow a fifth panel Qud never draws.
+	"locations": ["Locations panel + horizon beacons", true],
 }
 
 ## WHERE USER MODE STOPS CLONING 1:1 — the two questions, and they are NOT the same question.

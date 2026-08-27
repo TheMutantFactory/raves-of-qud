@@ -107,6 +107,7 @@ var _status: CanvasLayer    # the 8-tab status screens overlay (StatusScreens.gd
 var _controlmap: CanvasLayer   # the Control Mapping screen (ControlMappingScreen.gd, V4; layer 90)
 var _options: CanvasLayer      # Raves' own Options, as an IN-GAME overlay (OptionsScreen.gd; layer 90)
 var _nearby: Control        # the Nearby objects view (NearbyObjects.gd)
+var _locations: Control     # the Locations view (LocationsPanel.gd) — the beacon list
 var _minimap: Control       # the Minimap view (MinimapView.gd)
 var _effects: Control       # the Active effects view (ActiveEffects.gd)
 var _target: Control        # the Target view (TargetView.gd)
@@ -209,7 +210,7 @@ func _ready() -> void:
 	rows.add_child(_row_command())       # 5: command bar (abilities)
 
 	# The registry of sub-views (created inside the row builders above). _apply_stats feeds them all.
-	_panels = [_minimap, _nearby, _msglog, _effects, _target, _context, _command].filter(
+	_panels = [_minimap, _nearby, _msglog, _locations, _effects, _target, _context, _command].filter(
 		func(p): return p != null)
 	_apply_full_info()                   # init the toggle label + push the default (perceived) to views
 	# Follow the GAME's lifecycle: when a once-live game ends (Save and Quit / death /
@@ -361,6 +362,29 @@ func _camera_icon_tex() -> Texture2D:
 			# the lens reads as a RING: a gap in the body with a filled pupil inside it
 			var d := Vector2(float(x) - cx, float(y) - cy).length()
 			if d > 3.4 or d <= 1.7:
+				img.set_pixel(x, y, ink)
+	return ImageTexture.create_from_image(img)
+
+## The Locations cell's icon. Drawn, not extracted, for the same reason the camera's is: Qud has no
+## such button, so there is no ActiveButton sprite to load. A map PIN — the shape every navigation
+## app has trained the eye to read as "a place, over there".
+func _pin_icon_tex() -> Texture2D:
+	var w := 20
+	var h := 26
+	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	var ink := Color8(129, 154, 154)
+	var cx := 9.5
+	var cy := 9.0
+	for y in h:
+		for x in w:
+			var d := Vector2(float(x) - cx, float(y) - cy).length()
+			# the head reads as a RING (a filled disc reads as a blob), and the tail is a wedge
+			# closing on the point at the bottom
+			var head := d <= 8.5 and d > 4.5 and y <= 13
+			var taper := (1.0 - (float(y) - 12.0) / 13.0) * 5.0
+			var tail := y > 13 and absf(float(x) - cx) <= taper
+			if head or tail:
 				img.set_pixel(x, y, ink)
 	return ImageTexture.create_from_image(img)
 
@@ -903,7 +927,7 @@ func _row_vitals_menu() -> Control:
 	_info_btn.focus_mode = Control.FOCUS_NONE
 	_info_btn.pressed.connect(_toggle_full_info)
 	_menu_verbose.add_child(_info_btn)
-	for label in ["🔒 Lock", "🗺 Minimap", "Look", "Wait", "Character",
+	for label in ["🔒 Lock", "🗺 Minimap", "Locations", "Look", "Wait", "Character",
 			"POI", "Auto-explore", "▼ Down", "▲ Up"]:
 		var mb := _menu_btn(label)
 		# Up/Down are live: Qud's climb commands (stairs; Down also pulls down from the
@@ -912,6 +936,8 @@ func _row_vitals_menu() -> Control:
 			mb.pressed.connect(func() -> void: _send_stair(true))
 		elif label == "▼ Down":
 			mb.pressed.connect(func() -> void: _send_stair(false))
+		elif label == "Locations":
+			mb.pressed.connect(_open_locations)
 		_menu_verbose.add_child(mb)
 
 	# Qud's compact top-right cluster: the 11 real nav icons (extracted from Qud's ActiveButtons), in
@@ -932,6 +958,7 @@ func _row_vitals_menu() -> Control:
 		"wlock": "Lock / unlock Qud's windows",
 		"map": "Toggle the minimap overlay (Qud's Overlay Minimap option)",
 		"find": "Toggle the nearby objects overlay (Qud's Overlay Nearby Objects option)",
+		"loc": "Locations — beacons for the places in your journal",
 		"look": "Look (Qud)",
 		"rest": "Wait (opens Qud's wait menu)",
 		"char": "Character / status screens — x or F2",
@@ -951,7 +978,7 @@ func _row_vitals_menu() -> Control:
 	# three with one mechanism and keeps the lock honest instead of guessing at it.
 	# "cam" sits second, immediately right of the hamburger, and is RAVES-ONLY: Qud has no camera,
 	# so this is the one cell in the strip with no ActiveButton behind it (hence the drawn icon).
-	for key in ["system", "cam", "wlock", "map", "find", "look", "rest", "char", "poi", "explore", "down", "up"]:
+	for key in ["system", "cam", "wlock", "map", "find", "loc", "look", "rest", "char", "poi", "explore", "down", "up"]:
 		var cell := Control.new()
 		# Hand-named per action so feedback reads "NavUp", never "TextureRect".
 		cell.name = "Nav" + str(key).capitalize()
@@ -998,6 +1025,14 @@ func _row_vitals_menu() -> Control:
 				if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
 					if _holo != null:
 						_holo.request_command(qcmd))
+		if key == "loc":
+			# RAVES-ONLY, like the camera cell: it opens the Locations panel in the side column and
+			# is the only way in, so it EXPANDS a collapsed one rather than toggling blindly — a
+			# button that shuts the thing you pressed it to see is a trap the second time.
+			cell.mouse_filter = Control.MOUSE_FILTER_STOP
+			cell.gui_input.connect(func(ev: InputEvent) -> void:
+				if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
+					_open_locations())
 		if key == "look":
 			# Qud's own Look button, pressed the way the lock is: it is an ActiveButton, so invoking
 			# its onClick runs whatever Qud binds there rather than our guess at a command.
@@ -1048,6 +1083,8 @@ func _row_vitals_menu() -> Control:
 		var tex := _load_nav_icon(key)
 		if tex == null and key == "cam":
 			tex = _camera_icon_tex()      # Raves-only control: no extracted sprite to load
+		if tex == null and key == "loc":
+			tex = _pin_icon_tex()         # ditto: Qud has no locations button to borrow a sprite from
 		if off_tex != null and on_tex != null:
 			tex = off_tex                     # replaced the moment the first snapshot lands
 		var ic := TextureRect.new()
@@ -1078,6 +1115,19 @@ func _row_vitals_menu() -> Control:
 ## A camera mode changed -> print its controls to the message log. The controls text comes WITH the
 ## signal (Main owns _MODE_NAMES, which is already the per-mode control list the HUD hint and the
 ## multiview captions use), so there is no second copy here to drift from it.
+## Open (or shut) the Locations panel. Called from both nav rows — the icon strip and the verbose
+## menu — so the pin and the word do the same thing.
+func _open_locations() -> void:
+	if _locations == null:
+		return
+	if _locations.parity_hidden():
+		# The panel does not exist in parity mode (Qud has no such window). Say so in the log rather
+		# than doing nothing — a dead button is indistinguishable from a broken one.
+		if _msglog != null:
+			_msglog.add_message("{{K|Locations is a Raves panel; leave 1:1 mode to use it.}}")
+		return
+	_locations.set_expanded(not _locations.expanded())
+
 ## The look cursor moved. Print where it is, and offer the full report as a BUTTON rather than
 ## opening it — Daniel: "add button to 'report tile' to the message log", the whole point being
 ## that nothing covers the playfield until you ask it to.
@@ -1371,6 +1421,8 @@ func _panel_feature(p: Object) -> String:
 		return "msglog"
 	if p == _nearby:
 		return "nearby"
+	if p == _locations:
+		return "locations"
 	return ""
 
 ## Reshape the chrome to match Qud (1:1) or restore the QoL layout (user). Three moves: widen the side
@@ -1587,7 +1639,7 @@ func _restore_panel_order() -> void:
 
 ## Wire every side panel's heading as its drag handle. Deferred from the column build — see there.
 func _wire_reorder() -> void:
-	for pnl in [_minimap, _nearby, _msglog]:
+	for pnl in [_minimap, _nearby, _msglog, _locations]:
 		_make_reorderable(pnl)
 
 ## Wire one panel's heading as its drag handle.
@@ -1769,9 +1821,25 @@ func _row_main() -> Control:
 	_msglog.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_msglog.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_msglog.left_edge_drag.connect(_on_sidebar_drag)   # 1:1: the ||| grab-bar resizes the side column
+	# Locations sits UNDER the log by build order (Daniel: "a new panel on the right-hand side,
+	# under the message log"); the saved order can move it like any other panel.
+	_locations = load("res://LocationsPanel.gd").new()
+	_locations.name = "Locations"
+	_locations.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# The panel asks; MAIN measures and MAIN paints. All three wires are late-bound closures because
+	# _holo is built on Connect, long after this column exists.
+	_locations.beacons_changed.connect(func(t: Array) -> void:
+		if _holo != null:
+			_holo.set_beacons(t))
+	_locations.refresh_requested.connect(func() -> void:
+		if _holo != null:
+			_holo.request_journal())
+	_locations.metrics_cb = func(mx: int, my: int) -> Dictionary:
+		return _holo.beacon_metrics(mx, my) if _holo != null else {"para": 0.0, "dir": "?"}
 	side.add_child(_minimap)
 	side.add_child(_nearby)
 	side.add_child(_msglog)
+	side.add_child(_locations)
 	_restore_panel_order()
 	side_box.add_child(side)
 	split.add_child(side_box)

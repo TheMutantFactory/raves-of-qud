@@ -1488,6 +1488,60 @@ namespace RavesOfQud
                         }, 0);
                     return;
                 }
+                if (name == "journalnote")
+                {
+                    // FIXTURE AFFORDANCE, like `journalfixture` above — but at an ARBITRARY parasang.
+                    // The horizon beacons are aimed at map notes, and a beacon whose target is the
+                    // zone you are standing in cannot show that the bearing is right. The existing
+                    // fixture plants everything underfoot, so this one takes wx/wy and rewrites the
+                    // parasang fields of the player's own zone id (the id's shape is the game's, not
+                    // ours -- only the two world-map numbers change).
+                    f.TryGetValue("wx", out string nwx);
+                    f.TryGetValue("wy", out string nwy);
+                    f.TryGetValue("text", out string ntext);
+                    f.TryGetValue("category", out string ncat);
+                    var gmn = GameManager.Instance;
+                    if (gmn != null && gmn.uiQueue != null)
+                        gmn.uiQueue.queueTask(() =>
+                        {
+                            try
+                            {
+                                string zid = The.Player?.CurrentZone?.ZoneID;
+                                if (string.IsNullOrEmpty(zid)) { Server.Log("journalnote: no zone"); return; }
+                                var parts = zid.Split('.');
+                                if (parts.Length >= 3)
+                                {
+                                    if (!string.IsNullOrEmpty(nwx)) parts[1] = nwx;
+                                    if (!string.IsNullOrEmpty(nwy)) parts[2] = nwy;
+                                }
+                                string target = string.Join(".", parts);
+                                Qud.API.JournalAPI.AddMapNote(target,
+                                    string.IsNullOrEmpty(ntext) ? "An unnamed place." : ntext,
+                                    string.IsNullOrEmpty(ncat) ? "Settlements" : ncat,
+                                    null, null, true, false, -1L, true);
+                                JournalExporter.ReExport();
+                                Server.Log("journalnote: " + target + " -> " + ntext);
+                            }
+                            catch (Exception e) { try { Server.Log("journalnote failed: " + e.Message); } catch { } }
+                        }, 0);
+                    return;
+                }
+                if (name == "journal")
+                {
+                    // Re-export the JOURNAL ONLY. `export` re-runs every exporter — blueprints,
+                    // tiles, the lot — which is right for opening a status screen and far too heavy
+                    // for something polled. The Locations panel polls: its beacons are aimed at map
+                    // notes, and a note appears the moment you discover a place, so the list has to
+                    // notice without the player opening a screen. This is that one file.
+                    var gmjr = GameManager.Instance;
+                    if (gmjr != null && gmjr.uiQueue != null)
+                        gmjr.uiQueue.queueTask(() =>
+                        {
+                            try { JournalExporter.ReExport(); }
+                            catch (Exception e) { try { Server.Log("journal export failed: " + e.Message); } catch { } }
+                        }, 0);
+                    return;
+                }
                 if (name == "metagame")
                 {
                     // Boot a background "Meta" pseudo-game (Marsh Taur pregen, Classic) so Raves has a

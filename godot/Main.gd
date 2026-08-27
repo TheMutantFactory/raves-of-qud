@@ -63,6 +63,10 @@ var _font_preview: FontPreview
 
 # Day/night atmosphere (sky bodies + MULTIPLY grade + time->tint) lives in SkyGrade.gd, fed each snapshot.
 var _sky_grade                     # SkyGrade (Node3D); created in _ready
+## Navigation beacons — the light columns the Locations panel arms (LocationBeacons.gd). A Node3D
+## in the world, not an overlay: a beacon is a thing standing on the ground four parasangs away, and
+## the camera has to be able to look away from it.
+var _beacons                       # LocationBeacons (Node3D); created in _ready
 
 const SURFACE_Z := 10
 var _depth := SURFACE_Z            # current stratum (zone.z); >SURFACE_Z is underground
@@ -203,6 +207,14 @@ func _ready() -> void:
 	_sky_grade = load("res://SkyGrade.gd").new()   # day/night atmosphere: WorldEnvironment + grade + sun/moon
 	add_child(_sky_grade)
 	_sky_grade.setup(embedded, renderer)
+
+	_beacons = load("res://LocationBeacons.gd").new()   # the Locations panel's horizon markers
+	add_child(_beacons)
+	# The name-plates sit on their own HUD layer, which no modal covers — so they have to stand
+	# down themselves. Same predicate the rest of the app asks (see _modal_owns_input), plus the
+	# tombstone, which is the one full-screen thing that is not a modal.
+	_beacons.blocked_cb = func() -> bool:
+		return _modal_owns_input() or (_tomb != null and _tomb.visible)
 
 	_cam_rig = load("res://CameraRig.gd").new()   # pivot + camera + modes + placement math
 	add_child(_cam_rig)
@@ -511,6 +523,17 @@ func _on_snapshot(data: Dictionary) -> void:
 		renderer.render_snapshot(store.live_snapshot(), nbs)
 		Profiler.done("render")
 	inspector.on_snapshot(data)
+	# THE BEACONS ARE FED BEFORE THE PANELS ARE, because the Locations panel asks THEM how far away
+	# each place is (beacon_metrics) the moment it gets the snapshot. Feeding them after the emit
+	# measured the first frame's distances from the world ORIGIN instead of from the player, and the
+	# list came up ordered by how far each place is from the top-left corner of Qud.
+	if _beacons != null:
+		var bz: Dictionary = data.get("zone", {})
+		var bp: Dictionary = data.get("player", {})
+		var bx := int(bp.get("x", -1))
+		var by := int(bp.get("y", -1))
+		if bx >= 0 and by >= 0 and not bz.is_empty():
+			_beacons.set_player(bz, bx, by)
 	snapshot.emit(data)   # let a host frame update its status bar / panels off the same data (always)
 
 	# Auto-dump the profile every N turns (cumulative, no reset) so it's always fresh
@@ -943,6 +966,24 @@ func request_command(cmd: String) -> void:
 	if client != null:
 		client.send_command("command", {"command": cmd})
 
+## Re-export Qud's journal — the cheap journal-only exporter, not the whole `export` run. The
+## Locations panel polls this while it is open so a place discovered this turn shows up in the list.
+func request_journal() -> void:
+	if client != null:
+		client.send_command("journal", {})
+
+## The Locations panel's ticked rows -> the horizon markers.
+func set_beacons(targets: Array) -> void:
+	if _beacons != null:
+		_beacons.set_targets(targets)
+
+## Distance (parasangs) and bearing to a world-map cell, ASKED OF THE BEACON NODE so the number the
+## panel prints and the column the player sees are the same measurement.
+func beacon_metrics(mx: int, my: int) -> Dictionary:
+	if _beacons == null:
+		return {"para": 0.0, "dir": "?"}
+	return {"para": _beacons.parasangs_to(mx, my), "dir": _beacons.bearing_to(mx, my)}
+
 ## Write a Qud option (Options.SetOption + re-export, mod-side on the uiQueue) — the nav
 ## overlay toggles use this to flip the same option ids Qud's own buttons persist.
 func request_setoption(id: String, value: String) -> void:
@@ -1129,6 +1170,10 @@ func set_ui_right_inset(frac: float) -> void:
 func set_play_hole_rect(r: Rect2) -> void:
 	if _cam_rig != null:
 		_cam_rig.set_play_hole(r)
+	# The beacon name-plates are HUD controls over the same hole; outside it the side panels are
+	# opaque and a plate would slide under the message log.
+	if _beacons != null:
+		_beacons.set_play_hole(r)
 
 ## One gesture -> everything a collaborator needs about a tile. Photograph the BARE
 ## scene FIRST (no selection overlay), then inspect — so shot.png is a clean plate
