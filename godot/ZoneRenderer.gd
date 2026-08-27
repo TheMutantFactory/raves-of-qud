@@ -12383,8 +12383,15 @@ func _obj_detail(obj: Dictionary) -> Color:
 ## The drips are DETERMINISTIC per tile+colour (the RNG is seeded from the cache key), because this
 ## texture is cached and reused across every creature wearing it — a per-frame roll would shimmer,
 ## and two dromads stained by the same pool should not be arguing about where the blood ran.
-const DRIP_ROWS_MAX := 6      ## longest run, in art pixels
-const DRIP_TRIES := 5         ## candidate columns per sprite; a 16px sprite wants few
+## HOW MUCH RED ACTUALLY LANDS. The first pass lerped each pixel toward the stain at 0.85 falling
+## to 0.35, which on a dark sprite under a dim cell light came out as a few brown dots — Daniel,
+## looking at it: "I need red on the character sprite." A stain is PAINT: the head of a run is the
+## liquid's colour outright, and only the tail lets the art underneath show through.
+const DRIP_HEAD := 1.0        ## the top of a run is pure stain
+const DRIP_TAIL := 0.55       ## ...and the bottom still reads as stain, not as a tint
+const DRIP_ROWS_MAX := 10     ## longest run, in art pixels
+const DRIP_COL_STEP := 2      ## a candidate column every N: half the sprite's columns can carry one
+const DRIP_ODDS := 0.65       ## ...and this many of those actually do
 
 func _stained_tex(tile: String, main: Color, detail: Color, key: String, fill: int,
 		stain_code: String) -> ImageTexture:
@@ -12400,8 +12407,12 @@ func _stained_tex(tile: String, main: Color, detail: Color, key: String, fill: i
 	rng.seed = hash(skey)
 	var w: int = img.get_width()
 	var h: int = img.get_height()
-	for _i in DRIP_TRIES:
-		var x: int = rng.randi_range(0, w - 1)
+	# COVERAGE, not a handful of dots. Walking the columns instead of picking a few random ones
+	# also spreads them across the whole silhouette rather than clumping wherever the rolls fell.
+	for cx0 in range(0, w, DRIP_COL_STEP):
+		if rng.randf() > DRIP_ODDS:
+			continue
+		var x: int = cx0
 		# start at the TOP of the art in this column: a drip runs down the thing, so it begins
 		# where the thing begins, not at some floating row inside it
 		var top: int = -1
@@ -12421,8 +12432,9 @@ func _stained_tex(tile: String, main: Color, detail: Color, key: String, fill: i
 			var p: Color = img.get_pixel(x, y)
 			if p.a <= 0.5:
 				break
-			# the head of the run is the wettest; it dries out as it goes
-			var t: float = 0.85 - 0.5 * (float(k) / float(run))
+			# the head of the run is the wettest; it dries out as it goes, but never so far that
+			# it stops being the liquid's colour
+			var t: float = lerpf(DRIP_HEAD, DRIP_TAIL, float(k) / float(run))
 			img.set_pixel(x, y, p.lerp(stain, t))
 	var tex := ImageTexture.create_from_image(img)
 	_tex_cache[skey] = tex
