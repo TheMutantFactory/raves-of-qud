@@ -1674,7 +1674,19 @@ func _input(event: InputEvent) -> void:
 			and event.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT] \
 			and not (event.ctrl_pressed or event.meta_pressed or event.alt_pressed or event.shift_pressed):
 		if event.pressed:
-			_travel_press = event.position
+			# ARMED ON THE PRESS, and only if the press itself was the playfield's to have.
+			#
+			# The release-time guard in _playfield_cell was already right and already too late:
+			# clicking a popup option answers it on PRESS, so the popup is gone by the time the
+			# RELEASE arrives, _modal_owns_input() answers false, and the click that dismissed the
+			# menu also ordered a walk to whatever was behind it. Daniel: "Clicking on the popup
+			# also clicks on the playfield and orders the character to move to that click location."
+			#
+			# Asking at press time asks while the thing that owns the click still exists. It also
+			# settles the quieter half of the same bug — a press on the message log or any other
+			# panel armed the gesture too, because _input runs before the GUI and never saw the
+			# chrome that swallowed it.
+			_travel_press = event.position if _playfield_cell(event.position) != null else null
 		else:
 			var press = _travel_press
 			_travel_press = null
