@@ -120,6 +120,10 @@ const QOL_FEATURES := {
 	# Locations list and its horizon beacons are a RAVES navigation aid built on a 3D world Qud does
 	# not have, so parity mode must not grow a fifth panel Qud never draws.
 	"locations": ["Locations panel + horizon beacons", true],
+	# ON by default. Qud's own menus carry a per-row IRenderable (QudMenuItem.icon) and simply do
+	# not draw it — the points-of-interest list ships a real tile for every creature and object in
+	# it. Showing them is a divergence, so it is a feature: 1:1 keeps Qud's text-only rows.
+	"popupicons": ["Menu popups: show each row's sprite", true],
 }
 
 ## WHERE USER MODE STOPS CLONING 1:1 — the two questions, and they are NOT the same question.

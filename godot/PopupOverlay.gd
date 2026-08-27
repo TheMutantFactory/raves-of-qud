@@ -19,6 +19,10 @@ signal answered
 signal closed(payload: Dictionary)
 
 var _palette := {}
+var _tiles: RefCounted            # QudTiles — shared tile recolouring; built in _ready
+## The mod's tile directory, pushed from Main (it rides the snapshot, not the popup payload).
+var tiles_dir := ""
+var _icon_x := 0.0                # this popup's icon gutter width, 0 when no row has one
 var _cur_id := -1             # id of the popup currently shown (or last answered) — dedupes resends
 var _content_sig := ""        # content fingerprint — a flap re-announce must not reset typed input
 var _buttons: Array = []      # [{text,command,hotkey}] — the bottom button row
@@ -152,6 +156,15 @@ const ROOT_H_MID := 11.0     # the middle one runs 2px further
 const TITLE_SP := 10.0             # PolatFrameSuperHeader spacing
 const ROW_H := 26.0                # MenuOptionText(Clone) in the options area
 const ROW_TEXT_X := 15.0           # padL 2 + cursor 8 + spacing 5
+## THE ROW'S OWN SPRITE. Qud fills QudMenuItem.icon for menus whose entries are THINGS rather than
+## verbs — "Go to which point of interest?" ships a tile for every creature and object in the list —
+## and then draws none of them. Daniel: "Let's update the POI with sprites of the characters/objects
+## at the POI." A tile is 16x24 and the row is 26, so it sits in the row with a pixel to spare and
+## the text simply starts further in. A QoL feature (`popupicons`), because Qud's own popup has no
+## icon column and 1:1 has to keep it that way.
+const ICON_W := 16.0
+const ICON_H := 24.0
+const ICON_GAP := 5.0
 const CONTENT_PAD_LR := 5.0        # Content padL/padR
 const MSG_LINE := 20.12            # Qud's Message/ContextItemText line box at font 16
 # How wide the message may get before it wraps. MEASURED, not derived, and the difference matters.
@@ -1073,6 +1086,15 @@ func _build_options() -> void:
 		_opt_box.remove_child(c)
 		c.queue_free()
 	var f := _root.get_theme_font("font", "Label")
+	# ONE GUTTER FOR THE WHOLE MENU, decided before any row is built: a column that only some rows
+	# indent by would make the text ragged, and Qud's menus mix icon-bearing rows with plain ones
+	# (a "Cancel" among the points of interest).
+	_icon_x = 0.0
+	if not Settings.qud_shape("popupicons"):
+		for o in _options:
+			if _icon_tex(o) != null:
+				_icon_x = ICON_W + ICON_GAP
+				break
 	for i in _options.size():
 		var runs: Array = QudText.runs(str(_options[i].get("text", "")), _palette, C_PALE)
 		var tw := _runs_width(f, runs, 16)
@@ -1083,11 +1105,12 @@ func _build_options() -> void:
 		# max(own, content): that 0.79px of rounding on the cloth robe's widest row made
 		# the box 279 instead of 278.21, which pushed its centred left edge a whole pixel
 		# out and took the top rule, the divider and the item name with it.
-		row.custom_minimum_size = Vector2(_snap(ROW_TEXT_X + tw + CROME_PAD_L), ROW_H)
-		row.set_meta("exact_w", ROW_TEXT_X + tw + CROME_PAD_L)
+		row.custom_minimum_size = Vector2(_snap(ROW_TEXT_X + _icon_x + tw + CROME_PAD_L), ROW_H)
+		row.set_meta("exact_w", ROW_TEXT_X + _icon_x + tw + CROME_PAD_L)
 		row.mouse_filter = Control.MOUSE_FILTER_STOP
 		row.clip_contents = true
 		row.set_meta("runs", runs)
+		row.set_meta("icon", _icon_tex(_options[i]))
 		var idx := i
 		row.draw.connect(_draw_option_row.bind(row, idx))
 		row.gui_input.connect(func(e: InputEvent):
@@ -1108,13 +1131,34 @@ func _draw_option_row(row: Control, idx: int) -> void:
 	if idx == _sel:
 		row.draw_string(f, Vector2(CROME_PAD_L, base), ">",
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 16, C_GOLD)
+	var ic: Texture2D = row.get_meta("icon", null)
+	if ic != null:
+		# Centred in the row's 26 against the tile's 24 — the half pixel is snapped away rather
+		# than left to the rasteriser, which is what keeps the column's edges straight.
+		row.draw_texture_rect(ic, Rect2(Vector2(ROW_TEXT_X, floorf((ROW_H - ICON_H) * 0.5)),
+			Vector2(ICON_W, ICON_H)), false)
 	var pitch := _pitch(f, 16)
-	var px := ROW_TEXT_X
+	var px := ROW_TEXT_X + _icon_x
 	var runs: Array = row.get_meta("runs", [])
 	for run in runs:
 		var txt: String = run[0]
 		row.draw_string(f, Vector2(px, base), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, run[1])
 		px += pitch * txt.length()
+
+## One row's recoloured sprite, or null when the row has no icon (or the feature is off). The wire
+## carries a TILE PATH and colours, not a rendered image — the same shape every other panel loads.
+func _icon_tex(opt: Dictionary) -> Texture2D:
+	if Settings.qud_shape("popupicons"):
+		return null      # parity mode: Qud's rows are text, and so are ours
+	var ic: Dictionary = opt.get("icon", {})
+	if ic.is_empty() or String(ic.get("tile", "")) == "":
+		return null
+	if _tiles == null:
+		_tiles = load("res://QudTiles.gd").new()
+	_tiles.palette = _palette
+	if tiles_dir != "":
+		_tiles.tiles_dir = tiles_dir
+	return _tiles.texture_for(ic, true)
 
 func _highlight_option() -> void:
 	for c in _opt_box.get_children():

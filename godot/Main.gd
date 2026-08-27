@@ -491,6 +491,10 @@ func _on_snapshot(data: Dictionary) -> void:
 	var pal: Dictionary = data.get("palette", {})
 	if not pal.is_empty():
 		_palette = pal
+	# The popup's menu rows carry TILE PATHS; the directory they live in rides the snapshot, not the
+	# popup payload, so the overlay is told here rather than made to wait for one.
+	if _popup != null:
+		_popup.tiles_dir = String(data.get("tilesDir", _popup.tiles_dir))
 	# Route the render through the store: draw the live zone plus any remembered
 	# neighbours (same stratum) the player has visited, placed by global offset.
 	Profiler.add_us("server", int(data.get("serverUs", 0)))

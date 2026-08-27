@@ -640,12 +640,45 @@ namespace RavesOfQud
             j.Name(name).BeginArray();
             if (items != null)
                 foreach (QudMenuItem it in items)
+                {
                     j.BeginObject()
                         .Member("text", it.text ?? "")
                         .Member("command", it.command ?? "")
-                        .Member("hotkey", it.hotkey ?? "")
-                     .EndObject();
+                        .Member("hotkey", it.hotkey ?? "");
+                    WriteItemIcon(j, it);
+                    j.EndObject();
+                }
             j.EndArray();
+        }
+
+        /// A menu row's OWN ICON. QudMenuItem carries an IRenderable the game fills in for menus
+        /// whose entries are things rather than verbs — the points-of-interest list is one, where
+        /// every row is a creature or an object standing somewhere in the zone.
+        ///
+        /// Shipped as a TILE PATH plus colours, not as a rendered PNG like the context header's
+        /// sprite: the client already loads and recolours tiles from that directory for every other
+        /// panel, and a menu can have a dozen rows — a readback and a file write each would put a
+        /// GPU stall on opening a menu.
+        ///
+        /// IRenderable exposes GETTERS, not properties, and getDetailColor() returns a CHAR (the
+        /// same trap FactionsExporter.WriteEmblem documents).
+        private static void WriteItemIcon(JsonWriter j, QudMenuItem it)
+        {
+            try
+            {
+                var ic = it.icon;
+                if (ic == null) return;
+                string tile = ic.getTile();
+                if (string.IsNullOrEmpty(tile)) return;
+                TileExporter.Ensure(tile);
+                j.Name("icon").BeginObject()
+                    .Member("tile", tile)
+                    .Member("color", ic.getColorString() ?? "")
+                    .Member("tilecolor", ic.getTileColor() ?? "")
+                    .Member("detail", ic.getDetailColor().ToString())
+                 .EndObject();
+            }
+            catch { }
         }
 
         private const char SEP = '\u0001';   // unit separator; never occurs in popup text
