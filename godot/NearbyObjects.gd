@@ -179,7 +179,7 @@ func set_snapshot(data: Dictionary) -> void:
 	# truth of it rather than a row that looks clickable and does nothing.
 	var id_by_name := {}
 	for nb in data.get("nearby", []):
-		var nbn := QudText.strip(String(nb.get("name", "")))
+		var nbn := _match_key(String(nb.get("name", "")))
 		var nbi := String(nb.get("id", ""))
 		if nbn != "" and nbi != "" and not id_by_name.has(nbn):
 			id_by_name[nbn] = nbi
@@ -193,7 +193,7 @@ func set_snapshot(data: Dictionary) -> void:
 		# and gets its hit test from _row_id_at; the user panel is a RichTextLabel, so a row is
 		# made a target the way every other clickable text in Raves is — a [url] carrying the
 		# object's own id, which is exactly what request_nearby wants.
-		var oid := String(id_by_name.get(String(names[i]), ""))
+		var oid := String(id_by_name.get(_match_key(String(names[i])), ""))
 		if oid != "":
 			_rt.push_meta(oid)
 		_rt.append_text(String(e["arrow"]) + " ")
@@ -209,6 +209,27 @@ func set_snapshot(data: Dictionary) -> void:
 			_rt.pop()
 		_rt.append_text("\n")
 	_fit_user_height(mini(names.size(), MAX_ROWS))
+
+## THE KEY THE TWO LISTS CAN AGREE ON. Daniel: "I can't seem to pick up this nearby objects carbide
+## hammer on the floor. I can click on it on the game field, but not the nearby objects."
+##
+## The row was inert because the two names never matched. Qud's finder ships a WEAPON with its stat
+## badges baked into the name — "{{b|carbide}} hammer {{c|\u001a}}5 {{r|\u0003}}2d3", the penetration
+## and damage pips the sidebar draws after it — while the scan's display name is just "carbide
+## hammer". Stripping markup left "carbide hammer \u001a5 \u00032d3" against "carbide hammer", so
+## every weapon in the list lost its id and quietly stopped being clickable. Plain items matched all
+## along, which is why this looked like one broken object rather than a broken rule.
+##
+## Cut at the first CONTROL character: Qud draws those badges with codepoints below 0x20, which no
+## real display name contains. Applied to both sides, so the comparison is between two names that
+## have had the same thing done to them.
+static func _match_key(s: String) -> String:
+	var t := QudText.strip(s)
+	for i in t.length():
+		if t.unicode_at(i) < 0x20:
+			t = t.substr(0, i)
+			break
+	return t.strip_edges()
 
 ## SHRINK TO WHAT IS ACTUALLY NEARBY. Daniel: "let the Nearby objects window shrink to fit what's
 ## nearby, leaving more room for the message log when the Nearby Objects list is short or empty."
