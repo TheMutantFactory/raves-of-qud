@@ -4269,11 +4269,21 @@ const DUST_PX := 2.0             ## 2x2 art pixels
 ## observation of the effect ("on for about 2-6 horizontal tiles") and the speeds are not — a mote
 ## still crosses the same ground, it just takes longer over it. 3.0s -> 5.0s is 40% off both ends.
 const DUST_LIFE := 5.0           ## seconds a mote lives
-const DUST_TILES_MIN := 2.0      ## the SLOWEST row crosses this many tiles in that time
+## THE SLOW FLOOR, lowered — Daniel: "lower the slow floor in the front row." The slowest row now
+## barely crawls; 2.0 tiles over five seconds still read as a drift with somewhere to be.
+const DUST_TILES_MIN := 1.1      ## the SLOWEST row crosses this many tiles in that time
 const DUST_AMOUNT := 220         ## motes alive across a zone (80x25)
 const DUST_H_MIN := 0.05         ## it blows along the ground, not overhead
 const DUST_H_MAX := 0.55
-const DUST_ROW_JITTER := 0.06    ## speed spread WITHIN a row, so motes still differ from each other
+## VARIATION WITHIN A ROW, WEIGHTED SLOW. Daniel: "weight the slower pixels. There needs to be
+## variation in each row." The row's prime sets its base; each mote then takes a speed anywhere from
+## a third of that base to a little over it. The band is deliberately ASYMMETRIC — it reaches far
+## below the base and barely above — so a uniform roll inside it puts most motes under the base.
+## That is the weighting, without a second emitter per band: mean lands at about 0.72 of the base.
+##
+## The old ±6% was not variation, it was a rounding error. A row read as one speed.
+const DUST_ROW_SLOW := 0.35      ## a mote can be this fraction of its row's base speed...
+const DUST_ROW_FAST := 1.10      ## ...or this much of it, and no faster
 
 ## ONE PRIME PER ZONE ROW, and they are the row speeds' RATIOS, not multipliers of a base.
 ##
@@ -4346,11 +4356,18 @@ func _make_dust_row(r: int) -> GPUParticles3D:
 	pm.gravity = Vector3.ZERO
 	# THIS ROW'S PRIME, as a ratio inside the band (see DUST_PRIMES). The jitter keeps motes within
 	# a row from marching in step with each other without disturbing the row's own base.
-	var prime: float = float(DUST_PRIMES[r % DUST_PRIMES.size()])
+	# THE NEAREST ROW GETS THE SLOWEST PRIME, which is what "the front row" asks for and what
+	# perspective requires: a row close to the camera shows far more SCREEN motion per world unit
+	# than one at the back, so giving the front the fastest base — which is what indexing the
+	# primes forward did — made the nearest dust the most hurried thing on screen. Reversed, the
+	# apparent speeds even out. Front here means the high row index: cells map to world y growing
+	# SOUTH and the compass camera sits south of the player looking north.
+	var pi: int = DUST_PRIMES.size() - 1 - (r % DUST_PRIMES.size())
+	var prime: float = float(DUST_PRIMES[pi])
 	var tiles: float = DUST_TILES_MIN * prime / float(DUST_PRIMES[0])
 	var v: float = tiles * CELL / DUST_LIFE
-	pm.initial_velocity_min = v * (1.0 - DUST_ROW_JITTER)
-	pm.initial_velocity_max = v * (1.0 + DUST_ROW_JITTER)
+	pm.initial_velocity_min = v * DUST_ROW_SLOW
+	pm.initial_velocity_max = v * DUST_ROW_FAST
 	pm.scale_min = 0.8
 	pm.scale_max = 1.2
 	var g := GPUParticles3D.new()
