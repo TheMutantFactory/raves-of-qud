@@ -1526,6 +1526,62 @@ namespace RavesOfQud
                         }, 0);
                     return;
                 }
+                if (name == "journaldrop")
+                {
+                    // FIXTURE CLEAN-UP, the other half of `journalnote`. Notes planted to test
+                    // bearings are fabricated places at coordinates WE chose, and they live in the
+                    // player's real save alongside the ones the game put there — so the harness that
+                    // can add them has to be able to take them back out. Matches on a substring of
+                    // the note's text; Qud's own DeleteMapNote does the removing.
+                    f.TryGetValue("text", out string dropText);
+                    var gmd = GameManager.Instance;
+                    if (gmd != null && gmd.uiQueue != null)
+                        gmd.uiQueue.queueTask(() =>
+                        {
+                            try
+                            {
+                                if (string.IsNullOrEmpty(dropText)) { Server.Log("journaldrop: no text"); return; }
+                                var hits = Qud.API.JournalAPI.GetMapNotes(
+                                    n => n != null && (n.Text ?? "").Contains(dropText));
+                                int n0 = hits.Count;
+                                foreach (var note in hits) Qud.API.JournalAPI.DeleteMapNote(note);
+                                JournalExporter.ReExport();
+                                Server.Log("journaldrop: removed " + n0 + " note(s) matching '" + dropText + "'");
+                            }
+                            catch (Exception e) { try { Server.Log("journaldrop failed: " + e.Message); } catch { } }
+                        }, 0);
+                    return;
+                }
+                if (name == "lostfixture")
+                {
+                    // FIXTURE. Being lost is something Qud does TO you when you travel the world map
+                    // without knowing the way — there is no wish for it, and the client's whole
+                    // locked-panel behaviour hangs off the flag. `on=1` applies Qud's own
+                    // XRL.World.Effects.Lost, `on=0` takes it back off.
+                    f.TryGetValue("on", out string lostOn);
+                    bool wantLost = lostOn != "0" && lostOn != "false";
+                    var gml = GameManager.Instance;
+                    if (gml != null && gml.uiQueue != null)
+                        gml.uiQueue.queueTask(() =>
+                        {
+                            try
+                            {
+                                var p = The.Player;
+                                if (p == null) { Server.Log("lostfixture: no player"); return; }
+                                if (wantLost)
+                                {
+                                    var eff = new XRL.World.Effects.Lost();
+                                    eff.Initialize(1);
+                                    p.ApplyEffect(eff);
+                                }
+                                else p.RemoveEffect<XRL.World.Effects.Lost>();
+                                ForcePublishSoon = true;
+                                Server.Log("lostfixture: lost=" + p.HasEffect<XRL.World.Effects.Lost>());
+                            }
+                            catch (Exception e) { try { Server.Log("lostfixture failed: " + e.Message); } catch { } }
+                        }, 0);
+                    return;
+                }
                 if (name == "journal")
                 {
                     // Re-export the JOURNAL ONLY. `export` re-runs every exporter — blueprints,

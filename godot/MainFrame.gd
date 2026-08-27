@@ -1134,6 +1134,10 @@ func _open_locations() -> void:
 		if _msglog != null:
 			_msglog.add_message("{{K|Locations is a Raves panel; leave 1:1 mode to use it.}}")
 		return
+	if _locations.is_lost():
+		if _msglog != null:
+			_msglog.add_message("{{K|You are lost. There is nothing to point at.}}")
+		return
 	var on: bool = _locations.toggle_beacons()
 	_dress_loc_icon()
 	if _msglog != null:
@@ -1148,6 +1152,13 @@ func _open_locations() -> void:
 ## state is a tint — lit when beacons are armed, dimmed when they are not.
 func _dress_loc_icon() -> void:
 	if _nav_loc_icon == null or _locations == null:
+		return
+	if _locations.is_lost():
+		# DISABLED, and dimmer than merely-off: two states that both mean "no beacons" have to look
+		# different, or the one you cannot fix looks like the one you can.
+		_nav_loc_icon.modulate = Color(1, 1, 1, 0.18)
+		if _nav_loc_cell != null:
+			_nav_loc_cell.tooltip_text = "Locations locked — you are lost"
 		return
 	var on: bool = _locations.beacons_on()
 	_nav_loc_icon.modulate = Color(1, 1, 1, 1) if on else Color(1, 1, 1, 0.4)
@@ -1861,6 +1872,14 @@ func _row_main() -> Control:
 	_locations.refresh_requested.connect(func() -> void:
 		if _holo != null:
 			_holo.request_journal())
+	# Qud decided the player is lost (or found). The pin lives in the nav strip, not the panel, so
+	# it has to be told — and it says so in the log, because a control that silently stops working
+	# is the shape of a bug.
+	_locations.lost_changed.connect(func(lost: bool) -> void:
+		_dress_loc_icon()
+		if _msglog != null:
+			_msglog.add_message("{{K|beacons: %s}}" % ("locked — you are lost"
+				if lost else "unlocked — you know where you are again")))
 	_locations.metrics_cb = func(mx: int, my: int) -> Dictionary:
 		return _holo.beacon_metrics(mx, my) if _holo != null else {"para": 0.0, "dir": "?"}
 	side.add_child(_minimap)

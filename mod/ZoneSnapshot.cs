@@ -1540,9 +1540,18 @@ namespace RavesOfQud
             .EndObject();
 
             Cell pc = player?.CurrentCell;
+            // LOST — Qud's own XRL.World.Effects.Lost, asked of the player rather than guessed from
+            // the effects list. That list ships DISPLAY names (already coloured, already reworded for
+            // things like LiquidCovered), so matching "lost" in it would be matching a label; this is
+            // the state itself. Raves shuts its navigation aids off while it is set: a beacon that
+            // still points true when the game has decided you do not know where you are is the game
+            // telling you one thing and the viewer another.
+            bool lost = false;
+            try { lost = player != null && player.HasEffect<XRL.World.Effects.Lost>(); } catch { }
             j.Name("player").BeginObject()
                 .Member("x", pc != null ? pc.X : -1)
-                .Member("y", pc != null ? pc.Y : -1);
+                .Member("y", pc != null ? pc.Y : -1)
+                .Member("lost", lost);
             if (player != null) WriteObjectRender(j, player);   // player's icon (for the log's "you" pictograph)
             WriteHeldLight(j, player);                          // a lit torch, so Raves can put it in the hand
             j.EndObject();

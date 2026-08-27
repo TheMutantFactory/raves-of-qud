@@ -24,6 +24,7 @@ extends PanelContainer
 
 signal beacons_changed(targets: Array)   # -> Main's LocationBeacons: what to stand on the horizon
 signal refresh_requested                 # -> the bridge's `journal` command
+signal lost_changed(lost: bool)          # -> MainFrame: dress (and disable) the nav pin
 
 const REFRESH_S := 6.0        # how often to ask Qud to re-export the journal
 const MAX_ROWS := 60          # a late-game journal is long; the list scrolls past this
@@ -49,6 +50,13 @@ var _expanded := false        # the panel's own ▾/▸ toggle; the column keeps
 ## the pin answers the second, so a player who wants a clear view for one fight does not have to
 ## untick four rows and remember to tick them back.
 var _armed := true
+## LOST is QUD'S state, not a mode of this panel: XRL.World.Effects.Lost, shipped in the snapshot.
+## Daniel: "When you're lost, the map button should be turned off and disabled. The locations tab
+## stays collapsed with a lock symbol. When the player becomes unlost, the locations reverts to the
+## previous state." So the lock SUSPENDS the panel rather than changing it — nothing is persisted
+## while it holds, and both switches come back exactly as they were.
+var _lost := false
+var _pre_expanded := false
 var _sorted := false          # the list has been ordered against a real player position
 var _sig := ""                # what the last rebuild was built from — see _reload
 var _one_to_one := false
@@ -121,13 +129,14 @@ func set_snapshot(data: Dictionary) -> void:
 	_zone = data.get("zone", {})
 	var p: Dictionary = data.get("player", {})
 	_player = Vector2i(int(p.get("x", -1)), int(p.get("y", -1)))
+	_set_lost(bool(p.get("lost", false)))
 	_refresh_metrics()
 
 ## THE POLL RUNS WHILE COLLAPSED. The beacons are armed from this list, and they stand in the world
 ## whether or not the panel that armed them is open — a collapsed panel that stopped noticing new
 ## places would leave the list a character-hour out of date the moment you expanded it again.
 func _process(dt: float) -> void:
-	if _one_to_one or not visible:
+	if _lost or _one_to_one or not visible:
 		return
 	_since += dt
 	if _since < REFRESH_S:
@@ -144,7 +153,7 @@ func set_one_to_one(on: bool) -> void:
 	_emit()
 
 func set_expanded(on: bool) -> void:
-	if on == _expanded:
+	if _lost or on == _expanded:
 		return
 	_expanded = on
 	Settings.set_value(OPEN_KEY, on)
@@ -154,9 +163,31 @@ func set_expanded(on: bool) -> void:
 		_since = REFRESH_S      # ask for fresh data the moment it opens, not one tick later
 	_apply_height()
 
+## Qud says the player is (or is no longer) lost. SUSPEND, don't overwrite: the collapse is not a
+## choice the player made, so it is not written to Settings and the previous state is what comes back.
+func _set_lost(on: bool) -> void:
+	if on == _lost:
+		return
+	_lost = on
+	if on:
+		_pre_expanded = _expanded
+		_expanded = false
+	else:
+		_expanded = _pre_expanded
+	_refresh_toggle()
+	_refresh_title()
+	_apply_height()
+	_emit()
+	lost_changed.emit(on)
+
+func is_lost() -> bool:
+	return _lost
+
 ## The nav pin: arm or disarm every beacon at once. Returns the new state so the caller can dress
 ## its icon and say which way it went.
 func toggle_beacons() -> bool:
+	if _lost:
+		return _armed          # the pin is disabled while lost; nothing to flip and nothing to save
 	_armed = not _armed
 	Settings.set_value(ARMED_KEY, _armed)
 	Settings.save()
@@ -188,12 +219,23 @@ func parity_hidden() -> bool:
 func _refresh_title() -> void:
 	if _title == null:
 		return
+	if _lost:
+		# THE HEADING SAYS WHY. A panel that just went empty and stopped opening reads as broken;
+		# one that says "lost" is the game speaking, and the player already knows what it means.
+		_title.text = "Locations 🔒 lost"
+		_title.add_theme_color_override("font_color", Color(1, 1, 1, 0.45))
+		return
 	_title.text = "Locations" if _armed else "Locations (beacons off)"
 	_title.add_theme_color_override("font_color",
 		QudPalette.TEXT if _armed else Color(1, 1, 1, 0.45))
 
 func _refresh_toggle() -> void:
 	if _toggle == null:
+		return
+	_toggle.disabled = _lost
+	if _lost:
+		_toggle.text = "🔒"
+		_toggle.tooltip_text = "You are lost — Qud does not know where you are, so neither does this"
 		return
 	_toggle.text = "▾" if _expanded else "▸"
 	_toggle.tooltip_text = "Collapse the locations list" if _expanded else "Expand the locations list"
@@ -389,7 +431,7 @@ func _set_tick(id: String, on: bool) -> void:
 ## go. Colour by position in the list would repaint every column whenever a nearer place appeared.
 func _emit() -> void:
 	var out: Array = []
-	if _armed and not _one_to_one:
+	if _armed and not _lost and not _one_to_one:
 		# COLOUR BY TICK ORDER, not by row order. `_on` is a Dictionary and Godot keeps its insertion
 		# order (and JSON preserves it across a save), so its keys ARE the order the player armed
 		# them in. Numbering off `_entries` instead — which is sorted by distance — would repaint

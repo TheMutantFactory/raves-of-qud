@@ -43,31 +43,41 @@ extends Node3D
 ## parasangs out is 375, so every distant one — the ones that most need marking — would have been
 ## erased by the atmosphere the moment they were placed at their real distance.
 
-## Qud's zone, in cells: the marker's footprint.
-const ZONE_W := 80.0
-const ZONE_H := 25.0
-## How tall the slab stands. Not "tall enough to see" any more — at real distances the camera
-## decides that — but tall enough to read as a marker rather than a stain on the ground.
-const SLAB_H := 45.0
 const PULSE_HZ := 0.45        # slow — a lighthouse, not a warning light
 const PULSE_DEPTH := 0.30
-## The name-plate's size at REF_DIST cells, and the range it is allowed to shrink and grow through.
+## The name-plate's size at the regime's reference distance, and the range it may shrink and grow
 ## The plate is a label, not part of the scenery: it takes the depth cue (so a far beacon's name
 ## recedes with it) but stops well short of the vanishing point, because a name nobody can read
 ## marks nothing.
 const PLATE_FONT := 20
 const PLATE_MIN := 11
 const PLATE_MAX := 28
-const REF_DIST := 140.0
-## A BEACON FADES AS YOU ARRIVE, which is what a navigation pin does and what this needed: at real
-## scale a place a third of a parasang away is 96 cells of slab across the view, and at full strength
-## it stopped being a marker and became a magenta wall. Full strength from NEAR_REF cells out, down
-## to a wash on top of you — where you can see the place itself and no longer need marking.
-const NEAR_REF := 300.0
 
-## Cells per parasang, from Qud's own geometry: 3 zones of 80x25.
-const PARA_W := 240.0
-const PARA_H := 75.0
+## THE WORLD IS TWO PLACES AND A PARASANG IS A DIFFERENT SIZE IN EACH. Daniel: "Let's add the
+## beacons to the overworld. Need to fix the distances. They're different from the surface
+## distances."
+##
+## Measured off the wire rather than assumed. On the surface a zone is 80x25 cells of ground and a
+## parasang is 3x3 of those — 240 cells east, 75 north — and the zone block carries wx/wy/zx/zy to
+## say which one you are standing in. STEP ONTO THE WORLD MAP and every one of those comes back -1
+## and the zone id loses its numbers ("JoppaWorld", not "JoppaWorld.8.22.2.1.10"), because the world
+## map is ONE zone whose 80x25 cells ARE the parasangs: the player's cell is their world position,
+## and the note's (mx,my) is its own cell.
+##
+## So everything downstream splits: how far a place is, which way it lies, how big to draw the
+## marker, and how far away "far" is. What does NOT split is the unit the panel prints — a parasang
+## is a parasang in both, which is the whole point of fixing this. The overworld numbers were coming
+## out at 20-28 for places the surface called 0.4 and 7.4, because the surface formula was being fed
+## the -1s.
+const PARA := {
+	# world units per parasang, marker footprint, marker height, "far" distance, plate reference
+	"surface":   {"scale": Vector2(240.0, 75.0), "foot": Vector2(80.0, 25.0),
+		"tall": 45.0, "near_ref": 300.0, "ref_dist": 140.0},
+	# On the world map a parasang IS one cell, so the marker is one cell square — anything wider
+	# would cover the places either side of the one it is marking.
+	"overworld": {"scale": Vector2(1.0, 1.0), "foot": Vector2(1.0, 1.0),
+		"tall": 6.0, "near_ref": 5.0, "ref_dist": 7.0},
+}
 
 var _targets: Array = []      # [{id, name, mx, my, color}]
 var _marks := {}              # id -> Node3D (the slab)
@@ -83,8 +93,10 @@ var _hole := Rect2()
 var blocked_cb: Callable = Callable()
 var _px := 0.0                # player's LOCAL cell in the live zone (where the beacons stand from)
 var _pz := 0.0
-var _gx := 0.0                # ...and their GLOBAL cell, which is what the bearing is measured in
-var _gz := 0.0
+## ...and the player's position IN PARASANGS, fractional — the one measurement both regimes share,
+## and what every distance and bearing is derived from.
+var _para := Vector2.ZERO
+var _regime := "surface"
 var _t := 0.0
 var _shader_cache: Shader
 
@@ -100,16 +112,50 @@ func _ready() -> void:
 func set_play_hole(r: Rect2) -> void:
 	_hole = r
 
-## The live zone + the player's cell in it. Both halves matter: the GLOBAL position sets which way
-## each beacon lies, the LOCAL one is where in the rendered world the column gets planted.
+## The live zone + the player's cell in it. Both halves matter: the parasang position sets how far
+## each place is and which way, the LOCAL cell is where in the rendered world the marker is planted.
 func set_player(zone: Dictionary, px: int, py: int) -> void:
 	_px = float(px)
 	_pz = float(py)
-	var w := float(zone.get("width", 80))
-	var h := float(zone.get("height", 25))
-	_gx = (float(zone.get("wx", 0)) * 3.0 + float(zone.get("zx", 0))) * w + _px
-	_gz = (float(zone.get("wy", 0)) * 3.0 + float(zone.get("zy", 0))) * h + _pz
+	var was := _regime
+	_regime = "overworld" if _is_world_map(zone) else "surface"
+	if _regime == "overworld":
+		# The world map's cells ARE parasangs, so the player's cell is the answer. +0.5 puts them in
+		# the middle of their own, which is where the target offsets are measured from too — the two
+		# halves cancel, and a note on your own cell reads as distance zero rather than half a step.
+		_para = Vector2(_px + 0.5, _pz + 0.5)
+	else:
+		var w := float(zone.get("width", 80))
+		var h := float(zone.get("height", 25))
+		_para = Vector2(
+			((float(zone.get("wx", 0)) * 3.0 + float(zone.get("zx", 0))) * w + _px) / PARA.surface.scale.x,
+			((float(zone.get("wy", 0)) * 3.0 + float(zone.get("zy", 0))) * h + _pz) / PARA.surface.scale.y)
+	if was != _regime:
+		_apply_regime()      # footprint, height and fade distance all change with the map you are on
 	_place()
+
+## Is this Qud's WORLD MAP rather than a patch of ground? Two independent tells, and it takes either:
+## the zone id drops its coordinates ("JoppaWorld", not "JoppaWorld.8.22.2.1.10") and every one of
+## wx/wy/zx/zy/z comes back -1. Reading the -1s as real coordinates is exactly what put Bethesda
+## Susa — the parasang the player was standing in — at "SE 25.5".
+func _is_world_map(zone: Dictionary) -> bool:
+	return int(zone.get("wx", 0)) < 0 or not String(zone.get("id", "")).contains(".")
+
+## Resize every marker for the map we are now on. Cheap, and it only runs on a crossing.
+func _apply_regime() -> void:
+	var r: Dictionary = PARA[_regime]
+	for m in _marks.values():
+		var slab: MeshInstance3D = m.get_node_or_null("Slab")
+		if slab == null:
+			continue
+		var box: BoxMesh = slab.mesh
+		box.size = Vector3(r.foot.x, r.tall, r.foot.y)
+		slab.position = Vector3(0, r.tall * 0.5, 0)
+		slab.extra_cull_margin = r.tall
+		var mat: ShaderMaterial = slab.get_surface_override_material(0)
+		if mat != null:
+			mat.set_shader_parameter("slab_h", r.tall)
+			mat.set_shader_parameter("near_ref", r.near_ref)
 
 ## The enabled locations, from the Locations panel. Rebuilds only what changed.
 func set_targets(list: Array) -> void:
@@ -138,24 +184,29 @@ func set_targets(list: Array) -> void:
 ## Distance to a target IN PARASANGS — the unit Qud itself measures the world in, and the one the
 ## panel prints beside each row.
 func parasangs_to(mx: int, my: int) -> float:
-	var d := _delta(mx, my)
-	return Vector2(d.x / PARA_W, d.y / PARA_H).length()
+	return _delta_para(mx, my).length()
 
 ## Compass bearing to a target, as a cardinal name. Measured in WORLD units for the same reason the
 ## placement is (see the header), so the letter and the column always agree.
 func bearing_to(mx: int, my: int) -> String:
 	var d := _delta(mx, my)
-	if d.length() < 0.5:
+	# "Here" is a fraction of a PARASANG, not of a cell — half a cell is the whole world map.
+	if _delta_para(mx, my).length() < 0.15:
 		return "here"
 	const NAMES := ["E", "SE", "S", "SW", "W", "NW", "N", "NE"]
 	var a := fposmod(atan2(d.y, d.x), TAU)
 	return NAMES[int(round(a / (TAU / 8.0))) % 8]
 
-## Target centre minus player, in global cells.
+## Target minus player, IN PARASANGS. The one measurement that means the same thing on both maps —
+## the panel's number comes straight off it.
+func _delta_para(mx: int, my: int) -> Vector2:
+	return Vector2(float(mx) + 0.5, float(my) + 0.5) - _para
+
+## ...and the same offset in the WORLD UNITS of whichever map is under us: 240x75 cells per parasang
+## on the surface, one cell per parasang on the world map. Both the bearing and the placement read
+## this, so the letter in the list and the marker on the ground can never disagree.
 func _delta(mx: int, my: int) -> Vector2:
-	var tx := (float(mx) * 3.0 + 1.0) * 80.0 + 40.0
-	var tz := (float(my) * 3.0 + 1.0) * 25.0 + 12.0
-	return Vector2(tx - _gx, tz - _gz)
+	return _delta_para(mx, my) * PARA[_regime].scale
 
 ## Stand each slab AT ITS PLACE — the player's own cell plus the true offset, in cells. No clamp:
 ## the whole point of the change is that a beacon seven parasangs off is 525 cells off, and looks it.
@@ -199,7 +250,7 @@ func _track_plates() -> void:
 		var m: Node3D = _marks.get(id, null)
 		if m == null:
 			continue
-		var head: Vector3 = m.global_position + Vector3(0, SLAB_H, 0)
+		var head: Vector3 = m.global_position + Vector3(0, float(PARA[_regime].tall), 0)
 		# BEHIND THE CAMERA STILL UNPROJECTS — to a point mirrored back into the frame. Without this
 		# test a beacon at your back draws its name in front of you, pointing the wrong way.
 		if cam.is_position_behind(head):
@@ -214,8 +265,8 @@ func _track_plates() -> void:
 		# the next zone. It shrinks by the square root of the distance ratio (gentler than true
 		# perspective) and stops at PLATE_MIN, because a name nobody can read marks nothing.
 		var dist: float = cam.global_position.distance_to(head)
-		var px: int = clampi(int(round(float(PLATE_FONT) * sqrt(REF_DIST / maxf(dist, 1.0)))),
-			PLATE_MIN, PLATE_MAX)
+		var px: int = clampi(int(round(float(PLATE_FONT)
+			* sqrt(float(PARA[_regime].ref_dist) / maxf(dist, 0.001)))), PLATE_MIN, PLATE_MAX)
 		if int(lab.get_theme_font_size("font_size")) != px:
 			lab.add_theme_font_size_override("font_size", px)
 			lab.add_theme_constant_override("outline_size", maxi(3, px / 3))
@@ -231,13 +282,14 @@ func _make_mark(t: Dictionary) -> Node3D:
 	var slab := MeshInstance3D.new()
 	slab.name = "Slab"
 	var box := BoxMesh.new()
-	box.size = Vector3(ZONE_W, SLAB_H, ZONE_H)   # one Qud zone on the ground, standing up
+	var r: Dictionary = PARA[_regime]
+	box.size = Vector3(r.foot.x, r.tall, r.foot.y)   # one zone of ground, or one world-map cell
 	slab.mesh = box
-	slab.position = Vector3(0, SLAB_H * 0.5, 0)
+	slab.position = Vector3(0, float(r.tall) * 0.5, 0)
 	# NEVER CULLED BY DISTANCE OR ANGLE: a beacon can be 500 cells out and half of it below the
 	# horizon, and Godot's default AABB culling is fine with that — but the extra margin costs
 	# nothing and a beacon that blinks out as you turn is the one bug nobody would report clearly.
-	slab.extra_cull_margin = SLAB_H
+	slab.extra_cull_margin = float(r.tall)
 	slab.set_surface_override_material(0, _slab_mat())
 	root.add_child(slab)
 
@@ -278,8 +330,8 @@ func _slab_mat() -> ShaderMaterial:
 	var m := ShaderMaterial.new()
 	m.shader = _shader()
 	m.set_shader_parameter("tint", Color(1, 1, 1, 0.55))
-	m.set_shader_parameter("slab_h", SLAB_H)
-	m.set_shader_parameter("near_ref", NEAR_REF)
+	m.set_shader_parameter("slab_h", PARA[_regime].tall)
+	m.set_shader_parameter("near_ref", PARA[_regime].near_ref)
 	m.render_priority = 2
 	return m
 
