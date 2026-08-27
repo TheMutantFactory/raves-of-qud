@@ -12142,6 +12142,13 @@ func _register_anim(win: Dictionary, cx: int, cy: int) -> void:
 			# what the flash was for, so only frames that genuinely SWAP A TILE (the dawnglider's
 			# flying icon) earn an overlay.
 			var swaps_tile: bool = axes[0] != "" and String(axes[0]) != tile
+			# NO SPIDERWEBS IN THE DESERT — the real one this time. The flashing web is a frame in
+			# the merged animSched that SWAPS THE TILE, so it earns an overlay quad and blinks over
+			# the player. My first fix went into _register_sprite_anim, which is STATIC-pass only
+			# and never sees the player at all: right rule, wrong path, and it changed nothing.
+			# Qud draws its generic stuck art whatever is holding you, so asphalt flashes a cobweb.
+			if _stuck_now and not _stuck_in_web and tile_family(String(axes[0])).contains("web"):
+				continue
 			# ...AND NOT A STATUS ICON THE 3D VIEW ALREADY SHOWS. Qud flashes status_swimming over
 			# a wet creature because a flat cell has no other way to say so. Raves sinks that
 			# creature into the water — the glowfish Daniel tagged renders "billboard(submerged
