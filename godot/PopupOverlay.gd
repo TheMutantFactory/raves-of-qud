@@ -1157,8 +1157,12 @@ func _build_options() -> void:
 		# max(own, content): that 0.79px of rounding on the cloth robe's widest row made
 		# the box 279 instead of 278.21, which pushed its centred left edge a whole pixel
 		# out and took the top rule, the divider and the item name with it.
+		# ONE ROW SLOT PLUS QUD'S OWN LINE BOX for each continuation. A multi-line option in Qud is
+		# a block of Message-sized lines, not a stack of 26px menu rows — stepping by ROW_H spaced
+		# the mutation descriptions half again as far apart as the game does. A single-line row is
+		# still exactly ROW_H, so every menu the box heights were measured against is untouched.
 		row.custom_minimum_size = Vector2(_snap(ROW_TEXT_X + _icon_x + tw + CROME_PAD_L),
-			ROW_H * float(lines.size()))
+			ROW_H + MSG_LINE * float(lines.size() - 1))
 		row.set_meta("exact_w", ROW_TEXT_X + _icon_x + tw + CROME_PAD_L)
 		row.mouse_filter = Control.MOUSE_FILTER_STOP
 		row.clip_contents = true
@@ -1198,9 +1202,18 @@ func _opt_cols(f: Font) -> int:
 		- ROW_TEXT_X - _icon_x - CROME_PAD_L
 	return maxi(12, int(floorf(avail / maxf(1.0, _pitch(f, 16)))))
 
-## Break a coloured run list into lines of at most `cols` characters, keeping each fragment's own
-## colour. Words move whole; a single word longer than a line is broken by character, because the
-## alternative is a line that overflows anyway and the point of this is that nothing does.
+## Break a coloured run list into lines, keeping each fragment's own colour.
+##
+## QUD'S OWN LINE BREAKS COME FIRST. Its menu options are not sentences, they are little tables —
+## "Duration: 20 rounds", "Cooldown: 200 rounds" — and it ships them with the newlines already in:
+## measured off the wire, one mutation option is "…leech its life force.\nMental attack versus an
+## organic creature\nDrains {{rules|1}} hit point per round\n…". Dropping those ran the rows
+## together into "force.Mental" and "creatureDrains", which is how the text arrived on screen.
+## Daniel: "I think you need to copy more of the linebreaks from Qud."
+##
+## Word wrapping is then the SECOND pass, over each of Qud's lines, for the case Qud does not cover:
+## a line still wider than the window. Words move whole; a single word longer than a line is broken
+## by character, because the alternative is a line that overflows anyway.
 ##
 ## Everything advances on the same pitch the drawing does (_runs_width and _draw_option_row both
 ## count characters), so "columns" here is the same unit the box is measured in — no second idea of
@@ -1211,40 +1224,56 @@ static func _wrap_runs(runs: Array, cols: int) -> Array:
 	var used := 0
 	for run in runs:
 		var col: Color = run[1]
-		var text: String = String(run[0])
-		var i := 0
-		while i < text.length():
-			var sp := text.find(" ", i)
-			var word := text.substr(i, (sp - i) if sp >= 0 else text.length() - i)
-			var trail := ""
-			if sp >= 0:
-				trail = " "
-				i = sp + 1
-			else:
-				i = text.length()
-			# A word wider than the line: hand out full lines of it until the tail fits.
-			while word.length() > cols:
-				if used > 0:
+		var segs: PackedStringArray = String(run[0]).split("\n", true)
+		for si in segs.size():
+			if si > 0:
+				lines.append(cur)          # Qud put a line break here; it is a line, not a space
+				cur = []
+				used = 0
+			var text: String = segs[si]
+			var i := 0
+			while i < text.length():
+				var sp := text.find(" ", i)
+				var word := text.substr(i, (sp - i) if sp >= 0 else text.length() - i)
+				var trail := ""
+				if sp >= 0:
+					trail = " "
+					i = sp + 1
+				else:
+					i = text.length()
+				# A word wider than the line: hand out full lines of it until the tail fits.
+				while word.length() > cols:
+					if used > 0:
+						lines.append(cur)
+						cur = []
+						used = 0
+					cur.append([word.substr(0, cols), col])
 					lines.append(cur)
 					cur = []
 					used = 0
-				cur.append([word.substr(0, cols), col])
-				lines.append(cur)
-				cur = []
-				used = 0
-				word = word.substr(cols)
-			if used > 0 and used + word.length() > cols:
-				lines.append(cur)
-				cur = []
-				used = 0
-			if word != "" or trail != "":
-				cur.append([word + trail, col])
-				used += word.length() + trail.length()
+					word = word.substr(cols)
+				if used > 0 and used + word.length() > cols:
+					lines.append(cur)
+					cur = []
+					used = 0
+				if word != "" or trail != "":
+					cur.append([word + trail, col])
+					used += word.length() + trail.length()
 	if not cur.is_empty():
 		lines.append(cur)
+	# Qud's options end WITH a newline, which would otherwise leave every one of them trailing a
+	# blank line and space the menu out twice as far as the game does.
+	while lines.size() > 1 and _runs_blank(lines[lines.size() - 1]):
+		lines.resize(lines.size() - 1)
 	if lines.is_empty():
 		lines.append([])
 	return lines
+
+static func _runs_blank(line: Array) -> bool:
+	for run in line:
+		if String(run[0]).strip_edges() != "":
+			return false
+	return true
 
 func _draw_option_row(row: Control, idx: int) -> void:
 	var f := row.get_theme_default_font()
@@ -1270,7 +1299,7 @@ func _draw_option_row(row: Control, idx: int) -> void:
 	var lines: Array = row.get_meta("lines", [])
 	for li in lines.size():
 		var px := ROW_TEXT_X + _icon_x
-		var y := base + ROW_H * float(li)
+		var y := base + MSG_LINE * float(li)
 		for run in (lines[li] as Array):
 			var txt: String = run[0]
 			row.draw_string(f, Vector2(px, y), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, run[1])

@@ -258,6 +258,21 @@ func _long_options_stay_inside_the_window() -> void:
 			wrapped = true
 	_check("prose menu: rows wrapped rather than clipped", wrapped,
 		"every row is still one line, so the text is being cut off instead")
+	# QUD'S OWN BREAKS, kept. Its options are little tables — "Duration: 20 rounds" on its own line
+	# — and running them together is what put "force.Mental" and "creatureDrains" on screen.
+	var first: Array = ov._opt_box.get_child(0).get_meta("lines", [])
+	# Joined WITH the break, so the check is about where the lines fall and not about how this
+	# test happens to concatenate them — the first version of it flattened them and then failed on
+	# the seam it had just created itself.
+	var joined := ""
+	for ln in first:
+		if joined != "":
+			joined += "\n"
+		for run in (ln as Array):
+			joined += String(run[0])
+	_check("prose menu: Qud's newlines are line breaks, not joins",
+		not joined.contains("force.Mental") and first.size() >= 6,
+		"%d lines; text ran together as %s" % [first.size(), joined.substr(0, 80)])
 	_check("prose menu: box is tall enough for the wrapped rows", ov._box_h > tallest,
 		"box %.2f is shorter than its tallest row %.2f" % [ov._box_h, tallest])
 	ov.queue_free()
@@ -269,7 +284,7 @@ func _mutation_menu() -> Dictionary:
 		"message": "Choose a mutation.", "title": "", "input": false, "inputDefault": "",
 		"buttons": [],
 		"options": [
-			{"text": "{{W|Time Dilation}} - You distort time around your person in order to slow down your enemies.Creatures within 9 tiles are slowed according to how close they are to you.Distance 1: creatures receive a -12 quickness penalty.",
+			{"text": "{{y|{{W|Syphon Vim}} {{y|- You bond with a nearby organic creature and leech its life force.}}\nMental attack versus an organic creature\nDrains {{rules|1}} hit point per round\nTarget gets a mental save to resist damage each round\nDuration: 20 rounds\nCooldown: 200 rounds\n}}",
 				"command": "option:0", "hotkey": ""},
 			{"text": "{{W|Temporal Fugue}} - You quickly pass back and forth through time creating multiple copies of yourself.Duration: 20 roundsCopies: 1Cooldown: 200 rounds",
 				"command": "option:1", "hotkey": ""},
