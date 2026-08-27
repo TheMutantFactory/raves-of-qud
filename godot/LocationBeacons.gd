@@ -1,8 +1,7 @@
 extends Node3D
 
-## LOCATION BEACONS — a light column standing over the horizon in the direction of a place you
-## asked to be shown, the way a navigation app plants a pin you can see before you can see the
-## destination.
+## LOCATION BEACONS — a slab of light standing ON a place you asked to be shown, the way a
+## navigation app plants a pin you can see before you can see the destination.
 ##
 ## Daniel: "If you enable the location (checkbox), it will show up on the game like a 'google maps'
 ## navigation beacon on the horizon."
@@ -26,32 +25,52 @@ extends Node3D
 ## whose position is the beam's head unprojected through the live camera: it tracks the world
 ## exactly, and no post-process touches it.
 ##
-## RANGE IS CLAMPED, NOT SCALED. The marker sits at the true distance while that is near enough to
-## mean something and parks at FAR_R beyond it, so a place four parasangs off still has a visible
-## column instead of one lost in the fog — and arriving walks the beacon down onto the spot rather
-## than leaving it pinned at arm's length forever.
+## STOOD AT THE REAL PLACE, AT REAL SCALE. Daniel: "The beacons need to be smaller when they're
+## farther away. Can we set the beacons to their actual locations? Maybe create a rectangle the size
+## of the zone at the zone and just let the camera work?"
+##
+## They used to be pinned at a fixed 34 cells, which made every beacon the same size whatever it was
+## marking — a place seven parasangs off looked exactly as close as one you could walk to before
+## dark. Now the marker is a ZONE-SIZED SLAB (80x25 cells, Qud's own zone footprint) standing at the
+## target's true offset, and the perspective camera does the rest: near ones fill the view, far ones
+## shrink to a smudge on the horizon. That is the depth cue, and it is free.
+##
+## ...which means the slab is a claim about ACCURACY, too. A map note names a parasang, not a cell,
+## so the honest thing to draw is an area rather than a point — the slab says "somewhere in here",
+## which is exactly what the journal knows.
+##
+## FOG IS OFF FOR THE SLAB, and has to be. SkyGrade's depth fog is total by 240 cells; a beacon five
+## parasangs out is 375, so every distant one — the ones that most need marking — would have been
+## erased by the atmosphere the moment they were placed at their real distance.
 
-## How far out a distant beacon stands, in cells. Beyond the zone (80x25) on purpose: the column is
-## meant to read as being OUT THERE, past the ground you can walk this turn.
-const FAR_R := 34.0
-## ...and how close it may come. Under this the column would be standing on the player.
-const NEAR_R := 5.0
-const BEAM_H := 26.0          # tall enough to clear any wall and still be in frame at a low angle
-const BEAM_R_BOT := 0.95
-const BEAM_R_TOP := 0.30
-## The label rides at the BEAM'S FOOT, not its head. At the head it was simply off the top of the
-## frame — a 26-cell column seen from a low compass camera leaves the screen long before it ends —
-## and the foot is where the eye already is: the horizon, which is what the beacon is standing on.
-const LABEL_Y := 4.2
+## Qud's zone, in cells: the marker's footprint.
+const ZONE_W := 80.0
+const ZONE_H := 25.0
+## How tall the slab stands. Not "tall enough to see" any more — at real distances the camera
+## decides that — but tall enough to read as a marker rather than a stain on the ground.
+const SLAB_H := 45.0
 const PULSE_HZ := 0.45        # slow — a lighthouse, not a warning light
 const PULSE_DEPTH := 0.30
+## The name-plate's size at REF_DIST cells, and the range it is allowed to shrink and grow through.
+## The plate is a label, not part of the scenery: it takes the depth cue (so a far beacon's name
+## recedes with it) but stops well short of the vanishing point, because a name nobody can read
+## marks nothing.
+const PLATE_FONT := 20
+const PLATE_MIN := 11
+const PLATE_MAX := 28
+const REF_DIST := 140.0
+## A BEACON FADES AS YOU ARRIVE, which is what a navigation pin does and what this needed: at real
+## scale a place a third of a parasang away is 96 cells of slab across the view, and at full strength
+## it stopped being a marker and became a magenta wall. Full strength from NEAR_REF cells out, down
+## to a wash on top of you — where you can see the place itself and no longer need marking.
+const NEAR_REF := 300.0
 
 ## Cells per parasang, from Qud's own geometry: 3 zones of 80x25.
 const PARA_W := 240.0
 const PARA_H := 75.0
 
 var _targets: Array = []      # [{id, name, mx, my, color}]
-var _marks := {}              # id -> Node3D (the column)
+var _marks := {}              # id -> Node3D (the slab)
 var _plates := {}             # id -> Label   (the name, on the HUD overlay)
 var _hud: CanvasLayer         # the overlay the plates live on
 ## The play area, in window pixels — MainFrame's hole, pushed down from Main. A plate outside it is
@@ -67,11 +86,10 @@ var _pz := 0.0
 var _gx := 0.0                # ...and their GLOBAL cell, which is what the bearing is measured in
 var _gz := 0.0
 var _t := 0.0
-var _ramp: Texture2D
+var _shader_cache: Shader
 
 func _ready() -> void:
 	set_process(true)
-	_ramp = _beam_ramp()
 	_hud = CanvasLayer.new()
 	_hud.name = "BeaconPlates"
 	_hud.layer = 1               # over the 3D, under the frame chrome (which owns layer 0 + the CRT at 100)
@@ -139,15 +157,15 @@ func _delta(mx: int, my: int) -> Vector2:
 	var tz := (float(my) * 3.0 + 1.0) * 25.0 + 12.0
 	return Vector2(tx - _gx, tz - _gz)
 
+## Stand each slab AT ITS PLACE — the player's own cell plus the true offset, in cells. No clamp:
+## the whole point of the change is that a beacon seven parasangs off is 525 cells off, and looks it.
 func _place() -> void:
 	for t in _targets:
 		var m: Node3D = _marks.get(String(t.get("id", "")), null)
 		if m == null:
 			continue
 		var d := _delta(int(t.get("mx", 0)), int(t.get("my", 0)))
-		var dir := d.normalized() if d.length() > 0.001 else Vector2(0, -1)
-		var r: float = clampf(d.length(), NEAR_R, FAR_R)
-		m.position = Vector3(_px + dir.x * r, 0.0, _pz + dir.y * r)
+		m.position = Vector3(_px + d.x, 0.0, _pz + d.y)
 
 func _process(dt: float) -> void:
 	if _marks.is_empty():
@@ -157,12 +175,12 @@ func _process(dt: float) -> void:
 	# they read as one system, which is what they are.
 	var k: float = 1.0 - PULSE_DEPTH * 0.5 * (1.0 - cos(_t * TAU * PULSE_HZ))
 	for m in _marks.values():
-		var beam: MeshInstance3D = m.get_node_or_null("Beam")
-		if beam != null:
-			var mat: StandardMaterial3D = beam.get_surface_override_material(0)
+		var slab: MeshInstance3D = m.get_node_or_null("Slab")
+		if slab != null:
+			var mat: ShaderMaterial = slab.get_surface_override_material(0)
 			if mat != null:
 				var c: Color = m.get_meta("tint", Color.WHITE)
-				mat.albedo_color = Color(c.r, c.g, c.b, c.a * k)
+				mat.set_shader_parameter("tint", Color(c.r, c.g, c.b, c.a * k))
 	_track_plates()
 
 ## Put each name-plate where its column's head lands on screen. THE LIVE CAMERA, asked of the
@@ -181,37 +199,47 @@ func _track_plates() -> void:
 		var m: Node3D = _marks.get(id, null)
 		if m == null:
 			continue
-		var head: Vector3 = m.global_position + Vector3(0, LABEL_Y, 0)
+		var head: Vector3 = m.global_position + Vector3(0, SLAB_H, 0)
 		# BEHIND THE CAMERA STILL UNPROJECTS — to a point mirrored back into the frame. Without this
 		# test a beacon at your back draws its name in front of you, pointing the wrong way.
 		if cam.is_position_behind(head):
 			lab.visible = false
 			continue
 		var p := cam.unproject_position(head)
-		var sz := lab.get_minimum_size()
-		var at := p - Vector2(sz.x * 0.5, sz.y)      # centred on the column, sitting above the head
 		if _hole.size.x > 1.0 and not _hole.has_point(p):
 			lab.visible = false
 			continue
+		# THE NAME TAKES THE DEPTH CUE TOO. The slab shrinks with distance on its own now; a plate
+		# that stayed one size would make a beacon five parasangs out shout as loudly as the one in
+		# the next zone. It shrinks by the square root of the distance ratio (gentler than true
+		# perspective) and stops at PLATE_MIN, because a name nobody can read marks nothing.
+		var dist: float = cam.global_position.distance_to(head)
+		var px: int = clampi(int(round(float(PLATE_FONT) * sqrt(REF_DIST / maxf(dist, 1.0)))),
+			PLATE_MIN, PLATE_MAX)
+		if int(lab.get_theme_font_size("font_size")) != px:
+			lab.add_theme_font_size_override("font_size", px)
+			lab.add_theme_constant_override("outline_size", maxi(3, px / 3))
+			lab.reset_size()
+		var sz := lab.get_minimum_size()
 		lab.visible = true
-		lab.position = at
+		lab.position = p - Vector2(sz.x * 0.5, sz.y)   # centred on the slab, sitting above its head
 
 func _make_mark(t: Dictionary) -> Node3D:
 	var root := Node3D.new()
 	root.name = "Beacon_" + String(t.get("id", "?"))
 
-	var beam := MeshInstance3D.new()
-	beam.name = "Beam"
-	var cyl := CylinderMesh.new()
-	cyl.top_radius = BEAM_R_TOP
-	cyl.bottom_radius = BEAM_R_BOT
-	cyl.height = BEAM_H
-	cyl.radial_segments = 12
-	cyl.rings = 1
-	beam.mesh = cyl
-	beam.position = Vector3(0, BEAM_H * 0.5, 0)
-	beam.set_surface_override_material(0, _beam_mat())
-	root.add_child(beam)
+	var slab := MeshInstance3D.new()
+	slab.name = "Slab"
+	var box := BoxMesh.new()
+	box.size = Vector3(ZONE_W, SLAB_H, ZONE_H)   # one Qud zone on the ground, standing up
+	slab.mesh = box
+	slab.position = Vector3(0, SLAB_H * 0.5, 0)
+	# NEVER CULLED BY DISTANCE OR ANGLE: a beacon can be 500 cells out and half of it below the
+	# horizon, and Godot's default AABB culling is fine with that — but the extra margin costs
+	# nothing and a beacon that blinks out as you turn is the one bug nobody would report clearly.
+	slab.extra_cull_margin = SLAB_H
+	slab.set_surface_override_material(0, _slab_mat())
+	root.add_child(slab)
 
 	_retint(root, t)
 	return root
@@ -237,37 +265,51 @@ func _retint(root: Node3D, t: Dictionary) -> void:
 	if lab != null:
 		lab.text = String(t.get("name", ""))
 		lab.add_theme_color_override("font_color", c)
-	var beam: MeshInstance3D = root.get_node_or_null("Beam")
-	if beam != null:
-		var mat: StandardMaterial3D = beam.get_surface_override_material(0)
+	var slab: MeshInstance3D = root.get_node_or_null("Slab")
+	if slab != null:
+		var mat: ShaderMaterial = slab.get_surface_override_material(0)
 		if mat != null:
-			mat.albedo_color = Color(c.r, c.g, c.b, 0.55)
+			mat.set_shader_parameter("tint", Color(c.r, c.g, c.b, 0.55))
 
-func _beam_mat() -> StandardMaterial3D:
-	var m := StandardMaterial3D.new()
-	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	m.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-	m.cull_mode = BaseMaterial3D.CULL_DISABLED
-	# DEPTH-TESTED, so the world occludes it. Daniel: "The beacon is shining through the floor" — a
-	# column planted 34 cells out has most of its length below the horizon, and drawing that over
-	# the ground in front of you made a distant landmark look like a pillar of light standing in the
-	# middle of Joppa. The NAME still ignores every wall; that one is a HUD control, and it is the
-	# half that has to be readable from anywhere.
-	m.disable_receive_shadows = true
-	m.albedo_texture = _ramp          # the vertical fade — see _beam_ramp
+## The slab's material. A SHADER rather than a StandardMaterial3D with a ramp texture, because a
+## BoxMesh's six faces do not share one vertical UV — the fade has to come from the vertex height,
+## which is the one thing every face agrees on.
+func _slab_mat() -> ShaderMaterial:
+	var m := ShaderMaterial.new()
+	m.shader = _shader()
+	m.set_shader_parameter("tint", Color(1, 1, 1, 0.55))
+	m.set_shader_parameter("slab_h", SLAB_H)
+	m.set_shader_parameter("near_ref", NEAR_REF)
 	m.render_priority = 2
 	return m
 
-## The column's fade: solid at the foot, gone at the head. A flat-topped beam reads as a PILLAR
-## (something built); one that dissolves upward reads as light.
-func _beam_ramp() -> Texture2D:
-	var img := Image.create(1, 64, false, Image.FORMAT_RGBA8)
-	for y in 64:
-		# MEASURED IN PIXELS, because the screenshot lies about this: the image viewer lifts a dark
-		# scene and the column looked head-bright either way. Sampling the beam's excess over the
-		# background beside it settled it — CylinderMesh maps v=0 to the TOP, so the ramp is written
-		# head-first, and the "fix" that flipped it made the column solid in the sky.
-		var f := float(y) / 63.0
-		img.set_pixel(0, y, Color(1, 1, 1, pow(f, 1.6)))
-	return ImageTexture.create_from_image(img)
+## Solid at the foot, gone at the head: a flat-topped block reads as something BUILT, one that
+## dissolves upward reads as light.
+##
+## depth_draw_never keeps the two visible faces from cutting each other; the depth TEST stays on, so
+## the world still occludes it — Daniel: "The beacon is shining through the floor", and it is the
+## ground in front of you that has to win. fog_disabled is not a preference: SkyGrade's depth fog is
+## total by 240 cells and these now stand at their real distance, which is routinely further.
+func _shader() -> Shader:
+	if _shader_cache != null:
+		return _shader_cache
+	_shader_cache = Shader.new()
+	_shader_cache.code = """
+shader_type spatial;
+render_mode unshaded, blend_add, cull_disabled, depth_draw_never, fog_disabled, shadows_disabled;
+uniform vec4 tint : source_color = vec4(1.0);
+uniform float slab_h = 45.0;
+uniform float near_ref = 300.0;
+varying float up;
+varying float depth;
+void vertex() {
+	up = clamp((VERTEX.y + slab_h * 0.5) / max(slab_h, 0.001), 0.0, 1.0);
+	depth = -(VIEW_MATRIX * MODEL_MATRIX * vec4(VERTEX, 1.0)).z;
+}
+void fragment() {
+	ALBEDO = tint.rgb;
+	// Fades toward the head (light, not masonry) AND toward the viewer (see near_ref).
+	ALPHA = tint.a * pow(1.0 - up, 1.6) * clamp(depth / near_ref, 0.16, 1.0);
+}
+"""
+	return _shader_cache

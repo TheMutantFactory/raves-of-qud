@@ -30,6 +30,7 @@ const MAX_ROWS := 60          # a late-game journal is long; the list scrolls pa
 const ROW_LIMIT_H := 260.0    # ...and the panel stops growing here
 const SETTINGS_KEY := "location_beacons"
 const OPEN_KEY := "locations_expanded"
+const ARMED_KEY := "locations_beacons_on"
 
 ## The beacon colours, cycled in tick order. Qud's own palette codes — a beacon is a light in Qud's
 ## world and has no business being a colour the world cannot contain.
@@ -41,7 +42,13 @@ var _body: VBoxContainer
 var _rows: VBoxContainer
 var _scroll: ScrollContainer
 var _empty: Label
-var _expanded := false        # the nav pin is what opens it; the column keeps its height until then
+var _expanded := false        # the panel's own ▾/▸ toggle; the column keeps its height until then
+## THE MASTER SWITCH, which is what the nav pin is. Daniel: "Clicking the location button toggles
+## the beacons on and off. Clicking the panel toggles the expand/collapse." Two different questions
+## — WHICH places are marked (the checkboxes) and WHETHER any of them are showing right now — and
+## the pin answers the second, so a player who wants a clear view for one fight does not have to
+## untick four rows and remember to tick them back.
+var _armed := true
 var _sorted := false          # the list has been ordered against a real player position
 var _sig := ""                # what the last rebuild was built from — see _reload
 var _one_to_one := false
@@ -94,7 +101,9 @@ func _ready() -> void:
 	_body.add_child(_empty)
 
 	_expanded = bool(Settings.get_value(OPEN_KEY, false))
+	_armed = bool(Settings.get_value(ARMED_KEY, true))
 	_refresh_toggle()
+	_refresh_title()
 	_apply_height()
 	_reload(true)
 	set_process(true)
@@ -145,9 +154,27 @@ func set_expanded(on: bool) -> void:
 		_since = REFRESH_S      # ask for fresh data the moment it opens, not one tick later
 	_apply_height()
 
-## The nav-bar button: open the panel if it is shut, shut it if it is already open.
-func toggle_panel() -> void:
-	set_expanded(not _expanded)
+## The nav pin: arm or disarm every beacon at once. Returns the new state so the caller can dress
+## its icon and say which way it went.
+func toggle_beacons() -> bool:
+	_armed = not _armed
+	Settings.set_value(ARMED_KEY, _armed)
+	Settings.save()
+	_refresh_title()
+	_emit()
+	return _armed
+
+func beacons_on() -> bool:
+	return _armed
+
+## How many places are ticked — the pin's tooltip says so, because arming an empty list looks
+## exactly like a broken button.
+func armed_count() -> int:
+	var n := 0
+	for e in _entries:
+		if _on.has(String(e["id"])):
+			n += 1
+	return n
 
 func expanded() -> bool:
 	return _expanded
@@ -155,6 +182,15 @@ func expanded() -> bool:
 ## True while parity mode has taken the panel away — the nav button asks before trying to open it.
 func parity_hidden() -> bool:
 	return _one_to_one
+
+## The heading carries the master state, because the pin that flips it is across the window and the
+## checkboxes stay ticked either way — without this, disarmed beacons read as beacons that broke.
+func _refresh_title() -> void:
+	if _title == null:
+		return
+	_title.text = "Locations" if _armed else "Locations (beacons off)"
+	_title.add_theme_color_override("font_color",
+		QudPalette.TEXT if _armed else Color(1, 1, 1, 0.45))
 
 func _refresh_toggle() -> void:
 	if _toggle == null:
@@ -353,7 +389,7 @@ func _set_tick(id: String, on: bool) -> void:
 ## go. Colour by position in the list would repaint every column whenever a nearer place appeared.
 func _emit() -> void:
 	var out: Array = []
-	if not _one_to_one:
+	if _armed and not _one_to_one:
 		# COLOUR BY TICK ORDER, not by row order. `_on` is a Dictionary and Godot keeps its insertion
 		# order (and JSON preserves it across a save), so its keys ARE the order the player armed
 		# them in. Numbering off `_entries` instead — which is sorted by distance — would repaint

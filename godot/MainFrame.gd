@@ -127,6 +127,8 @@ var _nav_up_icon: TextureRect      # the Up (stairs) nav icon — dimmed when th
 ## `ActiveButton`, i.e. the only ones with two sprites. Everything else has one image and no state.
 var _nav_toggle_icons := {}
 var _nav_toggle_state := {}        # nav key -> last applied bool, so a repeat snapshot is free
+var _nav_loc_cell: Control         # the Locations pin — its tooltip carries the beacon state
+var _nav_loc_icon: TextureRect     # ...and its tint IS the state (drawn icon, no on/off sprites)
 var _nav_look_cell: Control        # the Look cell — its tooltip says which way it will go
 var _qud_view := ""                # Qud's CurrentGameView from the snapshot ("Looker" while looking)
 var _zone_has_stairs_up := true    # last snapshot's stats.stairsUp (assume yes until told)
@@ -1033,6 +1035,7 @@ func _row_vitals_menu() -> Control:
 			cell.gui_input.connect(func(ev: InputEvent) -> void:
 				if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
 					_open_locations())
+			_nav_loc_cell = cell
 		if key == "look":
 			# Qud's own Look button, pressed the way the lock is: it is an ActiveButton, so invoking
 			# its onClick runs whatever Qud binds there rather than our guess at a command.
@@ -1107,6 +1110,9 @@ func _row_vitals_menu() -> Control:
 		if key == "up":
 			_nav_up_icon = ic                 # after the reparent: the dim also rewrites the tooltip
 			_apply_stair_availability()
+		if key == "loc":
+			_nav_loc_icon = ic
+			_dress_loc_icon.call_deferred()   # the panel is built after this strip is
 		_menu_compact.add_child(cell)
 
 	h.add_child(menu)
@@ -1115,8 +1121,10 @@ func _row_vitals_menu() -> Control:
 ## A camera mode changed -> print its controls to the message log. The controls text comes WITH the
 ## signal (Main owns _MODE_NAMES, which is already the per-mode control list the HUD hint and the
 ## multiview captions use), so there is no second copy here to drift from it.
-## Open (or shut) the Locations panel. Called from both nav rows — the icon strip and the verbose
-## menu — so the pin and the word do the same thing.
+## The nav pin: arm or disarm the beacons. Daniel: "Clicking the location button toggles the beacons
+## on and off. Clicking the panel toggles the expand/collapse." The pin is across the window from the
+## panel, so it says what it did in the log AND dresses its own icon — a master switch you cannot
+## see the state of is a switch you press twice.
 func _open_locations() -> void:
 	if _locations == null:
 		return
@@ -1126,7 +1134,26 @@ func _open_locations() -> void:
 		if _msglog != null:
 			_msglog.add_message("{{K|Locations is a Raves panel; leave 1:1 mode to use it.}}")
 		return
-	_locations.set_expanded(not _locations.expanded())
+	var on: bool = _locations.toggle_beacons()
+	_dress_loc_icon()
+	if _msglog != null:
+		var n: int = _locations.armed_count()
+		if on and n == 0:
+			# ARMED WITH NOTHING TICKED looks exactly like a broken button, so it says so.
+			_msglog.add_message("{{K|beacons: on — no locations ticked yet}}")
+		else:
+			_msglog.add_message("{{C|beacons:}} " + ("on (%d)" % n if on else "off"))
+
+## The pin's two faces. The extracted nav toggles ship a sprite each; this one is drawn, so the
+## state is a tint — lit when beacons are armed, dimmed when they are not.
+func _dress_loc_icon() -> void:
+	if _nav_loc_icon == null or _locations == null:
+		return
+	var on: bool = _locations.beacons_on()
+	_nav_loc_icon.modulate = Color(1, 1, 1, 1) if on else Color(1, 1, 1, 0.4)
+	if _nav_loc_cell != null:
+		_nav_loc_cell.tooltip_text = ("Beacons ON (%d) — click to hide them"
+			% _locations.armed_count()) if on else "Beacons off — click to show them"
 
 ## The look cursor moved. Print where it is, and offer the full report as a BUTTON rather than
 ## opening it — Daniel: "add button to 'report tile' to the message log", the whole point being
