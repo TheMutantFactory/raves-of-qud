@@ -102,6 +102,8 @@ var _pz := 0.0
 ## and what every distance and bearing is derived from.
 var _para := Vector2.ZERO
 var _regime := "surface"
+var _zw := 80.0                 # the live zone's size, for the plate's boundary (see _edge_row)
+var _zh := 25.0
 var _flat := false              # cards laid flat for a straight-down camera (see _face_camera)
 var _tiles: RefCounted          # QudTiles — recolours a place's own sprite
 var tiles_dir := ""             # pushed from Main with the snapshot
@@ -124,6 +126,8 @@ func set_play_hole(r: Rect2) -> void:
 func set_player(zone: Dictionary, px: int, py: int) -> void:
 	_px = float(px)
 	_pz = float(py)
+	_zw = float(zone.get("width", 80))
+	_zh = float(zone.get("height", 25))
 	var was := _regime
 	_regime = "overworld" if _is_world_map(zone) else "surface"
 	if _regime == "overworld":
@@ -295,6 +299,19 @@ func _track_plates() -> void:
 		# height alone sits with its descenders in the sprite's outline. The gap is a fraction of the
 		# font rather than a pixel count, because the font itself shrinks with distance.
 		var at := p - Vector2(sz.x * 0.5, sz.y + float(px) * PLATE_GAP)
+		# AND IT STAYS OUT OF THE ZONE YOU ARE STANDING IN. Daniel: "The Locations text needs to be
+		# bound to outside the current zone. When you move the camera, the text can appear
+		# in-zone." The plate is a HUD label placed from an unprojected world point, so nothing
+		# stopped it landing over Joppa's rooftops — a name for somewhere eight parasangs off,
+		# drawn across the room you are in, reads as a label for the room.
+		#
+		# The boundary is the point where the bearing to that beacon LEAVES the zone. Every cell
+		# beyond it is outside, and on screen that is everything above the boundary's own row: a
+		# ground point projects nearer the horizon the further off it is. So the plate is pushed up
+		# to clear that row and never drawn below it.
+		var er := _edge_row(cam, m)
+		if er > -1.0:
+			at.y = minf(at.y, er - sz.y - 2.0)
 		if _hole.size.x > 1.0:
 			at.y = clampf(at.y, _hole.position.y + 2.0, _hole.end.y - sz.y - 2.0)
 		lab.visible = true
@@ -523,3 +540,38 @@ func _zone_font(cam: Camera3D, m: Node3D, lab: Label) -> float:
 	if _hole.size.x > 1.0:
 		span = minf(span, _hole.size.x)
 	return float(PLATE_REF) * span / base
+
+## The screen row where this beacon's bearing crosses out of the live zone, or -1 when the question
+## cannot be answered (the crossing is behind the camera, or we have no zone size yet).
+func _edge_row(cam: Camera3D, m: Node3D) -> float:
+	if _zw <= 0.0 or _zh <= 0.0:
+		return -1.0
+	var here := Vector2(_px, _pz)
+	var dir := Vector2(m.position.x - _px, m.position.z - _pz)
+	var exit := zone_exit(here, dir, _zw, _zh)
+	if exit == here:
+		return -1.0
+	var w3 := Vector3(exit.x, 0.0, exit.y)
+	if cam.is_position_behind(w3):
+		return -1.0
+	return cam.unproject_position(w3).y
+
+## Where a ray leaves an axis-aligned rectangle — the zone's own bounds, in cells.
+##
+## Pure, and separated out because it is the whole of the rule and has no visible symptom when it is
+## a little wrong: the plate simply sits somewhere plausible that is a few cells inside the zone.
+static func zone_exit(from: Vector2, dir: Vector2, w: float, h: float) -> Vector2:
+	if dir.length_squared() < 1e-9 or w <= 0.0 or h <= 0.0:
+		return from
+	var t := INF
+	if dir.x > 0.0:
+		t = minf(t, (w - from.x) / dir.x)
+	elif dir.x < 0.0:
+		t = minf(t, -from.x / dir.x)
+	if dir.y > 0.0:
+		t = minf(t, (h - from.y) / dir.y)
+	elif dir.y < 0.0:
+		t = minf(t, -from.y / dir.y)
+	if not is_finite(t) or t <= 0.0:
+		return from
+	return from + dir * t

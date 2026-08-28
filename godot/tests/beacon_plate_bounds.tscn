@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/beacon_plate_bounds.gd" id="1"]
+
+[node name="BeaconPlateBounds" type="Node"]
+script = ExtResource("1")
