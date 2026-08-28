@@ -46,6 +46,11 @@ var _notice := ""                # sticky status line (BBCode) pinned at the BOT
 ## [{at: int, text: String}], `at` = Qud's total when it was added, i.e. it sits just before the line
 ## that arrives next. Pruned once the sliding tail moves past it.
 var _local: Array = []
+var _seg := 0               # Qud's time segment, stamped onto our own lines so they can expire
+## How long one of our lines lives, in Qud segments. A move is 10, so this is about a dozen turns —
+## long enough to read a camera's controls, short enough that it is gone before you wonder why it
+## is still there.
+const LOCAL_TTL_SEG := 120
 
 func _ready() -> void:
 	_tiles = load("res://QudTiles.gd").new()
@@ -107,10 +112,13 @@ func set_snapshot(data: Dictionary) -> void:
 func set_messages(lines: Array, total: int, palette: Dictionary, data := {}) -> void:
 	_last_msgs = lines
 	_since_load = int(data.get("msgSinceLoad", -1))   # -1 (old mod) = show all; else Qud's since-load window
+	# THE GAME CLOCK, which is the honest measure of "has the game moved on" — see _age_local.
+	_seg = int(data.get("time", {}).get("segment", _seg))
 	if not palette.is_empty():
 		_palette = palette
 	_tiles.palette = _palette
 	_tiles.tiles_dir = String(data.get("tilesDir", _tiles.tiles_dir))
+	_expire_local()
 	_build_name_index(data)
 	_player_obj = data.get("player", {})
 	# Accumulate the current location's world-terrain (Salt marsh, Red Rock, …) — persists across travel,
@@ -306,6 +314,55 @@ func _ingest(lines: Array, total: int) -> void:
 		if e["count"] > 0:
 			survivors.append(e)
 	_entries = survivors
+	_age_local()
+
+## OUR OWN LINES EXPIRE TOO. Daniel: "Let's make the camera instructions on the message log expire
+## like other log messages."
+##
+## They already did in VERBATIM mode, where a local line is anchored to a position in Qud's stream
+## and scrolls out with the tail it sits in. FILTER mode has no positions to scroll — it is a set of
+## unique messages, not a history — so _render_filter appended every one of them at the end of every
+## render, unpruned. In the mode people actually play in, a camera hint from an hour ago was still
+## the last thing in the log.
+##
+## TWO CLOCKS, whichever runs out first, because neither one alone is right.
+##
+## A ROUND is a snapshot in which Qud said something, and that is the clock the filter's own entries
+## age on. But walking across open desert says nothing at all — measured, eight moves and Qud's
+## message count never moved — so on that clock alone a hint outlives an entire journey.
+##
+## Qud's TIME SEGMENT does move: ten per step. That is the honest answer to "has the game moved on",
+## and it is what actually expires these. The round counter stays as the fallback for anything that
+## produces messages without time passing, and for a mod too old to ship a clock.
+func _age_local() -> void:
+	if _local.is_empty():
+		return
+	var keep: Array = []
+	for e in _local:
+		e["quiet"] = int(e.get("quiet", 0)) + 1
+		if int(e["quiet"]) <= FILTER_GRACE:
+			keep.append(e)
+	_local = keep
+
+## The segment half of the same rule, run every snapshot rather than every round.
+func _expire_local() -> void:
+	if _local.is_empty() or _seg <= 0:
+		return
+	var keep: Array = []
+	for e in _local:
+		var born := int(e.get("seg", 0))
+		if born <= 0:
+			# ADOPTED, not exempted. The first camera hint is emitted while the mode is applied at
+			# startup — before any snapshot, so before there is a clock to stamp it with. Treating a
+			# missing stamp as "never expires" is what kept that one line at the bottom of the log
+			# for the rest of the session, which is exactly the report. It starts its life the
+			# moment a clock exists instead.
+			e["seg"] = _seg
+			keep.append(e)
+			continue
+		if _seg - born <= LOCAL_TTL_SEG:
+			keep.append(e)
+	_local = keep
 
 ## Build the initial filter state from a backlog of lines: one entry per unique message, count = repeats,
 ## newest-last. Used to seed on connect so filter isn't empty.
@@ -356,7 +413,7 @@ func set_action_button(label: String, on_press: Callable) -> void:
 func add_message(markup: String) -> void:
 	if markup == "":
 		return
-	_local.append({"at": maxi(_seen_total, 0), "text": markup})
+	_local.append({"at": maxi(_seen_total, 0), "text": markup, "quiet": 0, "seg": _seg})
 	if _local.size() > 16:
 		_local = _local.slice(_local.size() - 16)
 	_rerender()
