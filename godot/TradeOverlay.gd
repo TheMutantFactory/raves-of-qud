@@ -160,6 +160,7 @@ var _lists: Array = []          # [side] -> {content: Control, scroll: ScrollCon
 var _heads: Array = []          # [side] -> Label
 var _totals: Array = []         # [side] -> Label
 var _centre: Label
+var _offer: Button               # the TRADE [n] cell — pressing it offers
 var _money: Label
 var _legend: Label
 var _strip: Control              # the category filter cells
@@ -271,8 +272,25 @@ func _ensure_built() -> void:
 	var tl := _text(DIM); _place(tl, Rect2(TOTAL_L_X, TOTALS_Y, TOTAL_W, 22.0)); _totals.append(tl)
 	# 78.7 wide, which is what the probe reported. At TOTAL_W it overlapped both totals either side
 	# and printed "e0en" over the left one.
-	_centre = _text(GOLD); _place(_centre, Rect2(TOTAL_C_X, TOTALS_Y - 8.0, CENTRE_W, 42.0))
+	#
+	# AND IT IS A BUTTON. Daniel: "Clicking Trade [0] ... does not initiate a trade." It read as the
+	# thing you press to trade and did nothing, because it was a label. It is the only control on
+	# the board that names the whole action, so it is the obvious place to click.
+	_offer = Button.new()
+	_offer.flat = true
+	_offer.focus_mode = Control.FOCUS_NONE
+	_place(_offer, Rect2(TOTAL_C_X, TOTALS_Y - 8.0, CENTRE_W, 42.0))
+	_offer.tooltip_text = "Offer this trade  [O]"
+	_offer.pressed.connect(func() -> void: act.emit({"do": "offer"}))
+	_design.add_child(_offer)
+	_centre = Label.new()
+	_centre.add_theme_font_override("font", load("res://fonts/SourceCodePro-Regular.ttf"))
+	_centre.add_theme_font_size_override("font_size", FONT_PX)
+	_centre.add_theme_color_override("font_color", GOLD)
+	_centre.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_place(_centre, Rect2(0.0, 0.0, CENTRE_W, 42.0))
 	_centre.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_offer.add_child(_centre)
 	var tr := _text(DIM); _place(tr, Rect2(TOTAL_R_X, TOTALS_Y, TOTAL_W, 22.0)); _totals.append(tr)
 	_money = _text(MONEY); _place(_money, Rect2(MONEY_X, TOTALS_Y, MONEY_W, 22.0))
 	_legend = _text(DIM); _place(_legend, Rect2(CONTENT_X + SEARCH_W + 16.0, LEGEND_Y, 1400.0, 22.0))
@@ -438,7 +456,11 @@ func _paint_totals() -> void:
 		else "$%d" % int(_data.get("drams", 0))
 	_money.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	# Qud's own hotkey line, in Qud's order. The mouse verbs are ours and are named after them.
-	_legend.text = "[Esc] Close Menu    [=] add one    [-] remove one    [Space] offer" \
+	# ONLY WHAT WORKS, and in Qud's own key names. The previous line advertised "[=] add one" and
+	# "[-] remove one", which are real Qud bindings that this board does not implement -- they act
+	# on the keyboard-highlighted row, and Raves has no keyboard selection here -- and "[Space]
+	# offer", which was not the binding at all.
+	_legend.text = "[O] Offer    [Esc] Close Menu" \
 		+ "        click add \u00b7 right-click remove \u00b7 shift whole stack"
 
 func _fill(content: VBoxContainer, rows: Array, side: int) -> void:
@@ -580,11 +602,13 @@ func _input(event: InputEvent) -> void:
 	if k.keycode == KEY_ESCAPE:
 		act.emit({"do": "cancel"})
 		get_viewport().set_input_as_handled()
-	elif k.keycode == KEY_SPACE:
-		# SPACE, NOT ENTER. Enter is what every mirrored menu above this one accepts with, and a
-		# stray one arriving as the board opened completed a trade on its own -- harmless that time
-		# because nothing was selected, and a way to give away your things the next. Qud's own
-		# offer is a deliberate control too.
+	elif k.keycode == KEY_O:
+		# O IS QUD'S OWN OFFER KEY -- CmdTradeOffer, <keyboardBind Key="o"/>, confirmed against the
+		# player's exported bindings. This was on Enter first (which every mirrored menu above the
+		# board accepts with, so a stray one completed a trade by itself) and then on SPACE, which
+		# was no better: Space is CmdVendorActions in Qud's Trade layer, and it is why "Nothing to
+		# trade" kept appearing unbidden. Reading the binding table instead of picking a key would
+		# have got this right the first time.
 		act.emit({"do": "offer"})
 		get_viewport().set_input_as_handled()
 
