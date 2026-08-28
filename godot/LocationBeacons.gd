@@ -1,6 +1,6 @@
 extends Node3D
 
-## LOCATION BEACONS — a slab of light standing ON a place you asked to be shown, the way a
+## LOCATION BEACONS — the place's OWN PICTURE standing on the ground where it is, the way a
 ## navigation app plants a pin you can see before you can see the destination.
 ##
 ## Daniel: "If you enable the location (checkbox), it will show up on the game like a 'google maps'
@@ -39,12 +39,10 @@ extends Node3D
 ## so the honest thing to draw is an area rather than a point — the slab says "somewhere in here",
 ## which is exactly what the journal knows.
 ##
-## FOG IS OFF FOR THE SLAB, and has to be. SkyGrade's depth fog is total by 240 cells; a beacon five
+## FOG IS OFF FOR THE CARD, and has to be. SkyGrade's depth fog is total by 240 cells; a beacon five
 ## parasangs out is 375, so every distant one — the ones that most need marking — would have been
 ## erased by the atmosphere the moment they were placed at their real distance.
 
-const PULSE_HZ := 0.45        # slow — a lighthouse, not a warning light
-const PULSE_DEPTH := 0.30
 ## The name-plate's size at the regime's reference distance, and the range it may shrink and grow
 ## The plate is a label, not part of the scenery: it takes the depth cue (so a far beacon's name
 ## recedes with it) but stops well short of the vanishing point, because a name nobody can read
@@ -97,7 +95,7 @@ var _pz := 0.0
 ## and what every distance and bearing is derived from.
 var _para := Vector2.ZERO
 var _regime := "surface"
-var _t := 0.0
+var _flat := false              # cards laid flat for a straight-down camera (see _face_camera)
 var _tiles: RefCounted          # QudTiles — recolours a place's own sprite
 var tiles_dir := ""             # pushed from Main with the snapshot
 var palette := {}
@@ -219,22 +217,29 @@ func _place() -> void:
 		var d := _delta(int(t.get("mx", 0)), int(t.get("my", 0)))
 		m.position = Vector3(_px + d.x, 0.0, _pz + d.y)
 
-func _process(dt: float) -> void:
+func _process(_dt: float) -> void:
 	if _marks.is_empty():
 		return
-	_t += dt
-	# ONE PHASE FOR ALL OF THEM. Beacons that breathe out of step read as separate effects; in step
-	# they read as one system, which is what they are.
-	var k: float = 1.0 - PULSE_DEPTH * 0.5 * (1.0 - cos(_t * TAU * PULSE_HZ))
+	_face_camera()
+	_track_plates()
+
+## UPRIGHT, OR LAID FLAT FOR A CAMERA THAT IS OVERHEAD — the same choice ZoneRenderer makes for
+## every other tile sprite (set_top_down), decided here from the live camera instead of plumbed in,
+## because the beacons are a sibling of the renderer and the multiview panes each look their own way.
+func _face_camera() -> void:
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	# Straight down is forward.y == -1; -0.94 is about 70 degrees below the horizon.
+	var flat: bool = -cam.global_transform.basis.z.y > 0.94
+	if flat == _flat:
+		return
+	_flat = flat
+	var mode := BaseMaterial3D.BILLBOARD_ENABLED if flat else BaseMaterial3D.BILLBOARD_FIXED_Y
 	for m in _marks.values():
 		var card: MeshInstance3D = m.get_node_or_null("Card")
-		if card != null:
-			var mat2: StandardMaterial3D = card.material_override
-			if mat2 != null:
-				# The card breathes on its own alpha; its COLOUR is the sprite's, untouched.
-				var base: Color = m.get_meta("tint", Color.WHITE)
-				mat2.albedo_color = Color(base.r, base.g, base.b, k)
-	_track_plates()
+		if card != null and card.material_override != null:
+			card.material_override.billboard_mode = mode
 
 ## Put each name-plate where its column's head lands on screen. THE LIVE CAMERA, asked of the
 ## viewport rather than held: Raves switches between eight camera modes and a seven-pane multiview,
@@ -332,7 +337,6 @@ func _make_plate(t: Dictionary) -> Label:
 ## stands half again as tall as it is wide instead of being squashed into a square.
 func _retint(root: Node3D, t: Dictionary) -> void:
 	var c: Color = t.get("color", Color8(0x45, 0xd5, 0xc9))
-	root.set_meta("tint", Color(c.r, c.g, c.b, 1.0))
 	var lab: Label = _plates.get(String(t.get("id", "")), null)
 	if lab != null:
 		lab.text = String(t.get("name", ""))
@@ -355,17 +359,30 @@ func _retint(root: Node3D, t: Dictionary) -> void:
 		tex = _blank_tex()
 		mat.albedo_color = Color(c.r, c.g, c.b, 1.0)
 	else:
-		# ...and when there IS art it keeps ITS OWN colours. That is the "color of the sprite" half
-		# of the ask: the cycling palette only names the beacon in the list and on its plate.
+		# ...and when there IS art, THE SPRITE IS THE BEACON: full white, full alpha, no tint and no
+		# pulse. Daniel: "I can't tell if you're using the sprite artwork directly and applying an
+		# effect... Can you use just the native sprite?" So nothing is applied over Qud's own pixels
+		# — the only thing this material still insists on is being out of the fog, without which a
+		# beacon at its real distance is erased by the atmosphere.
 		mat.albedo_color = Color.WHITE
+	# STANDING ON ITS OWN FEET, NOT ON ITS BOUNDING BOX. A Qud tile is 16x24 with the art sitting
+	# wherever it likes inside that box: Red Rock's massif ends five rows early, which on a card 120
+	# tall is TWENTY-FIVE CELLS of nothing underneath it. The quad was planted correctly the whole
+	# time — its bottom edge measured within 3px of the horizon — but what the eye reads as the
+	# beacon is the INK, and the ink was hanging a quarter of a card up. Daniel: "The height of the
+	# sprite is okay, but it needs to be lowered to the ground." So the card is cropped to the art's
+	# opaque bounds and that is what gets planted.
+	var full := Vector2i(tex.get_width(), tex.get_height())
+	var ink := _ink_rect(tex)
+	tex = _crop(tex, ink)
 	mat.albedo_texture = tex
-	root.set_meta("tint", mat.albedo_color)
-	# SIZED TO THE ZONE: the width is the regime's footprint — a zone across on the ground, one cell
-	# on the world map — and the height follows the ART's aspect, so a 16x24 tile stands half again
-	# as tall as it is wide instead of being squashed square.
+	# SIZED TO THE ZONE: a WHOLE tile spans the regime's footprint — a zone across on the ground, one
+	# cell on the world map — so the cropped card keeps that same per-pixel scale rather than being
+	# stretched back out to the full width. A tile whose art is inset stays inset.
 	var r2: Dictionary = PARA[_regime]
-	var w: float = float(r2.foot.x)
-	var h: float = w * float(tex.get_height()) / float(maxi(tex.get_width(), 1))
+	var cell: float = float(r2.foot.x) / float(maxi(full.x, 1))
+	var w: float = cell * float(ink.size.x)
+	var h: float = cell * float(ink.size.y)
 	var q: QuadMesh = card.mesh
 	q.size = Vector2(w, h)
 	card.position = Vector3(0, h * 0.5, 0)
@@ -380,7 +397,13 @@ func _card_mat() -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
 	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	m.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	# FIXED_Y, NOT A FULL BILLBOARD — this is what plants it. A full billboard tips the whole quad
+	# back to face a camera that is looking down, pivoting about its CENTRE: a card 120 tall on a
+	# 30-degree view swings its base thirty cells into the air, and the landmark reads as hanging in
+	# the sky rather than standing on the ground. Daniel: "The height of the sprite is okay, but it
+	# needs to be lowered to the ground." Turning only about Y keeps the bottom edge on y=0, which is
+	# also how ZoneRenderer stands every other tile sprite. _face_camera lays it flat for overhead.
+	m.billboard_mode = BaseMaterial3D.BILLBOARD_FIXED_Y
 	m.billboard_keep_scale = true          # without this the quad's own size is thrown away
 	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	m.cull_mode = BaseMaterial3D.CULL_DISABLED
@@ -398,3 +421,23 @@ func _blank_tex() -> Texture2D:
 		img.fill(Color(1, 1, 1, 0.85))
 		_blank = ImageTexture.create_from_image(img)
 	return _blank
+
+## The opaque bounds of a tile — the part of the 16x24 box the art actually uses. Everything outside
+## it is padding, and padding under a beacon is what makes a planted card look airborne.
+func _ink_rect(tex: Texture2D) -> Rect2i:
+	var img := tex.get_image()
+	if img == null:
+		return Rect2i(0, 0, tex.get_width(), tex.get_height())
+	var r := img.get_used_rect()
+	# A fully transparent tile has no used rect; draw the whole box rather than nothing.
+	return r if r.size.x > 0 and r.size.y > 0 else Rect2i(0, 0, img.get_width(), img.get_height())
+
+func _crop(tex: Texture2D, r: Rect2i) -> Texture2D:
+	if r.position == Vector2i.ZERO and r.size == Vector2i(tex.get_width(), tex.get_height()):
+		return tex
+	var img := tex.get_image()
+	if img == null:
+		return tex
+	var out := Image.create(r.size.x, r.size.y, false, img.get_format())
+	out.blit_rect(img, r, Vector2i.ZERO)
+	return ImageTexture.create_from_image(out)
