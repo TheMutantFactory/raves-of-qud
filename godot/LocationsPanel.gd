@@ -31,6 +31,12 @@ const MAX_ROWS := 60          # a late-game journal is long; the list scrolls pa
 const ROW_LIMIT_H := 260.0    # ...and the panel stops growing here
 const SETTINGS_KEY := "location_beacons"
 const OPEN_KEY := "locations_expanded"
+const CAT_KEY := "locations_categories"   # which category trees are open, by name
+## The category Raves files a place under when QUD has no note for it — see the grouping in _rebuild.
+const VISITED_CAT := "Visited"
+## Qud's own gold, for the category headers: they are furniture, not entries, and the rows below
+## them are the things you can act on.
+const SEL_GOLD := Color8(0xcf, 0xc0, 0x41)
 const ARMED_KEY := "locations_beacons_on"
 
 ## The beacon colours, cycled in tick order. Qud's own palette codes — a beacon is a light in Qud's
@@ -58,6 +64,7 @@ var _armed := true
 var _lost := false
 var _pre_expanded := false
 var _sorted := false          # the list has been ordered against a real player position
+var _row_count := 0           # headers + rows actually built, which is what the panel sizes to
 var _sig := ""                # what the last rebuild was built from — see _reload
 var _one_to_one := false
 var _mtime := 0
@@ -273,7 +280,7 @@ func _apply_height() -> void:
 		size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 		return
 	var line: float = float(UiFont.px(get_viewport(), "body")) * 1.9
-	var want: float = minf(line * float(_entries.size()), ROW_LIMIT_H)
+	var want: float = minf(line * float(maxi(_row_count, _entries.size())), ROW_LIMIT_H)
 	if _scroll != null:
 		# An empty list reserves NOTHING. Reserving a row's worth left a blank band above "Nowhere
 		# noted yet.", which reads as a list that failed to draw rather than one with no places in it.
@@ -381,7 +388,7 @@ func _merge() -> void:
 			"id": "v:" + k,               # keyed on the PARASANG, which is what a beacon points at
 			"name": String(nm),
 			"note": "somewhere you have been",
-			"category": "Visited",
+			"category": VISITED_CAT,
 			"mx": int(v["mx"]), "my": int(v["my"]),
 			"art": v,
 		})
@@ -428,12 +435,72 @@ func _rebuild() -> void:
 		_rows.remove_child(c)      # off the tree NOW: queue_free only lands at end of frame, and
 		c.queue_free()             # until then the old rows are still in get_children()
 	_sort_entries()
+	# GROUPED THE WAY QUD GROUPS THEM. Its Locations tab sets UsesCategories and SortCategoriesAZ,
+	# and every map note carries the Category the game filed it under — Settlements, Ruins,
+	# Oddities. Daniel: "add category trees. Use the same categories as Quest-locations." So the
+	# headers are not ours to invent: they are whatever the journal says, in the order the journal
+	# says, and a category appears here exactly when Qud has something in it.
+	var by_cat := {}
+	var order: Array = []
 	for e in _entries:
-		_rows.add_child(_make_row(e))
+		var cat := String(e.get("category", ""))
+		if cat == "":
+			cat = "Unknown"
+		if not by_cat.has(cat):
+			by_cat[cat] = []
+			order.append(cat)
+		by_cat[cat].append(e)
+	order.sort()
+	# ...except OURS, which goes last. "Visited" is Raves' own answer for a place Qud has no note
+	# for, and sorting it in among Qud's categories would claim it is one of them.
+	if order.has(VISITED_CAT):
+		order.erase(VISITED_CAT)
+		order.append(VISITED_CAT)
+	_row_count = 0
+	for cat in order:
+		var rows: Array = by_cat[cat]
+		_rows.add_child(_make_cat_row(cat, rows.size()))
+		_row_count += 1
+		if not _cat_open(cat):
+			continue
+		for e in rows:
+			_rows.add_child(_make_row(e))
+			_row_count += 1
 	if _empty != null:
 		_empty.visible = _entries.is_empty()
 	_apply_height()
+	_paint_metrics()   # now, not on the next turn — see _paint_metrics
 	_emit()
+
+## Is this category expanded? Open by default — a tree that starts shut hides the thing the panel is
+## for, and the ones a player collapses are the ones they have finished with.
+func _cat_open(cat: String) -> bool:
+	var all = Settings.get_value(CAT_KEY, {})
+	if typeof(all) != TYPE_DICTIONARY:
+		return true
+	return bool(all.get(cat, true))
+
+func _set_cat_open(cat: String, on: bool) -> void:
+	var all = Settings.get_value(CAT_KEY, {})
+	if typeof(all) != TYPE_DICTIONARY:
+		all = {}
+	all[cat] = on
+	Settings.set_value(CAT_KEY, all)
+	Settings.save()
+	_rebuild()
+
+## One category header: a disclosure caret, the name Qud uses, and how many are under it.
+func _make_cat_row(cat: String, n: int) -> Control:
+	var b := Button.new()
+	b.focus_mode = Control.FOCUS_NONE
+	b.flat = true
+	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	b.text = "%s %s  (%d)" % ["▾" if _cat_open(cat) else "▸", cat, n]
+	b.add_theme_font_size_override("font_size", UiFont.px(get_viewport(), "body"))
+	b.add_theme_color_override("font_color", SEL_GOLD)
+	b.tooltip_text = "Collapse %s" % cat if _cat_open(cat) else "Expand %s" % cat
+	b.pressed.connect(func() -> void: _set_cat_open(cat, not _cat_open(cat)))
+	return b
 
 ## Nearest first — a navigation list is read from the top, and the place you can reach is the one
 ## worth reading first. Unknown distance (no snapshot yet) keeps the file's order.
@@ -463,6 +530,11 @@ func _sort_entries() -> void:
 func _make_row(e: Dictionary) -> Control:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 4)
+	# Indented, so the tree reads as a tree rather than as a flat list with headings in it.
+	var pad := Control.new()
+	pad.custom_minimum_size = Vector2(10, 0)
+	pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(pad)
 	var id := String(e["id"])
 	var cb := CheckBox.new()
 	cb.focus_mode = Control.FOCUS_NONE
@@ -487,6 +559,14 @@ func _make_row(e: Dictionary) -> Control:
 	far.name = "Far"
 	far.add_theme_font_size_override("font_size", UiFont.px(get_viewport(), "body"))
 	far.add_theme_color_override("font_color", Color(1, 1, 1, 0.5))
+	# THE DISTANCE KEEPS ITS COLUMN. The name is EXPAND_FILL and clipped, so without a floor here it
+	# takes the whole row and pushes "NE 7.4" off the panel — which is what the category indent did
+	# the moment it was added, and what a long place name does on its own. Reserved for the widest
+	# reading this column can hold.
+	# Sized to the widest reading this column holds ("NE 12.3") and no wider — every pixel reserved
+	# here is a pixel clipped off a place name in a panel this narrow.
+	far.custom_minimum_size.x = float(UiFont.px(get_viewport(), "body")) * 3.7
+	far.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	row.add_child(far)
 	row.set_meta("mx", int(e["mx"]))
 	row.set_meta("my", int(e["my"]))
@@ -503,6 +583,16 @@ func _refresh_metrics() -> void:
 	if not _sorted and _player.x >= 0 and not _entries.is_empty():
 		_sorted = true
 		_rebuild()
+		return
+	_paint_metrics()
+
+## Write the distance/bearing into every row that has the column. SPLIT OUT of _refresh_metrics so
+## _rebuild can call it directly: the metrics used to be painted only on the next SNAPSHOT, and a
+## snapshot only arrives when a turn passes — so every rebuild left the column blank until the
+## player moved, which on an idle game is forever. That is why it kept looking like the distances
+## had gone away.
+func _paint_metrics() -> void:
+	if _rows == null or not metrics_cb.is_valid():
 		return
 	for row in _rows.get_children():
 		var far: Label = row.get_node_or_null("Far")
