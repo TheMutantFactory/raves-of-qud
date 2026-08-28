@@ -96,13 +96,39 @@ namespace RavesOfQud
                 try { diff = TradeUI.CalculateTrade(sc.Totals[0], sc.Totals[1]); } catch { }
                 j.Member("difference", diff);
                 j.Member("drams", The.Player?.GetFreeDrams() ?? 0);
-                // ...and the carry line Qud prints beside them, in its own words.
+                // BOTH PURSES. Qud shows the TRADER's free drams on the left of the totals band and
+                // yours on the right; only yours was being drawn.
+                j.Member("traderPurse", "{{W|$" + (TradeScreen.Trader?.GetFreeDrams() ?? 0) + "}}");
                 try
                 {
-                    j.Member("carry", The.Player.GetCarriedWeight() + "/"
-                        + The.Player.GetMaxCarriedWeight() + " lbs.");
+                    // ...and the weight is what you will carry AFTER the trade, water included:
+                    // carried + theirs - yours - the water this costs. Sending the CURRENT weight,
+                    // as this did, prints a number that never moves while you shop.
+                    int carried = The.Player.GetCarriedWeight();
+                    int maxc = The.Player.GetMaxCarriedWeight();
+                    // Water's per-dram weight WITHOUT LiquidVolume.GetLiquid, whose only overload
+                    // takes a ReadOnlySpan<char> that this mod's reference assemblies cannot
+                    // resolve. LiquidWater does not override BaseLiquid.Weight, so constructing one
+                    // reads the same 0.25 Qud multiplies by.
+                    int water = (int)(new XRL.Liquids.LiquidWater().Weight
+                        * (double)TradeUI.CalculateTrade(sc.Totals[0], sc.Totals[1]));
+                    int after = Math.Max(0, carried + sc.Weight[0] - sc.Weight[1] - water);
+                    string tone = (after > maxc) ? "R" : "K";   // Qud reddens an overweight figure
+                    j.Member("playerPurse", "{{W|$" + (The.Player?.GetFreeDrams() ?? 0) + "}} | {{"
+                        + tone + "|" + after + "/" + maxc + " lbs.}}");
                 }
-                catch { j.Member("carry", ""); }
+                catch { j.Member("playerPurse", ""); }
+                // THE OFFER HOTKEY MARKER, which is what the cell under "TRADE" actually is:
+                //     hotkeyText.SetText("{{W|[" + getCommandInputFormatted("CmdTradeOffer") + "]}}")
+                // Static, and it names the key. Daniel: "The [0] stays at 0. It does not
+                // increment/decrement. It's a hotkey marker." It had been drawn as the trade's
+                // DIFFERENCE, which reads as [0] whenever the books balance -- and an O is a zero
+                // at a glance in this font, so it looked like a number that was simply stuck.
+                try
+                {
+                    j.Member("offerKey", "{{W|[" + ControlManager.getCommandInputFormatted("CmdTradeOffer") + "]}}");
+                }
+                catch { j.Member("offerKey", "{{W|[O]}}"); }
                 // WHERE THE TILES LIVE, on this frame rather than only on the snapshot. A trade
                 // parks the turn thread, so a viewer that attaches DURING one never sees a snapshot
                 // and has no tiles directory to draw the board's icons from -- measured exactly
@@ -114,10 +140,14 @@ namespace RavesOfQud
                 {
                     j.BeginObject();
                     j.Member("trader", side == 0);
-                    // Both forms: the rounded int for arithmetic, and Qud's own two-decimal drams
-                    // for the totals line, which prints "0.00 drams" and not "0".
                     j.Member("total", (int)Math.Round(sc.Totals[side]));
-                    j.Member("totalText", sc.Totals[side].ToString("0.00"));
+                    // QUD'S OWN STRING, markup and all, rather than a number for Raves to format.
+                    // UpdateTotals composes these and every part was guessed wrong before: the
+                    // totals DO carry CostMultiple (unlike the per-row prices), they are {{B|}}
+                    // blue, and the arrow points the way the goods travel.
+                    j.Member("totalText", side == 0
+                        ? "{{B|" + TradeUI.FormatPrice(sc.Totals[side], TradeScreen.CostMultiple) + " drams \u2192}}"
+                        : "{{B|\u2190 " + TradeUI.FormatPrice(sc.Totals[side], TradeScreen.CostMultiple) + " drams}}");
                     j.Member("weight", sc.Weight[side]);
                     j.Name("rows").BeginArray();
                     WriteRows(j, sc, side);

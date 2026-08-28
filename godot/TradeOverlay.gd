@@ -158,10 +158,11 @@ var _built := false
 var _design: Control            # everything below lives in Qud units inside this
 var _lists: Array = []          # [side] -> {content: Control, scroll: ScrollContainer}
 var _heads: Array = []          # [side] -> Label
-var _totals: Array = []         # [side] -> Label
+var _totals: Array = []         # [side] -> RichTextLabel
 var _centre: Label
 var _offer: Button               # the TRADE [n] cell — pressing it offers
-var _money: Label
+var _money: RichTextLabel
+var _purse: RichTextLabel        # the trader's own drams, left of the band
 var _legend: Label
 var _strip: Control              # the category filter cells
 var _bars: Array = []            # [side] -> {scroll, track, handle}: Qud's left-gutter scrollbar
@@ -269,7 +270,12 @@ func _ensure_built() -> void:
 	_place(_strip, Rect2(0.0, FILTER_Y, DESIGN.x, FILTER_H))
 	_design.add_child(_strip)
 
-	var tl := _text(DIM); _place(tl, Rect2(TOTAL_L_X, TOTALS_Y, TOTAL_W, 22.0)); _totals.append(tl)
+	var tl := _rich(DIM); _place(tl, Rect2(TOTAL_L_X, TOTALS_Y, TOTAL_W, 22.0))
+	_design.add_child(tl); _totals.append(tl)
+	# The TRADER's own purse, on the left of the band — Qud draws one for each party and only the
+	# player's was being shown.
+	_purse = _rich(GOLD); _place(_purse, Rect2(CONTENT_X + 10.0, TOTALS_Y, TOTAL_W, 22.0))
+	_design.add_child(_purse)
 	# 78.7 wide, which is what the probe reported. At TOTAL_W it overlapped both totals either side
 	# and printed "e0en" over the left one.
 	#
@@ -291,8 +297,10 @@ func _ensure_built() -> void:
 	_place(_centre, Rect2(0.0, 0.0, CENTRE_W, 42.0))
 	_centre.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_offer.add_child(_centre)
-	var tr := _text(DIM); _place(tr, Rect2(TOTAL_R_X, TOTALS_Y, TOTAL_W, 22.0)); _totals.append(tr)
-	_money = _text(MONEY); _place(_money, Rect2(MONEY_X, TOTALS_Y, MONEY_W, 22.0))
+	var tr := _rich(DIM); _place(tr, Rect2(TOTAL_R_X, TOTALS_Y, TOTAL_W, 22.0))
+	_design.add_child(tr); _totals.append(tr)
+	_money = _rich(GOLD); _place(_money, Rect2(MONEY_X, TOTALS_Y, MONEY_W, 22.0))
+	_design.add_child(_money)
 	_legend = _text(DIM); _place(_legend, Rect2(CONTENT_X + SEARCH_W + 16.0, LEGEND_Y, 1400.0, 22.0))
 	# the search box's outline, drawn empty: the bridge does not carry its text, and an empty box in
 	# the right place is honest where a faked one is not
@@ -440,21 +448,23 @@ func _side(i: int) -> Dictionary:
 
 ## Qud's own totals line: what each side is putting up, in drams to two places, with the arrows
 ## pointing the way the goods travel and TRADE [n] between them.
+## QUD'S OWN STRINGS, rendered rather than recomposed. UpdateTotals writes every part of this band
+## with its own markup and its own arithmetic, and the version that formatted numbers here got the
+## cost multiple, the colours, the second purse and the weight all wrong at once.
 func _paint_totals() -> void:
-	var diff := int(_data.get("difference", 0))
-	_totals[0].text = "%s drams \u2192" % String(_side(0).get("totalText", "0.00"))
-	_totals[1].text = "\u2190 %s drams" % String(_side(1).get("totalText", "0.00"))
-	_totals[0].horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	_totals[1].horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	# TWO LINES, which is how it fits. Qud stacks "TRADE" over "[n]" in a cell 78.7 wide; on one
-	# line the text overruns the cell and prints straight through the totals either side of it.
-	_centre.text = "TRADE\n[%d]" % diff
-	_centre.add_theme_color_override("font_color", MONEY if diff <= 0 else OWED)
+	_totals[0].text = "[right]%s[/right]" % QudText.to_bbcode(String(_side(0).get("totalText", "")), _palette)
+	_totals[1].text = QudText.to_bbcode(String(_side(1).get("totalText", "")), _palette)
+	# TWO LINES, which is how it fits: Qud stacks "TRADE" over the marker in a cell 78.7 wide.
+	#
+	# AND THE SECOND LINE IS THE OFFER HOTKEY, not a running total. Daniel: "The [0] stays at 0. It
+	# does not increment/decrement. It's a hotkey marker." Qud sets it once from
+	# getCommandInputFormatted("CmdTradeOffer"), so it reads [O] and follows a rebind. Drawing the
+	# trade's DIFFERENCE there looked identical whenever the books balanced — and an O is a zero at
+	# a glance in this font, so it passed for a number that was simply stuck.
+	_centre.text = "TRADE\n%s" % QudText.strip(String(_data.get("offerKey", "[O]")))
 	_centre.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	var carry := String(_data.get("carry", ""))
-	_money.text = ("$%d | %s" % [int(_data.get("drams", 0)), carry]) if carry != "" \
-		else "$%d" % int(_data.get("drams", 0))
-	_money.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_purse.text = QudText.to_bbcode(String(_data.get("traderPurse", "")), _palette)
+	_money.text = "[right]%s[/right]" % QudText.to_bbcode(String(_data.get("playerPurse", "")), _palette)
 	# Qud's own hotkey line, in Qud's order. The mouse verbs are ours and are named after them.
 	# ONLY WHAT WORKS, and in Qud's own key names. The previous line advertised "[=] add one" and
 	# "[-] remove one", which are real Qud bindings that this board does not implement -- they act
