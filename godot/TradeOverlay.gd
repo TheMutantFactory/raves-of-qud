@@ -141,7 +141,19 @@ const BG := Color8(0x0a, 0x1c, 0x1c, 0xfa)
 const FRAME := Color8(0x15, 0x53, 0x52)
 const GOLD := Color8(0xcf, 0xc0, 0x41)
 const DIM := Color8(0x77, 0xbf, 0xcf)
-const CAT_TEXT := Color8(0x40, 0xa4, 0xb9)
+## A CATEGORY ROW IS ONE COLOUR FOR ALL ITS PARTS, and this is Qud's own raw value — the same
+## Color8(59, 93, 113) StatusPaneInventory measured off a live InventoryLine, where categoryLabel,
+## categoryExpandLabel and categoryWeightText all carry RGBA(0.231, 0.365, 0.443) at alpha 1.
+##
+## Daniel: "Why are the Trade categories not using the same frame and coloring as the inventory
+## menu? We've already solved the problem of matching Qud 1:1." Because this file picked a colour
+## instead of reusing the one already measured — and picked #40A4B9, which is precisely the "{{c|}}
+## cyan" the inventory file warns about by name as "far too bright and too saturated". The work had
+## been done and written down one file over.
+const CAT_TEXT := Color8(59, 93, 113)
+## ...and at the inventory's category size. Qud's trade category box is 32 tall against an item's
+## 25, the same split the inventory draws with ROW_FONT over ITEM_FONT.
+const CAT_FONT := 22
 ## Qud's own price blue, taken from TradeLine.setData rather than sampled off a screenshot:
 ##     rightFloatText.color = new Color(0.2674735f, 0.6836081f, 0.9245283f)
 ## Daniel: "Change the cost color from green to blue to match Qud." It was green because the first
@@ -505,7 +517,7 @@ func _cat_row(row: Dictionary, side: int) -> Control:
 	var lab := Label.new()
 	lab.text = "[%s] %s" % ["-" if not bool(row.get("collapsed", false)) else "+", cat_name]
 	lab.add_theme_font_override("font", load("res://fonts/SourceCodePro-Bold.ttf"))
-	lab.add_theme_font_size_override("font_size", FONT_PX)
+	lab.add_theme_font_size_override("font_size", CAT_FONT)
 	# MUTED, not gold. Qud greys its category headings so the ITEMS carry the colour; drawing them
 	# gold made the headings shout over the goods, which is backwards for a list you scan for stock.
 	lab.add_theme_color_override("font_color", CAT_TEXT)
@@ -513,10 +525,11 @@ func _cat_row(row: Dictionary, side: int) -> Control:
 	lab.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	holder.add_child(lab)
 	var rule := ColorRect.new()
-	rule.color = FRAME
+	# The rule is part of the row, so it carries the row's colour — not the panel's frame tone.
+	rule.color = CAT_TEXT
 	rule.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var x: float = CAT_TEXT_DX + lab.get_theme_font("font").get_string_size(
-		lab.text, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_PX).x + 12.0
+		lab.text, HORIZONTAL_ALIGNMENT_LEFT, -1, CAT_FONT).x + 12.0
 	rule.position = Vector2(x, CAT_H * 0.5)
 	rule.size = Vector2(maxf(LIST_W - x - 8.0, 0.0), CAT_RULE_H)
 	holder.add_child(rule)
@@ -542,8 +555,12 @@ func _item_row(row: Dictionary, side: int) -> Control:
 		amt.text = "%d" % sel
 		amt.add_theme_font_size_override("font_size", FONT_PX)
 		amt.add_theme_color_override("font_color", Color8(0xff, 0xff, 0xff))
-		amt.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		amt.position = Vector2(AMOUNT_DX, 2.0)
+		# LINED UP WITH THE EXPANDERS. Daniel: "Let's move the QTY for trade to be horizontally
+		# aligned with the category expand/collapse toggles." Right-aligned in its 55-wide box the
+		# count floated at ~70, in a column of its own with nothing above or below it; starting it
+		# where "[-]" starts puts every mark in the left gutter on one edge.
+		amt.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		amt.position = Vector2(CAT_TEXT_DX, 2.0)
 		amt.custom_minimum_size = Vector2(AMOUNT_W, ROW_H)
 		amt.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		btn.add_child(amt)
