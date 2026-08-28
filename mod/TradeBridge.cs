@@ -87,12 +87,22 @@ namespace RavesOfQud
                 var j = new JsonWriter();
                 j.BeginObject().Member("type", Protocol.TypeTrade).Member("active", true);
                 j.Member("trader", TradeScreen.Trader?.DisplayName ?? "");
+                // Qud's right-hand column is headed with the PLAYER'S NAME, not "You" -- it is a
+                // board with two named parties on it.
+                j.Member("you", The.Player?.DisplayName ?? "");
                 j.Member("verb", TradeScreen.TradeScreenVerb ?? "trade");
                 j.Member("mult", TradeScreen.CostMultiple.ToString("0.###"));
                 int diff = 0;
                 try { diff = TradeUI.CalculateTrade(sc.Totals[0], sc.Totals[1]); } catch { }
                 j.Member("difference", diff);
                 j.Member("drams", The.Player?.GetFreeDrams() ?? 0);
+                // ...and the carry line Qud prints beside them, in its own words.
+                try
+                {
+                    j.Member("carry", The.Player.GetCarriedWeight() + "/"
+                        + The.Player.GetMaxCarriedWeight() + " lbs.");
+                }
+                catch { j.Member("carry", ""); }
                 // WHERE THE TILES LIVE, on this frame rather than only on the snapshot. A trade
                 // parks the turn thread, so a viewer that attaches DURING one never sees a snapshot
                 // and has no tiles directory to draw the board's icons from -- measured exactly
@@ -103,7 +113,10 @@ namespace RavesOfQud
                 {
                     j.BeginObject();
                     j.Member("trader", side == 0);
+                    // Both forms: the rounded int for arithmetic, and Qud's own two-decimal drams
+                    // for the totals line, which prints "0.00 drams" and not "0".
                     j.Member("total", (int)Math.Round(sc.Totals[side]));
+                    j.Member("totalText", sc.Totals[side].ToString("0.00"));
                     j.Member("weight", sc.Weight[side]);
                     j.Name("rows").BeginArray();
                     WriteRows(j, sc, side);
