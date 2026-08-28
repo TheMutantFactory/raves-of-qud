@@ -69,6 +69,7 @@ var _sky_grade                     # SkyGrade (Node3D); created in _ready
 ## the camera has to be able to look away from it.
 var _beacons                       # LocationBeacons (Node3D); created in _ready
 var _target                        # TargetCursor: Qud's target picker, mirrored
+var _trade: TradeOverlay           # Qud's trade screen, mirrored
 var _assist                        # MouseAssist (Node); created in _ready
 var _assist_pos := Vector2(-1, -1) # last pointer position, re-read once a frame (see _process)
 
@@ -229,6 +230,19 @@ func _ready() -> void:
 			renderer.arm_ray(_target.path())
 		client.send_command("picktarget", {"x": x, "y": y, "cancel": cancel}))
 	client.picktarget.connect(func(d: Dictionary) -> void: _target.set_state(d))
+	# Qud's trade board, mirrored. Its own overlay for the same reason the item picker has one: it is
+	# a Qud SCREEN, not a PopupMessage, so the popup mirror never sees it.
+	_trade = TradeOverlay.new()
+	add_child(_trade)
+	_trade.act.connect(func(payload: Dictionary) -> void:
+		client.send_command("trade", payload))
+	client.trade.connect(func(d: Dictionary) -> void:
+		# The frame's own tilesDir wins: during a trade there are no snapshots, so the renderer's
+		# copy can still be empty when the board arrives.
+		var td := String(d.get("tilesDir", ""))
+		if td == "" and renderer != null:
+			td = renderer.tiles_dir()
+		_trade.set_state(d, _palette, td))
 	_assist = load("res://MouseAssist.gd").new()
 	add_child(_assist)
 	_assist.setup(renderer)   # the box + billboard live under the renderer, for its z-stretch
@@ -1423,7 +1437,8 @@ func _playfield_cell(pos: Vector2) -> Variant:
 ## `_unhandled_input` never asked it at all, which is how a wheel over the skills list
 ## zoomed the playfield behind the modal (2026-08-10).
 func _modal_owns_input() -> bool:
-	return (_popup != null and _popup.visible) \
+	return (_trade != null and _trade.active()) \
+		or (_popup != null and _popup.visible) \
 		or (_item_picker != null and _item_picker.visible) \
 		or (_cyber != null and _cyber.visible) \
 		or (overlay_check.is_valid() and bool(overlay_check.call()))

@@ -93,6 +93,11 @@ namespace RavesOfQud
                 try { diff = TradeUI.CalculateTrade(sc.Totals[0], sc.Totals[1]); } catch { }
                 j.Member("difference", diff);
                 j.Member("drams", The.Player?.GetFreeDrams() ?? 0);
+                // WHERE THE TILES LIVE, on this frame rather than only on the snapshot. A trade
+                // parks the turn thread, so a viewer that attaches DURING one never sees a snapshot
+                // and has no tiles directory to draw the board's icons from -- measured exactly
+                // that way: every row rendered with an empty icon column.
+                j.Member("tilesDir", TileExporter.Dir);
                 j.Name("sides").BeginArray();
                 for (int side = 0; side < 2; side++)
                 {
