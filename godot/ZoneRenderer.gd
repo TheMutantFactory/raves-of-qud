@@ -4890,6 +4890,77 @@ const ORBIT_CENTER_Y := 0.5     # orbit centre height above the cell floor
 const ORBIT_BASE_SPEED := 0.26  # rad/s; each mote's speed is this times a distinct prime
 const ORBIT_PRIMES := [2, 3, 5, 7, 11, 13]   # prime speed ratios -> the cluster is slow to repeat
 
+# --- gas: chunky voxel clouds ------------------------------------------------
+#
+# Daniel, after releasing sleep gas: "There are two sprites. A billboard and something that is
+# normal to the ground. Let's work on the gas update. Can we build large chunky brown gas voxel
+# particles in the affected tiles? Maybe a bunch of different chunks that oscillate up and down."
+#
+# THE TWO SPRITES WERE BOTH RIGHT AND BOTH FLAT. Qud draws gas as one animated tile, so Raves drew
+# the billboard AND the 4-frame swirl overlay that replaces it — correct mirroring of a 2D game, and
+# in a 3D one it reads as two pictures of smoke rather than smoke. A cloud has volume; the way to
+# say so here is to give it some.
+#
+# CHUNKS, NOT PARTICLES. A fine mist would be a different game's effect and would cost a fill-rate
+# fortune besides; a handful of big cubes reads as gas at Qud's own resolution and is cheap enough
+# that a room full of it stays a room full of it.
+const GAS_CHUNKS := 5           # per cell — enough to read as a cloud, few enough to fill a corridor
+const GAS_SIZE_MIN := 0.26
+const GAS_SIZE_MAX := 0.46
+const GAS_SPREAD := 0.62        # how much of the cell the chunks scatter across
+const GAS_Y_MIN := 0.18
+const GAS_Y_MAX := 0.72
+const GAS_BOB := 0.13           # how far one chunk rises and falls
+const GAS_PERIOD_MIN := 2.6     # seconds; each chunk drifts on its own clock so the cloud churns
+const GAS_PERIOD_MAX := 4.9
+const GAS_ALPHA := 0.62
+
+## A cell of gas as a few floating blocks, bobbing on their own clocks.
+##
+## SEEDED FROM THE CELL, not from randi(): gas is placed on the per-turn pass, so a cloud that
+## re-rolled its chunk positions every step would boil rather than drift. Same reason the glowfish
+## orbits hash their cell — a rebuild has to be invisible.
+func _place_gas_chunks(obj: Dictionary, cx: int, cy: int, light_frac: float) -> void:
+	var col := _qud_color(String(obj.get("animGas", "")))
+	col.a = GAS_ALPHA
+	var nodes: Array = []
+	var bases: Array = []
+	var amps: Array = []
+	var rates: Array = []
+	var phases: Array = []
+	for i in GAS_CHUNKS:
+		var sz: float = lerpf(GAS_SIZE_MIN, GAS_SIZE_MAX, _fish_rand(cx, cy, i, 71))
+		var mi := MeshInstance3D.new()
+		var box := BoxMesh.new()
+		box.size = Vector3(sz, sz, sz)
+		mi.mesh = box
+		mi.material_override = _gas_material(col, light_frac)
+		var y: float = lerpf(GAS_Y_MIN, GAS_Y_MAX, _fish_rand(cx, cy, i, 73))
+		mi.position = Vector3(
+			float(cx) + (_fish_rand(cx, cy, i, 79) - 0.5) * GAS_SPREAD,
+			y,
+			float(cy) + (_fish_rand(cx, cy, i, 83) - 0.5) * GAS_SPREAD)
+		_spawn_parent().add_child(mi)
+		_track(mi)
+		nodes.append(mi)
+		bases.append(y)
+		amps.append(GAS_BOB * (0.5 + _fish_rand(cx, cy, i, 89)))
+		rates.append(TAU / lerpf(GAS_PERIOD_MIN, GAS_PERIOD_MAX, _fish_rand(cx, cy, i, 97)))
+		phases.append(_fish_rand(cx, cy, i, 101) * TAU)
+	if not nodes.is_empty():
+		_anim_items.append({"kind": "gaschunk", "nodes": nodes, "base": bases,
+			"amp": amps, "rate": rates, "phase": phases})
+
+## Gas is TRANSLUCENT and unlit — it is its own colour, dimmed by the cell like everything else, and
+## it must not cast the hard edge a solid block would.
+func _gas_material(col: Color, light_frac: float) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.albedo_color = Color(col.r * light_frac, col.g * light_frac, col.b * light_frac, col.a)
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	return m
+
 ## Deterministic 0..1 from a glowfish cell + slot, so a fish's orbit params are stable
 ## across the per-step rebuilds (only changing when it actually swims to a new cell).
 ## Paired with a global-time angle in _process, this makes the rebuild invisible.
@@ -9139,6 +9210,14 @@ func _place_nonwall(obj: Dictionary, cx: int, cy: int, idx: int, in_wall: bool, 
 			"post" if cd == "" else cd, cph, _connector_note(tile)], cyc)
 		return
 
+	# GAS IS A VOLUME, not a picture of one. In 3D it becomes a handful of bobbing blocks and
+	# neither flat sprite is drawn — see _place_gas_chunks. Flat-2D and 1:1 keep Qud's own tile,
+	# which is what those modes are for.
+	if obj.has("animGas") and not _flat_2d and not _one_to_one and verdict == "":
+		_place_gas_chunks(obj, cx, cy, light_frac)
+		_note(cx, cy, idx, "gas (%d voxel chunks, bobbing)" % GAS_CHUNKS, 0.5)
+		return
+
 	# Qud's painted ground layer is flat by default — dirt, gravel, cracked earth.
 	# But vegetation in that layer is cover you stand among, not a texture you walk
 	# on, so it reads far better standing up. Route it to the billboard path.
@@ -12636,6 +12715,15 @@ func _animate_1to1() -> void:
 			var en2 := it["node"] as MeshInstance3D
 			if is_instance_valid(en2):
 				en2.visible = qf <= 30   # Engulfed.Render: engulfer shown frames 0-30 of 60
+		elif kind == "gaschunk":
+			# Each block on its own clock, so the cell churns instead of pulsing as one lump.
+			var cn: Array = it["nodes"]
+			var t := float(ms) * 0.001
+			for i in cn.size():
+				var m3 := cn[i] as MeshInstance3D
+				if is_instance_valid(m3):
+					m3.position.y = float(it["base"][i]) \
+						+ float(it["amp"][i]) * sin(t * float(it["rate"][i]) + float(it["phase"][i]))
 		elif kind == "gas":
 			var gn: Array = it["nodes"]
 			if not gn.is_empty():
