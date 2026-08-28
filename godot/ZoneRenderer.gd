@@ -4916,85 +4916,124 @@ const ORBIT_PRIMES := [2, 3, 5, 7, 11, 13]   # prime speed ratios -> the cluster
 # the wire; a thin cloud is a few blocks in one layer you can see between, a thick one fills the
 # lattice two or three layers up. Shrinking the blocks would turn it into the mist the brief says
 # it must not become.
-const GAS_LATTICE := 3          # 3x3 footprint slots per cell, as the brief's diagrams read
-const GAS_VOXEL := 0.24         # well under a slot (0.333), so the gaps are gaps and not seams
-const GAS_JITTER := 0.03        # enough to break the ruler, far too little to hide the grid
-const GAS_Y0 := 0.22            # the first layer's centre height
-const GAS_LAYER := 0.30         # and the step up to the next
-const GAS_INK := 0.18           # how much of a slot the art must cover to count as gas
-const GAS_BOB := 0.055          # "slow, subtle movement" — not a swirl
-const GAS_PERIOD_MIN := 3.4     # seconds; each block on its own clock so the cell churns gently
-const GAS_PERIOD_MAX := 6.2
-const GAS_ALPHA_MIN := 0.34
-const GAS_ALPHA_MAX := 0.78
+# THE GAS TILE IS THE SIMULATION VOXEL; THE CUBES ARE PARTICLES INSIDE IT. Daniel's second brief,
+# on the first attempt: "adjacent cubes visually merge into large solid-looking masses. At gameplay
+# camera distance, the viewer cannot easily perceive them as particulate gas… Do not make one
+# rendered cube correspond to one simulation unit."
+#
+# The first version put ONE cube in each of nine lattice slots, which is exactly that mistake: the
+# cube WAS the simulation cell, drawn big and opaque, and a tile came out as a few tan blocks. Now a
+# tile holds a cloud of many small ones, placed continuously inside the art's footprint rather than
+# on a grid, and the density that used to be carried by size is carried by COUNT and OVERLAP.
+const GAS_LATTICE := 3          # the art's footprint resolution — the SIMULATION shape, not the particles
+const GAS_INK := 0.18           # how much of a footprint slot the art must cover to count as gas
+const GAS_SIZE := 0.17          # ~0.17 of a tile, varied below: chunky, nowhere near tile-sized
+const GAS_SIZE_VAR := 0.3       # x0.7 .. x1.3, so no two read as the same block
+const GAS_N_MIN := 5.0          # particles in a fully-occupied tile at the thinnest...
+const GAS_N_MAX := 34.0         # ...and at the thickest. Density is COUNT, not size.
+const GAS_BLEED := 0.12         # how far a particle may cross its tile edge: interior seams vanish,
+                                # the cloud's OUTER perimeter stays tile-shaped
+const GAS_HEIGHT := 0.86        # the tallest a particle sits, before the floor bias below
+const GAS_FLOOR_BIAS := 2.3     # >1 pulls the distribution down: low and broad, not a tall cube
+const GAS_BOB := 0.05           # vertical simmer — much smaller than a tile
+const GAS_DRIFT := 0.035        # and a lateral wander smaller still: suspended, not blown
+const GAS_PERIOD_MIN := 3.2     # seconds, per particle, so nothing moves as one rigid structure
+const GAS_PERIOD_MAX := 7.4
+const GAS_ALPHA_MIN := 0.13     # a single particle is nearly transparent; a thick cloud is thick
+const GAS_ALPHA_MAX := 0.32     # because many of them overlap
 const GAS_DENSITY_FULL := 60.0  # Qud density at which a cloud reads as thick
 
-## Is this object a gas that Raves draws as VOXELS? Asked in two places — the placement and the
+## Is this object a gas that Raves draws as CUBES? Asked in two places — the placement and the
 ## animation registry, which the gas path calls as separate steps — and defined once so they cannot
-## disagree. Flat-2D and 1:1 keep Qud's own animated tile, which is what those modes are for.
+## disagree. That split is what left Qud's animated tile drawing over the cubes the first time.
+## Flat-2D and 1:1 keep Qud's own tile, which is what those modes are for.
 func _gas_is_voxel(obj: Dictionary) -> bool:
 	return obj.has("animGas") and not _flat_2d and not _one_to_one
 
-## A cell of gas as blocks on a lattice, shaped by the gas tile's own art and thickened by density.
+## A cell of gas as a cloud of small translucent cubes, inside the footprint the gas tile's own art
+## describes, drawn as ONE MultiMesh so a room full of gas is a draw call per cell rather than per
+## cube.
 ##
 ## SEEDED FROM THE CELL, not from randi(): gas is placed on the per-turn pass, so a cloud that
-## re-rolled itself every step would boil rather than drift. Same reason the glowfish orbits hash
+## re-rolled itself every step would sparkle rather than drift. Same reason the glowfish orbits hash
 ## their cell — a rebuild has to be invisible.
 func _place_gas_chunks(obj: Dictionary, tile: String, cx: int, cy: int, light_frac: float) -> void:
 	var dens: float = clampf(float(obj.get("gasDensity", 0)) / GAS_DENSITY_FULL, 0.0, 1.0)
-	var col := _qud_color(String(obj.get("animGas", "")))
-	col.a = lerpf(GAS_ALPHA_MIN, GAS_ALPHA_MAX, dens)
-	var mat := _gas_material(col, light_frac)
 	var foot := _gas_footprint(tile)
 	if foot.is_empty():
 		return
-	# One layer when it is thin, two when it is thick — the tile FILLS UP rather than the blocks
-	# growing, which is the distinction the brief draws. TWO, not three: at three the lattice packed
-	# 27 blocks into a cell and a dense cloud came out a solid slab, where the brief's own diagram
-	# for high concentration is seven squares of nine with gaps still in it.
-	var layers: int = 1 + int(floorf(dens * 1.5 + 0.01))
-	var nodes: Array = []
-	var bases: Array = []
-	var amps: Array = []
-	var rates: Array = []
-	var phases: Array = []
+	# AN UNEVEN SILHOUETTE AT EQUAL CONCENTRATION: a per-CELL roll thickens some tiles and thins
+	# others, so a cloud of identical densities still has lumps in it. Deterministic, so it does not
+	# shimmer from step to step.
+	var lump: float = 0.72 + 0.56 * _fish_rand(cx, cy, 0, 11)
+	# Scaled by how much of the tile the art actually covers — the brief's counts are "per fully
+	# occupied tile", and a frame whose art fills three slots of nine is not one.
+	var cover: float = float(foot.size()) / float(GAS_LATTICE * GAS_LATTICE)
+	var n: int = int(round(lerpf(GAS_N_MIN, GAS_N_MAX, dens) * lump * cover))
+	if n <= 0:
+		return
+	var col := _qud_color(String(obj.get("animGas", "")))
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = true
+	var box := BoxMesh.new()
+	box.size = Vector3.ONE
+	mm.mesh = box
+	mm.instance_count = n
+	var base := PackedVector3Array()
+	var size := PackedFloat32Array()
+	var bob := PackedFloat32Array()
+	var rate := PackedFloat32Array()
+	var phase := PackedFloat32Array()
 	var slot := 1.0 / float(GAS_LATTICE)
-	for f in foot:
-		var ix: int = f.x
-		var iz: int = f.y
-		for iy in layers:
-			var id := (iy * GAS_LATTICE + iz) * GAS_LATTICE + ix
-			# EVEN THE GROUND LAYER IS GAPPY WHEN THE GAS IS THIN — the brief's low-concentration
-			# diagram is two squares of nine, not nine faint ones. Upper layers thin out further:
-			# the top of a cloud is where it is running out.
-			# NEVER THE WHOLE LATTICE, however thick the gas: the brief's own diagram for high
-			# concentration is seven squares of nine, and a cell with all nine filled stops being
-			# particles and becomes a block of fog.
-			var keep: float = lerpf(0.25, 0.75, dens)
-			if iy > 0:
-				keep *= lerpf(0.35, 0.80, dens)
-			if _fish_rand(cx, cy, id, 71) > keep:
-				continue
-			var mi := MeshInstance3D.new()
-			var box := BoxMesh.new()
-			box.size = Vector3(GAS_VOXEL, GAS_VOXEL, GAS_VOXEL)
-			mi.mesh = box
-			mi.material_override = mat
-			var y: float = GAS_Y0 + GAS_LAYER * float(iy)
-			mi.position = Vector3(
-				float(cx) - 0.5 + (float(ix) + 0.5) * slot + (_fish_rand(cx, cy, id, 79) - 0.5) * GAS_JITTER,
-				y,
-				float(cy) - 0.5 + (float(iz) + 0.5) * slot + (_fish_rand(cx, cy, id, 83) - 0.5) * GAS_JITTER)
-			_spawn_parent().add_child(mi)
-			_track(mi)
-			nodes.append(mi)
-			bases.append(y)
-			amps.append(GAS_BOB * (0.5 + _fish_rand(cx, cy, id, 89)))
-			rates.append(TAU / lerpf(GAS_PERIOD_MIN, GAS_PERIOD_MAX, _fish_rand(cx, cy, id, 97)))
-			phases.append(_fish_rand(cx, cy, id, 101) * TAU)
-	if not nodes.is_empty():
-		_anim_items.append({"kind": "gaschunk", "nodes": nodes, "base": bases,
-			"amp": amps, "rate": rates, "phase": phases})
+	for i in n:
+		# Pick one of the art's slots, then a CONTINUOUS position inside it — jittered across the
+		# whole slot and a little past it, so nothing lines up and the interior tile seams close.
+		var f: Vector2i = foot[int(_fish_rand(cx, cy, i, 13) * float(foot.size())) % foot.size()]
+		var px: float = -0.5 + (float(f.x) + _fish_rand(cx, cy, i, 17)) * slot
+		var pz: float = -0.5 + (float(f.y) + _fish_rand(cx, cy, i, 19)) * slot
+		px += (_fish_rand(cx, cy, i, 23) - 0.5) * 2.0 * GAS_BLEED
+		pz += (_fish_rand(cx, cy, i, 29) - 0.5) * 2.0 * GAS_BLEED
+		# LOW AND BROAD: most of them near the floor, a few higher, the odd one above that. The
+		# exponent does the whole job — no bands, so the cloud's top surface is noisy by itself.
+		var py: float = pow(_fish_rand(cx, cy, i, 31), GAS_FLOOR_BIAS) * GAS_HEIGHT
+		var sz: float = GAS_SIZE * (1.0 - GAS_SIZE_VAR + 2.0 * GAS_SIZE_VAR * _fish_rand(cx, cy, i, 37))
+		base.append(Vector3(px, py, pz))
+		size.append(sz)
+		bob.append(GAS_BOB * (0.4 + _fish_rand(cx, cy, i, 41)))
+		rate.append(TAU / lerpf(GAS_PERIOD_MIN, GAS_PERIOD_MAX, _fish_rand(cx, cy, i, 43)))
+		phase.append(_fish_rand(cx, cy, i, 47) * TAU)
+		mm.set_instance_transform(i, Transform3D(Basis().scaled(Vector3.ONE * sz),
+			Vector3(px, py, pz)))
+		# Per-particle alpha, so a clump reads as depth rather than as one painted shape.
+		var a: float = lerpf(GAS_ALPHA_MIN, GAS_ALPHA_MAX, dens) \
+			* (0.7 + 0.6 * _fish_rand(cx, cy, i, 53))
+		mm.set_instance_color(i, Color(1, 1, 1, clampf(a, 0.05, 0.6)))
+	var mi := MultiMeshInstance3D.new()
+	mi.multimesh = mm
+	mi.position = Vector3(float(cx), 0.0, float(cy))
+	mi.material_override = _gas_material(col, light_frac)
+	# The instances sit inside one cell but wander a little past it; without this the whole cloud
+	# pops when the cell's own centre leaves the frustum.
+	mi.extra_cull_margin = 1.0
+	_spawn_parent().add_child(mi)
+	_track(mi)
+	_anim_items.append({"kind": "gaschunk", "mm": mm, "base": base, "size": size,
+		"bob": bob, "rate": rate, "phase": phase})
+
+## Gas is TRANSLUCENT and unlit — its own colour, dimmed by the cell like everything else, with the
+## per-particle alpha riding in on the instance colour.
+func _gas_material(col: Color, light_frac: float) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.vertex_color_use_as_albedo = true          # MultiMesh instance colour carries the alpha
+	m.albedo_color = Color(col.r * light_frac, col.g * light_frac, col.b * light_frac, 1.0)
+	# A cube is closed, so its inside is never wanted; drawing both faces doubled the overdraw and
+	# put a moire where two particles met.
+	m.cull_mode = BaseMaterial3D.CULL_BACK
+	m.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED   # translucent: never occlude each other
+	return m
 
 ## Which lattice slots this gas tile's art covers, read as a PLAN of the cell. Cached per tile: the
 ## four gas frames are the only art that ever comes through here.
@@ -5031,19 +5070,6 @@ func _gas_footprint(tile: String) -> Array:
 				out.append(Vector2i(ix, iz))
 	_gas_foot_cache[tile] = out
 	return out
-
-## Gas is TRANSLUCENT and unlit — its own colour, dimmed by the cell like everything else, and with
-## no lit face to give a cube the look of masonry.
-func _gas_material(col: Color, light_frac: float) -> StandardMaterial3D:
-	var m := StandardMaterial3D.new()
-	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	m.albedo_color = Color(col.r * light_frac, col.g * light_frac, col.b * light_frac, col.a)
-	# BACK-FACE CULLED, unlike most of this renderer's flat art: a box is closed, so its inside is
-	# never wanted, and drawing both faces of every transparent cube put a moire checker wherever
-	# two blocks met. Halves the overdraw as well, which a room full of gas notices.
-	m.cull_mode = BaseMaterial3D.CULL_BACK
-	return m
 
 ## Deterministic 0..1 from a glowfish cell + slot, so a fish's orbit params are stable
 ## across the per-step rebuilds (only changing when it actually swims to a new cell).
@@ -9299,8 +9325,8 @@ func _place_nonwall(obj: Dictionary, cx: int, cy: int, idx: int, in_wall: bool, 
 	# which is what those modes are for.
 	if _gas_is_voxel(obj) and verdict == "":
 		_place_gas_chunks(obj, tile, cx, cy, light_frac)
-		_note(cx, cy, idx, "gas (voxel lattice from %s, density %d)" % [
-			tile, int(obj.get("gasDensity", 0))], 0.5)
+		_note(cx, cy, idx, "gas (cube cloud from %s, density %d)" % [
+			tile, int(obj.get("gasDensity", 0))], 0.4)
 		return
 
 	# Qud's painted ground layer is flat by default — dirt, gravel, cracked earth.
@@ -12808,14 +12834,23 @@ func _animate_1to1() -> void:
 			if is_instance_valid(en2):
 				en2.visible = qf <= 30   # Engulfed.Render: engulfer shown frames 0-30 of 60
 		elif kind == "gaschunk":
-			# Each block on its own clock, so the cell churns instead of pulsing as one lump.
-			var cn: Array = it["nodes"]
+			# EVERY PARTICLE ON ITS OWN CLOCK — a tile animated as one object would go back to
+			# reading as a single rigid structure, which is the whole thing this is avoiding.
+			var mm: MultiMesh = it["mm"]
+			var gb: PackedVector3Array = it["base"]
+			var gs: PackedFloat32Array = it["size"]
 			var t := float(ms) * 0.001
-			for i in cn.size():
-				var m3 := cn[i] as MeshInstance3D
-				if is_instance_valid(m3):
-					m3.position.y = float(it["base"][i]) \
-						+ float(it["amp"][i]) * sin(t * float(it["rate"][i]) + float(it["phase"][i]))
+			for i in gb.size():
+				var ph: float = it["phase"][i]
+				var rt: float = it["rate"][i]
+				var p: Vector3 = gb[i]
+				p.y += float(it["bob"][i]) * sin(t * rt + ph)
+				# A lateral wander on a different multiple of the same clock, so the drift is a
+				# slow open curve rather than a line traced back and forth.
+				p.x += GAS_DRIFT * sin(t * rt * 0.61 + ph)
+				p.z += GAS_DRIFT * cos(t * rt * 0.47 + ph * 1.7)
+				mm.set_instance_transform(i, Transform3D(
+					Basis().scaled(Vector3.ONE * gs[i]), p))
 		elif kind == "gas":
 			var gn: Array = it["nodes"]
 			if not gn.is_empty():
