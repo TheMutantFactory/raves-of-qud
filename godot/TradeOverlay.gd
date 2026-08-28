@@ -98,6 +98,12 @@ const HBORDER_X0 := 216.0        # the hairline starts after the name box, not a
 const LIST_Y := 122.0
 const LIST_H := 840.3
 const LIST_W := 785.0
+## Qud's scrollbar, measured: a 7-wide track at x117 for a list at x128, with a 3-wide handle inset
+## 2. It is drawn nearly the colour of the background -- sampling the live screen over the handle's
+## own rows returns the panel tone -- so this draws it quietly rather than inventing a bright one.
+const BAR_DX := 11.0
+const BAR_W := 7.0
+const BAR_HANDLE_W := 3.0
 
 # rows
 const ROW_H := 25.0
@@ -157,6 +163,7 @@ var _centre: Label
 var _money: Label
 var _legend: Label
 var _strip: Control              # the category filter cells
+var _bars: Array = []            # [side] -> {scroll, track, handle}: Qud's left-gutter scrollbar
 var tiles_dir := ""
 
 
@@ -222,6 +229,31 @@ func _ensure_built() -> void:
 		scroll.mouse_filter = Control.MOUSE_FILTER_STOP
 		_place(scroll, Rect2(cx, LIST_Y, LIST_W, LIST_H))
 		_design.add_child(scroll)
+		# GODOT'S OWN BAR IS TURNED OFF, and its own bar is the bug. Daniel: "The scrollbar is
+		# clipping the prices." Godot hangs a vertical bar on the RIGHT, inside the container, so it
+		# sat straight over a price column that runs to the list's right edge. Qud puts its bar in
+		# the LEFT GUTTER -- x117 against a list at x128, 7 wide with a 3-wide handle -- which is
+		# exactly why its own prices reach 785 uncllipped.
+		# SHOW_NEVER, not visible=false: the ScrollContainer re-asserts its bar's visibility on every
+		# layout pass, so setting the flag once left it drawing a grey strip down the right edge.
+		# The mode is the container's own switch and it survives relayout, while still scrolling.
+		scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
+		var track := _rect(Rect2(cx - BAR_DX, LIST_Y, BAR_W, LIST_H), FRAME * Color(1, 1, 1, 0.25))
+		var handle := _rect(Rect2(cx - BAR_DX + 2.0, LIST_Y, BAR_HANDLE_W, LIST_H), FRAME)
+		# ...and it must be ALLOWED to shrink. _rect places through _place, which sets
+		# custom_minimum_size as well as size, and a Control's size is clamped to that minimum -- so
+		# every computed handle length was silently floored back to the full track. On screen the
+		# handle looked like a second border down the gutter and never moved.
+		handle.custom_minimum_size = Vector2.ZERO
+		# ...and it has to follow the WHEEL, not just a new board. A trade frame only arrives when
+		# something changes on Qud's side, so a handle painted from set_state alone would sit still
+		# while the list moved under it.
+		scroll.get_v_scroll_bar().value_changed.connect(func(_v: float) -> void: _paint_bars())
+		# ...and on `changed`, which is when max/page are set. One deferred paint after set_state is
+		# not enough: the VBox does not know its own height yet, max_value still reads as the
+		# viewport's, and the handle is drawn full-length as though there were nothing to scroll.
+		scroll.get_v_scroll_bar().changed.connect(_paint_bars)
+		_bars.append({"scroll": scroll, "track": track, "handle": handle})
 		var content := VBoxContainer.new()
 		content.add_theme_constant_override("separation", 0)
 		content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -301,6 +333,33 @@ func _paint() -> void:
 		_fill(_lists[side].content, _side(side).get("rows", []), side)
 	_paint_filters()
 	_paint_totals()
+	_paint_bars.call_deferred()
+
+## The handle's length and position, from how much of the list is actually showing. Deferred, because
+## a VBox's content height is not known until it has laid its children out.
+func _paint_bars() -> void:
+	for i in _bars.size():
+		var b: Dictionary = _bars[i]
+		var sc: ScrollContainer = b.scroll
+		if not is_instance_valid(sc) or i >= _lists.size():
+			continue
+		# THE CONTENT'S OWN HEIGHT, not the scrollbar's max_value. With the bar set to SHOW_NEVER
+		# Godot stops maintaining its range, so max_value reads as the viewport's height and every
+		# handle came out full-length as though there were nothing to scroll.
+		var content: Control = _lists[i].content
+		var total: float = maxf(content.size.y, 1.0)
+		if total <= LIST_H:
+			b.track.visible = false
+			b.handle.visible = false
+			continue
+		var run: float = maxf(LIST_H * (LIST_H / total), 12.0)
+		# The handle travels the track MINUS ITS OWN LENGTH — over the whole track it would run off
+		# the bottom exactly as the list reached its end.
+		var at: float = clampf(float(sc.scroll_vertical) / (total - LIST_H), 0.0, 1.0)
+		b.handle.size.y = run
+		b.handle.position.y = LIST_Y + (LIST_H - run) * at
+		b.track.visible = true
+		b.handle.visible = true
 
 ## One cell per category, "*All" first — the strip Qud hands its FilterBar, rebuilt from the same
 ## list. The first cell shows TEXT and the rest show ICONS, which is how Qud's own bar is built
