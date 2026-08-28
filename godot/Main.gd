@@ -68,6 +68,7 @@ var _sky_grade                     # SkyGrade (Node3D); created in _ready
 ## in the world, not an overlay: a beacon is a thing standing on the ground four parasangs away, and
 ## the camera has to be able to look away from it.
 var _beacons                       # LocationBeacons (Node3D); created in _ready
+var _target                        # TargetCursor: Qud's target picker, mirrored
 var _assist                        # MouseAssist (Node); created in _ready
 var _assist_pos := Vector2(-1, -1) # last pointer position, re-read once a frame (see _process)
 
@@ -214,6 +215,14 @@ func _ready() -> void:
 	_beacons = load("res://LocationBeacons.gd").new()   # the Locations panel's horizon markers
 	add_child(_beacons)
 	# The cursor's verb (boots / speech bubble / hand / stairs arrow) — see MouseAssist.
+	# Qud's target picker, mirrored — its own overlay, because it owns the playfield's mouse while
+	# it is up and nothing else may act on a click (see _travel_click).
+	_target = load("res://TargetCursor.gd").new()
+	add_child(_target)
+	_target.setup(renderer)
+	_target.answered.connect(func(x: int, y: int, cancel: bool) -> void:
+		client.send_command("picktarget", {"x": x, "y": y, "cancel": cancel}))
+	client.picktarget.connect(func(d: Dictionary) -> void: _target.set_state(d))
 	_assist = load("res://MouseAssist.gd").new()
 	add_child(_assist)
 	_assist.setup(renderer)   # the box + billboard live under the renderer, for its z-stretch
@@ -963,6 +972,14 @@ func _walk_answer(d: String) -> bool:
 ## frames to draw them in. The position is read from the viewport rather than remembered from an
 ## event, so it stays right when the world moves under a still pointer.
 func _assist_step() -> void:
+	# AIMING OUTRANKS THE VERB CURSOR. While Qud is asking for a target the only thing a click can
+	# mean is "there" — so the reticle takes the pointer, and the boots/hand/speech icon that would
+	# otherwise be promising a walk or a conversation gets out of the way.
+	if _target != null and _target.active:
+		if _assist != null:
+			_assist.hover(Vector2.ZERO, null)
+		_target.hover(_playfield_cell(get_viewport().get_mouse_position()))
+		return
 	if _assist == null:
 		return
 	if not _assist.enabled():
@@ -1296,6 +1313,8 @@ func set_play_hole_rect(r: Rect2) -> void:
 	# opaque and a plate would slide under the message log.
 	if _beacons != null:
 		_beacons.set_play_hole(r)
+	if _target != null:
+		_target.set_play_hole(r)
 
 ## One gesture -> everything a collaborator needs about a tile. Photograph the BARE
 ## scene FIRST (no selection overlay), then inspect — so shot.png is a clean plate
@@ -1343,6 +1362,13 @@ func _interact_click(pos: Vector2) -> void:
 ## anyway, and the icon is then telling you what you will find when you arrive.
 func _travel_click(pos: Vector2) -> void:
 	var cell = _playfield_cell(pos)
+	# THE PICKER GETS THE CLICK, and gets it even off the playfield: a click that lands on chrome
+	# while Qud is waiting for a target must not fall through and order a walk the moment the shot
+	# resolves. This is the bug as reported — the click went to the verb table and chatted at a
+	# Dawnglider — so the guard is FIRST, before the cell is even required.
+	if _target != null and _target.active:
+		_target.click(cell)
+		return
 	if cell == null:
 		return
 	var c := Vector2i(cell.x, cell.y)
@@ -1748,6 +1774,8 @@ func _input(event: InputEvent) -> void:
 			if press != null and event.position.distance_to(press) <= TRAVEL_SLOP:
 				if event.button_index == MOUSE_BUTTON_LEFT:
 					_travel_click(event.position)
+				elif _target != null and _target.active:
+					_target.click(_playfield_cell(event.position), true)   # right-click calls it off
 				else:
 					_interact_click(event.position)
 
@@ -1906,7 +1934,14 @@ func _unhandled_input(event: InputEvent) -> void:
 		if _cam_rig._mode != CamMode.KEYBOARD and event.keycode == KEY_D:
 			client.send_command("command", {"command": "CmdMoveD"}); return
 		if event.keycode == KEY_ESCAPE:
-			# LOOK MODE LEAVES FIRST, and by itself — the whole complaint about the old Look button
+			# AIMING LEAVES FIRST OF ALL. Qud's picker takes Escape itself when it has the keyboard,
+			# but Raves has it here — and it must be possible to call a shot off without reaching for
+			# the other window. Measured the hard way: with nothing wired, Escape from Raves left the
+			# game parked in PickTarget and it took the mod's own `uiback` to get out.
+			if _target != null and _target.active:
+				_target.click(null, true)
+				return
+			# LOOK MODE LEAVES SECOND, and by itself — the whole complaint about the old Look button
 			# was that it put the game somewhere it could not be talked out of, so this one exits
 			# on the key everyone tries first, before Esc means anything else.
 			if inspector != null and inspector.look_on():

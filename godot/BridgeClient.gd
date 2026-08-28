@@ -12,6 +12,7 @@ signal picker(data: Dictionary)  # Qud's PickGameObjectScreen mirrored ({"type":
 signal cyber(data: Dictionary)   # Qud's cybernetics TERMINAL mirrored ({"type":"cyber", active:…})
 signal tutorial(data: Dictionary) # Qud TUTORIAL GUIDE box mirrored ({"type":"tutorial", active:...})
 signal tombstone(data: Dictionary) # the end-of-run GameSummaryScreen mirrored
+signal picktarget(data: Dictionary) # Qud's target cursor mirrored ({"type":"picktarget", active:…})
 signal connected   # fires each time the bridge (re)connects
 
 const HOST := "127.0.0.1"
@@ -83,6 +84,7 @@ func _drain() -> void:
 	var latest_cyber: Variant = null
 	var latest_tutorial: Variant = null
 	var latest_tombstone: Variant = null
+	var latest_picktarget: Variant = null
 	var dropped := 0
 	while _buf.size() >= 4:
 		var frame_len := (_buf[0] << 24) | (_buf[1] << 16) | (_buf[2] << 8) | _buf[3]
@@ -105,6 +107,8 @@ func _drain() -> void:
 				latest_tutorial = data
 			elif data.get("type", "") == "tombstone":
 				latest_tombstone = data
+			elif data.get("type", "") == "picktarget":
+				latest_picktarget = data
 			elif data.get("type", "") == "view":
 				# Qud's CurrentGameView, on its OWN frame because the legacy screens that matter
 				# park the turn thread and stop snapshots — see PopupBridge.PollView.
@@ -127,6 +131,8 @@ func _drain() -> void:
 		tombstone.emit(latest_tombstone)
 	if latest_cyber != null:
 		cyber.emit(latest_cyber)
+	if latest_picktarget != null:
+		picktarget.emit(latest_picktarget)
 
 ## Send a command to Qud, e.g. send_command("move", {"dir": "N"}).
 func send_command(name: String, extra: Dictionary = {}) -> void:

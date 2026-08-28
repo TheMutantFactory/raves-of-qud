@@ -814,6 +814,19 @@ namespace RavesOfQud
                         gmg.uiQueue.queueTask(() => { try { GlyphExporter.Export(); } catch { } }, 0);
                     return;
                 }
+                if (name == "picktarget")
+                {
+                    // The viewer aimed Qud's target cursor. See PickTargetBridge for the input
+                    // contract; the cell is Qud's own zone coordinates, which is what Raves clicks in.
+                    f.TryGetValue("cancel", out string ptc);
+                    f.TryGetValue("x", out string ptxs);
+                    f.TryGetValue("y", out string ptys);
+                    int ptx, pty;
+                    int.TryParse(ptxs, out ptx);
+                    int.TryParse(ptys, out pty);
+                    PickTargetBridge.Answer(ptx, pty, ptc == "true" || ptc == "True" || ptc == "1");
+                    return;
+                }
                 if (name == "picker")
                 {
                     // Answer Qud's mirrored item picker (pick a row / toggle a category / cancel).
