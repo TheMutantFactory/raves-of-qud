@@ -825,7 +825,8 @@ namespace RavesOfQud
                     int.TryParse(tside, out ts);
                     int.TryParse(tidx, out ti);
                     int.TryParse(tn, out tnn);
-                    TradeBridge.Answer(tdo ?? "", ts, ti, tnn);
+                    f.TryGetValue("cat", out string tcat);
+                    TradeBridge.Answer(tdo ?? "", ts, ti, tnn, tcat ?? "");
                     return;
                 }
                 if (name == "moveedge")

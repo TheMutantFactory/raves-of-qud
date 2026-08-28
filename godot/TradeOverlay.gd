@@ -118,6 +118,11 @@ const FRAME := Color8(0x15, 0x53, 0x52)
 const GOLD := Color8(0xcf, 0xc0, 0x41)
 const DIM := Color8(0x77, 0xbf, 0xcf)
 const CAT_TEXT := Color8(0x40, 0xa4, 0xb9)
+## Qud's own price blue, taken from TradeLine.setData rather than sampled off a screenshot:
+##     rightFloatText.color = new Color(0.2674735f, 0.6836081f, 0.9245283f)
+## Daniel: "Change the cost color from green to blue to match Qud." It was green because the first
+## pass picked a money colour by eye; Qud's is this.
+const PRICE := Color8(0x44, 0xae, 0xec)
 const MONEY := Color8(0x00, 0xc4, 0x20)
 const OWED := Color8(0xd7, 0x42, 0x00)
 const SEL_BG := Color8(0x15, 0x53, 0x52, 0xcc)
@@ -303,27 +308,31 @@ func _fill(content: VBoxContainer, rows: Array, side: int) -> void:
 	for r in rows:
 		var row: Dictionary = r
 		if String(row.get("kind", "")) == "Category":
-			content.add_child(_cat_row(row))
+			content.add_child(_cat_row(row, side))
 		else:
 			content.add_child(_item_row(row, side))
 
 ## "Ammo ────────────────" — the label, then a rule running out to the column's edge. The rule is
 ## what makes Qud's list scannable at a glance and it is the part the first version dropped.
-func _cat_row(row: Dictionary) -> Control:
-	var holder := Control.new()
+func _cat_row(row: Dictionary, side: int) -> Control:
+	# CLICKABLE, because Qud's is. The "[-]" is a control, not a decoration, and a list of a
+	# merchant's whole stock is exactly where you want to fold away the four categories you are not
+	# shopping for. The flag lives in Qud's own categoryCollapsed dictionary, so folding here folds
+	# it in Qud too and neither view can drift.
+	var holder := Button.new()
 	holder.custom_minimum_size.y = CAT_H
-	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var caret := Label.new()
-	# Qud writes the expander in BRACKETS -- "[-] Ammo" -- and it reads as a control that way rather
-	# than as a stray dash.
-	caret.text = "[-]" if not bool(row.get("collapsed", false)) else "[+]"
-	caret.add_theme_font_size_override("font_size", FONT_PX)
-	caret.add_theme_color_override("font_color", DIM)
-	caret.position = Vector2(EXPANDER_DX + 4.0, 4.0)
-	caret.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	holder.add_child(caret)
+	holder.flat = true
+	holder.focus_mode = Control.FOCUS_NONE
+	var cat_name := QudText.strip(String(row.get("name", "")))
+	holder.pressed.connect(func() -> void:
+		act.emit({"do": "category", "side": side, "cat": cat_name}))
+	# ONE LABEL, NOT TWO. TradeLine.setData writes the whole thing as a single string --
+	#     categoryText.SetText("[" + ("-" or "+") + "] " + category)
+	# -- and the separate Expander node the probe reports at x93 is a pooled leftover that never
+	# draws there. Rendering it as its own node at a NEGATIVE offset put it outside the scroll
+	# container, which clipped it away entirely: the caret simply was not on screen.
 	var lab := Label.new()
-	lab.text = QudText.strip(String(row.get("name", "")))
+	lab.text = "[%s] %s" % ["-" if not bool(row.get("collapsed", false)) else "+", cat_name]
 	lab.add_theme_font_override("font", load("res://fonts/SourceCodePro-Bold.ttf"))
 	lab.add_theme_font_size_override("font_size", FONT_PX)
 	# MUTED, not gold. Qud greys its category headings so the ITEMS carry the colour; drawing them
@@ -357,9 +366,12 @@ func _item_row(row: Dictionary, side: int) -> Control:
 	# version put it. It is how Qud shows what you have already picked off a stack.
 	if sel > 0:
 		var amt := Label.new()
-		amt.text = "x%d" % sel
+		# Qud writes the count as {{W|n}} — the bare number in its bright white. "x3" in gold was
+		# the invented version inventing again.
+		amt.text = "%d" % sel
 		amt.add_theme_font_size_override("font_size", FONT_PX)
-		amt.add_theme_color_override("font_color", GOLD)
+		amt.add_theme_color_override("font_color", Color8(0xff, 0xff, 0xff))
+		amt.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		amt.position = Vector2(AMOUNT_DX, 2.0)
 		amt.custom_minimum_size = Vector2(AMOUNT_W, ROW_H)
 		amt.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -392,7 +404,13 @@ func _item_row(row: Dictionary, side: int) -> Control:
 	var p := String(row.get("price", ""))
 	price.text = ("[$%s]" % p) if p != "" else ""
 	price.add_theme_font_size_override("font_size", FONT_PX)
-	price.add_theme_color_override("font_color", MONEY)
+	# The base colour FIRST, then the currency exception — the other order set white and immediately
+	# painted over it, which is a bug that looks like a colour that was never applied.
+	price.add_theme_color_override("font_color", PRICE)
+	if bool(row.get("currency", false)):
+		# Qud draws a currency row's price as [{{W|$n}}] — the money itself reads brighter than the
+		# goods it buys.
+		price.add_theme_color_override("font_color", Color8(0xff, 0xff, 0xff))
 	price.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	price.position = Vector2(PRICE_DX, 2.0)
 	price.size = Vector2(PRICE_W, ROW_H)

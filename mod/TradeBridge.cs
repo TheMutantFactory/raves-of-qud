@@ -166,11 +166,14 @@ namespace RavesOfQud
                 int idx = -1;
                 try { if (sc.ObjectIndex.ContainsKey(go)) idx = sc.ObjectIndex[go]; } catch { }
                 j.Member("idx", idx);
-                try
-                {
-                    j.Member("price", TradeUI.FormatPrice(TradeUI.GetValue(go, r.traderInventory), TradeScreen.CostMultiple) ?? "");
-                }
+                // EXACTLY WHAT THE ROW SHOWS. TradeLine.setData formats
+                //     $"{TradeUI.GetValue(go, traderInventory):0.00}"
+                // with NO cost multiple -- the multiple belongs to the details line at the bottom,
+                // which this board does not draw. Sending FormatPrice(value, CostMultiple) agreed
+                // only while the multiple happened to be 1.
+                try { j.Member("price", TradeUI.GetValue(go, r.traderInventory).ToString("0.00")); }
                 catch { j.Member("price", ""); }
+                try { j.Member("currency", go.IsCurrency); } catch { }
                 try { j.Member("weight", go.Weight); } catch { }
                 try { InventoryExporter.WriteTile(j, go, "Trade"); } catch { }
                 j.EndObject();
@@ -179,7 +182,7 @@ namespace RavesOfQud
 
         /// Apply the viewer's action. Queued on the uiQueue: every one of these touches the live
         /// screen, and the screen belongs to the UI thread.
-        public static void Answer(string what, int side, int idx, int n)
+        public static void Answer(string what, int side, int idx, int n, string cat)
         {
             var gm = GameManager.Instance;
             if (gm == null || gm.uiQueue == null) return;
@@ -206,8 +209,14 @@ namespace RavesOfQud
                     }
                     if (what == "category")
                     {
-                        // The collapse flag is Qud's own per-side dictionary; flip it and let the
-                        // screen rebuild its rows, so both views agree on what is folded away.
+                        // The collapse flag is Qud's OWN per-side dictionary, and UpdateViewFromData
+                        // rebuilds listItems out of it (isCollapsed decides which items are emitted
+                        // at all). So flipping it here folds the category away in BOTH views, and
+                        // Raves never has to keep a second idea of what is open.
+                        if (sc.categoryCollapsed == null || side < 0 || side > 1
+                            || string.IsNullOrEmpty(cat)) return;
+                        sc.categoryCollapsed[side][cat] = !sc.isCollapsed(side, cat);
+                        sc.UpdateViewFromData();
                         return;
                     }
                     if (what == "select")
