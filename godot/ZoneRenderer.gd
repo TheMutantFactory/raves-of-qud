@@ -1506,16 +1506,6 @@ func _rebuild_dynamics(cells: Array) -> void:
 	for lc in cells:
 		if int(lc.get("light", LIGHT_LIT)) >= LIGHT_LIT:
 			_build_lit[Vector2i(int(lc.get("x", 0)), int(lc.get("y", 0)))] = true
-	# WHICH CELLS HOLD GAS, before any of them are placed. The voxel fog erodes its edge only where
-	# the neighbouring cell has no gas; without knowing the neighbours first, every tile would erode
-	# on all four sides and the seams between them would be exactly the emitter-per-tile structure
-	# the effect exists to hide.
-	_gas_cells.clear()
-	for gc in cells:
-		for go in gc.get("objs", []):
-			if go.has("animGas"):
-				_gas_cells[Vector2i(int(gc.get("x", 0)), int(gc.get("y", 0)))] = true
-				break
 	_asleep_posed.clear()       # per-turn: which cells hold a creature lying asleep
 	_asleep_seen = _asleep_next # last turn's sleepers, for the missed-window case (_asleep_now)
 	_asleep_next = {}
@@ -4935,160 +4925,92 @@ const ORBIT_PRIMES := [2, 3, 5, 7, 11, 13]   # prime speed ratios -> the cluster
 # cube WAS the simulation cell, drawn big and opaque, and a tile came out as a few tan blocks. Now a
 # tile holds a cloud of many small ones, placed continuously inside the art's footprint rather than
 # on a grid, and the density that used to be carried by size is carried by COUNT and OVERLAP.
-# A LOW-RESOLUTION STOCHASTIC VOXEL FIELD, not a particle swarm. Daniel, ending the tuning: "The
-# current approach has demonstrated a structural problem: few cubes -> floating debris, more cubes
-# -> pile of blocks, larger cubes -> geometry, smaller cubes -> visual noise. We need a different
-# construction."
+# SOFT BILLBOARD PUFFS — what a 3D game actually uses for smoke and gas. Daniel, after four passes
+# of cubes: "I hate it. No worries… Let's try a new approach. No voxels. Just a misty volume cloud
+# or whatever a regular 3d game would use."
 #
-# He is right that no setting fixes that, because the construction was wrong. Cubes thrown at random
-# positions have no relationship to each other, so the eye reads them one at a time whatever their
-# size. A FIELD does: each gas tile is subdivided 8x8x3, and every subvoxel is either on or off
-# according to noise sampled in WORLD coordinates. Neighbouring tiles then sample the same field and
-# their patterns continue across the boundary — there is no per-tile pattern left to see.
-#
-# The result is coarse three-dimensional dithering: holes everywhere, nothing stacked, and a mass
-# that reads as fog from across the room and as cubes from on top of it.
-const GAS_SUB := 8              # subvoxels per tile edge
-const GAS_LAYERS := 3           # ...and vertical layers. Gas is a BLANKET, not a cloud around you.
-const GAS_LAYER_H := 0.16       # each layer's height, so the whole field is under half a character
-const GAS_OCC := [0.55, 0.28, 0.08]   # occupancy per layer: most of the mass hugs the floor
-const GAS_STACK_PENALTY := 0.45 # how much having a voxel below you reduces your own chance: no towers
-const GAS_ERODE := 2            # subvoxels of erosion at an edge with no gas beyond it
-const GAS_VOXEL := 0.108        # a hair under a subvoxel (1/8 = 0.125): the gaps stay gaps
-const GAS_ALPHA := 0.12         # one cube barely matters; density is what the overlaps build
-const GAS_FREQ := 0.42          # noise features a few subvoxels across — blobs and holes, not static
-const GAS_CHURN := 0.05         # how fast the field breathes: occupancy changes, nothing travels
-const GAS_STEP_MS := 220        # ...re-evaluated this often, not every frame
+# The voxel attempts all failed the same way, and it is worth writing down once: a cube has an EDGE,
+# and an edge is the one thing gas does not have. Every version was legible as its own construction
+# — debris, blocks, geometry, dither — because the primitive announced itself. A soft-edged quad
+# announces nothing, and a handful of them overlapping is mist. That is why every engine reaches for
+# them, and four passes of tuning could not turn a cube into one.
+const MIST_MIN := 2.0           # puffs in a thin cell...
+const MIST_MAX := 6.0           # ...and in a thick one. They are large, so a few is a cloud.
+const MIST_SIZE := Vector2(1.05, 1.95)   # cell widths: comfortably over the tile, so cells merge
+const MIST_Y := Vector2(0.14, 0.46)      # low: gas pools on the floor
+const MIST_SPREAD := 0.55       # how far from the cell centre a puff may sit, edges included
+const MIST_ALPHA := Vector2(0.07, 0.17)  # a single puff is barely there; the overlaps are the cloud
+const MIST_DRIFT := 0.09        # slow lateral wander, well under a cell
+const MIST_BOB := 0.05
+const MIST_PERIOD := Vector2(5.5, 11.0)  # seconds — a drift you notice only if you watch for it
+const MIST_TEX := 96            # the soft blob's resolution
+const MIST_FALLOFF := 2.4       # >1 keeps the centre solid and feathers the rim
 const GAS_DENSITY_FULL := 60.0  # Qud density at which a cloud reads as thick
 
-## Gas is TRANSLUCENT and UNSHADED — one flat colour on every face, so a cube has no lit side and
-## no dark side to give it the weight of world geometry. Depth writes are off as well: translucent
-## cells must never occlude each other, or the near ones punch holes in the field behind them.
-func _gas_material(col: Color, light_frac: float) -> StandardMaterial3D:
-	var m := StandardMaterial3D.new()
-	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	m.vertex_color_use_as_albedo = true          # the MultiMesh instance colour carries the alpha
-	m.albedo_color = Color(col.r * light_frac, col.g * light_frac, col.b * light_frac, 1.0)
-	m.cull_mode = BaseMaterial3D.CULL_BACK       # a cube is closed; its inside is never wanted
-	m.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
-	return m
+## One gas tile as a few soft camera-facing puffs, low to the ground and wider than the cell they
+## belong to — so neighbouring cells overlap and a spreading cloud has no seams in it.
+##
+## SEEDED FROM THE CELL, not from randf(): gas is placed on the per-turn pass, so a cloud that
+## re-rolled itself every step would boil. The drift is a function of time, which keeps it moving
+## without ever moving where it came from.
+func _place_gas_mist(obj: Dictionary, cx: int, cy: int, light_frac: float) -> void:
+	var dens: float = clampf(float(obj.get("gasDensity", 0)) / GAS_DENSITY_FULL, 0.0, 1.0)
+	var n: int = int(round(lerpf(MIST_MIN, MIST_MAX, dens)))
+	if n <= 0:
+		return
+	var col := _qud_color(String(obj.get("animGas", "")))
+	var nodes: Array = []
+	var base := PackedVector3Array()
+	var rate := PackedFloat32Array()
+	var phase := PackedFloat32Array()
+	for i in n:
+		var sp := Sprite3D.new()
+		sp.texture = _mist_texture()
+		sp.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		sp.shaded = false
+		sp.transparent = true
+		# NO ALPHA CUT: a cut would put a hard edge back on, which is the one thing a puff exists
+		# for not having.
+		sp.alpha_cut = SpriteBase3D.ALPHA_CUT_DISABLED
+		sp.render_priority = 1
+		var a: float = lerpf(MIST_ALPHA.x, MIST_ALPHA.y, dens) * (0.7 + 0.6 * _fish_rand(cx, cy, i, 53))
+		sp.modulate = Color(col.r * light_frac, col.g * light_frac, col.b * light_frac,
+			clampf(a, 0.03, 0.4))
+		var w: float = lerpf(MIST_SIZE.x, MIST_SIZE.y, _fish_rand(cx, cy, i, 37))
+		sp.pixel_size = w / float(MIST_TEX)
+		var p := Vector3(
+			float(cx) + (_fish_rand(cx, cy, i, 17) - 0.5) * 2.0 * MIST_SPREAD,
+			lerpf(MIST_Y.x, MIST_Y.y, _fish_rand(cx, cy, i, 31)),
+			float(cy) + (_fish_rand(cx, cy, i, 19) - 0.5) * 2.0 * MIST_SPREAD)
+		sp.position = p
+		_spawn_parent().add_child(sp)
+		_track(sp)
+		nodes.append(sp)
+		base.append(p)
+		rate.append(TAU / lerpf(MIST_PERIOD.x, MIST_PERIOD.y, _fish_rand(cx, cy, i, 43)))
+		phase.append(_fish_rand(cx, cy, i, 47) * TAU)
+	_anim_items.append({"kind": "gasmist", "nodes": nodes, "base": base,
+		"rate": rate, "phase": phase})
 
-## Is this object a gas that Raves draws as CUBES? Asked in two places — the placement and the
+## The puff: one soft radial blob, feathered to nothing at the rim. Shared by every cell — tint and
+## size are per-sprite, so one texture serves the whole zone.
+var _mist_tex: Texture2D
+func _mist_texture() -> Texture2D:
+	if _mist_tex == null:
+		_mist_tex = _make_radial(MIST_TEX, Color.WHITE, MIST_FALLOFF)
+	return _mist_tex
+
+## Is this object a gas that Raves draws in 3D? Asked in two places — the placement and the
 ## animation registry, which the gas path calls as separate steps — and defined once so they cannot
-## disagree. That split is what left Qud's animated tile drawing over the cubes the first time.
+## disagree. That split is what left Qud's animated tile drawing over the effect the first time.
 ## Flat-2D and 1:1 keep Qud's own tile, which is what those modes are for.
 func _gas_is_voxel(obj: Dictionary) -> bool:
 	return obj.has("animGas") and not _flat_2d and not _one_to_one
-
-## One gas tile as an 8x8x3 field of subvoxels, drawn as a single MultiMesh. Positions never move;
-## what animates is OCCUPANCY, which is why the cloud churns instead of swarming.
-func _place_gas_chunks(obj: Dictionary, tile: String, cx: int, cy: int, light_frac: float) -> void:
-	var dens: float = clampf(float(obj.get("gasDensity", 0)) / GAS_DENSITY_FULL, 0.0, 1.0)
-	var n := GAS_SUB * GAS_SUB * GAS_LAYERS
-	var mm := MultiMesh.new()
-	mm.transform_format = MultiMesh.TRANSFORM_3D
-	mm.use_colors = true
-	var box := BoxMesh.new()
-	box.size = Vector3.ONE
-	mm.mesh = box
-	mm.instance_count = n
-	# Every slot exists from the start at a fixed place; the animation only decides which are ON.
-	var pos := PackedVector3Array()
-	var sub := 1.0 / float(GAS_SUB)
-	for iy in GAS_LAYERS:
-		for ix in GAS_SUB:
-			for iz in GAS_SUB:
-				pos.append(Vector3(
-					-0.5 + (float(ix) + 0.5) * sub,
-					GAS_LAYER_H * (float(iy) + 0.5),
-					-0.5 + (float(iz) + 0.5) * sub))
-	for k in n:
-		mm.set_instance_color(k, Color(1, 1, 1, GAS_ALPHA))
-	var mi := MultiMeshInstance3D.new()
-	mi.multimesh = mm
-	mi.position = Vector3(float(cx), 0.0, float(cy))
-	mi.material_override = _gas_material(_qud_color(String(obj.get("animGas", ""))), light_frac)
-	mi.extra_cull_margin = 1.0
-	_spawn_parent().add_child(mi)
-	_track(mi)
-	# WHICH SIDES ARE EXPOSED, decided once here from the gas set the dynamic pass prescanned. An
-	# edge with gas beyond it is not an edge at all and must not erode, or every internal seam in a
-	# cloud shows up as a groove.
-	var open_w: bool = not _gas_cells.has(Vector2i(cx - 1, cy))
-	var open_e: bool = not _gas_cells.has(Vector2i(cx + 1, cy))
-	var open_n: bool = not _gas_cells.has(Vector2i(cx, cy - 1))
-	var open_s: bool = not _gas_cells.has(Vector2i(cx, cy + 1))
-	var item := {"kind": "gaschunk", "mm": mm, "pos": pos, "dens": dens,
-		"cell": Vector2i(cx, cy), "open": [open_w, open_e, open_n, open_s], "next": -1.0}
-	_gas_occupancy(item, 0.0)   # fill it in before the first frame, not on it
-	_anim_items.append(item)
-
-## Decide which subvoxels are on, and write it into the MultiMesh as a scale of size-or-nothing.
-##
-## SAMPLED IN WORLD COORDINATES so the field is continuous: a subvoxel's noise argument is its
-## GLOBAL sub-index, not its index within the tile, and two tiles side by side are simply two windows
-## onto the same field. That is the whole reason the tile boundaries stop being visible.
-func _gas_occupancy(it: Dictionary, t: float) -> void:
-	var mm: MultiMesh = it["mm"]
-	var pos: PackedVector3Array = it["pos"]
-	var cell: Vector2i = it["cell"]
-	var dens: float = it["dens"]
-	var open: Array = it["open"]
-	var zs: float = scale.z if absf(scale.z) > 1e-6 else 1.0
-	var below := {}                       # what the layer under this one filled, for the no-towers rule
-	var k := 0
-	for iy in GAS_LAYERS:
-		var cur := {}
-		var base: float = float(GAS_OCC[iy]) * (0.45 + 0.55 * dens)
-		for ix in GAS_SUB:
-			for iz in GAS_SUB:
-				var gx := cell.x * GAS_SUB + ix
-				var gz := cell.y * GAS_SUB + iz
-				var v: float = (_gas_noise.get_noise_3d(
-					float(gx) * GAS_FREQ, float(gz) * GAS_FREQ,
-					float(iy) * 7.0 + t * GAS_CHURN) + 1.0) * 0.5
-				var want := base
-				# A RAGGED EDGE, and only where the cloud actually ends: erode the last couple of
-				# subvoxels on a side with no gas beyond it, so the outer silhouette breaks up while
-				# the inside stays whole.
-				var margin := GAS_SUB
-				if open[0]: margin = mini(margin, ix)
-				if open[1]: margin = mini(margin, GAS_SUB - 1 - ix)
-				if open[2]: margin = mini(margin, iz)
-				if open[3]: margin = mini(margin, GAS_SUB - 1 - iz)
-				if margin < GAS_ERODE:
-					want *= lerpf(0.25, 0.85, float(margin) / float(GAS_ERODE))
-				# NO TOWERS: a voxel directly under this one makes this one less likely, so the
-				# upper layers land in the gaps rather than on the shoulders.
-				if below.has(ix * GAS_SUB + iz):
-					want *= GAS_STACK_PENALTY
-				var on: bool = v < want
-				if on:
-					cur[ix * GAS_SUB + iz] = true
-				# A CUBE HAS TO BE BUILT AS A CUBOID HERE. The renderer node is scaled (1, 1,
-				# zstretch) so Qud's 16x24 tiles come out square, which means equal sides in local
-				# space arrive on screen stretched along z — the cells were reading as little bars
-				# rather than cubes. Divide the depth back out, the way _world_to_local does for
-				# vectors written into this space.
-				var e: float = GAS_VOXEL if on else 0.0
-				mm.set_instance_transform(k, Transform3D(
-					Basis().scaled(Vector3(e, e, e / zs)), pos[k]))
-				k += 1
-		below = cur
 
 ## Which lattice slots this gas tile's art covers, read as a PLAN of the cell. Cached per tile: the
 ## four gas frames are the only art that ever comes through here.
 ## The field itself. ONE noise for the whole zone, sampled in world coordinates — that is what makes
 ## two adjacent tiles two windows onto the same cloud rather than two emitters.
-var _gas_noise := _make_gas_noise()
-static func _make_gas_noise() -> FastNoiseLite:
-	var n := FastNoiseLite.new()
-	n.noise_type = FastNoiseLite.TYPE_VALUE          # blocky by nature, which is the point
-	n.seed = 20260828
-	n.frequency = 1.0                                 # the caller scales its own coordinates
-	return n
-var _gas_cells := {}            # cells holding gas this turn, for the edge-erosion test
 func _fish_rand(cx: int, cy: int, i: int, salt: int) -> float:
 	return float(hash("%d,%d,%d,%d" % [cx, cy, i, salt]) % 100000) / 100000.0
 
@@ -9339,9 +9261,8 @@ func _place_nonwall(obj: Dictionary, cx: int, cy: int, idx: int, in_wall: bool, 
 	# neither flat sprite is drawn — see _place_gas_chunks. Flat-2D and 1:1 keep Qud's own tile,
 	# which is what those modes are for.
 	if _gas_is_voxel(obj) and verdict == "":
-		_place_gas_chunks(obj, tile, cx, cy, light_frac)
-		_note(cx, cy, idx, "gas (cube cloud from %s, density %d)" % [
-			tile, int(obj.get("gasDensity", 0))], 0.4)
+		_place_gas_mist(obj, cx, cy, light_frac)
+		_note(cx, cy, idx, "gas (soft mist puffs, density %d)" % int(obj.get("gasDensity", 0)), 0.3)
 		return
 
 	# Qud's painted ground layer is flat by default — dirt, gravel, cracked earth.
@@ -12848,14 +12769,21 @@ func _animate_1to1() -> void:
 			var en2 := it["node"] as MeshInstance3D
 			if is_instance_valid(en2):
 				en2.visible = qf <= 30   # Engulfed.Render: engulfer shown frames 0-30 of 60
-		elif kind == "gaschunk":
-			# THE FIELD BREATHES; NOTHING TRAVELS. Occupancy is re-evaluated on a slow tick, so
-			# subvoxels wink on and off in place and the cloud crawls. Animating positions instead
-			# is what made the last three versions read as a swarm.
-			var tnow := float(ms) * 0.001
-			if tnow >= float(it.get("next", -1.0)):
-				it["next"] = tnow + float(GAS_STEP_MS) * 0.001
-				_gas_occupancy(it, tnow)
+		elif kind == "gasmist":
+			# A DRIFT, not a flight: each puff wanders a fraction of a cell on its own slow clock,
+			# so the cloud stirs without anything appearing to travel.
+			var mn: Array = it["nodes"]
+			var mb: PackedVector3Array = it["base"]
+			var t := float(ms) * 0.001
+			for i in mn.size():
+				var sp := mn[i] as Sprite3D
+				if is_instance_valid(sp):
+					var r: float = it["rate"][i]
+					var ph: float = it["phase"][i]
+					sp.position = mb[i] + Vector3(
+						MIST_DRIFT * sin(t * r + ph),
+						MIST_BOB * sin(t * r * 0.7 + ph * 1.3),
+						MIST_DRIFT * cos(t * r * 0.83 + ph))
 		elif kind == "gas":
 			var gn: Array = it["nodes"]
 			if not gn.is_empty():
