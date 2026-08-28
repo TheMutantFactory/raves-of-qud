@@ -108,6 +108,7 @@ namespace RavesOfQud
                 // and has no tiles directory to draw the board's icons from -- measured exactly
                 // that way: every row rendered with an empty icon column.
                 j.Member("tilesDir", TileExporter.Dir);
+                WriteFilters(j, sc);
                 j.Name("sides").BeginArray();
                 for (int side = 0; side < 2; side++)
                 {
@@ -136,6 +137,54 @@ namespace RavesOfQud
                 try { server.Publish(Protocol.Frame(body)); } catch { }
             }
             catch (Exception e) { Log("[trade] poll failed: " + e.Message); }
+        }
+
+        /// The category strip, built the way TradeScreen builds the list it hands filterBar:
+        /// "*All" first, then each distinct GO.GetInventoryCategory() across BOTH sides in
+        /// first-appearance order. Rebuilding it here from the same source keeps the strip in step
+        /// with the board even though the bar itself is a Unity widget we do not read.
+        ///
+        /// Each cell carries whether it is ON -- enabledCategories is Qud's own list, where "*All"
+        /// is a real entry and the resting state -- and an ICON, which stands in with the first item
+        /// of that category the way the inventory screen's strip does. Qud draws a fixed per-category
+        /// sprite there; those have not been extracted, and this is the same recorded deviation.
+        private static void WriteFilters(JsonWriter j, TradeScreen sc)
+        {
+            j.Name("filters").BeginArray();
+            try
+            {
+                var order = new List<string> { "*All" };
+                var icon = new Dictionary<string, GameObject>();
+                if (sc.tradeEntries != null)
+                {
+                    foreach (var list in sc.tradeEntries)
+                    {
+                        if (list == null) continue;
+                        foreach (var e in list)
+                        {
+                            if (e?.GO == null) continue;
+                            string c = e.GO.GetInventoryCategory();
+                            if (string.IsNullOrEmpty(c)) continue;
+                            if (!order.Contains(c)) { order.Add(c); icon[c] = e.GO; }
+                        }
+                    }
+                }
+                var on = sc.filterBar?.enabledCategories;
+                foreach (string c in order)
+                {
+                    j.BeginObject();
+                    j.Member("cat", c);
+                    j.Member("on", on != null && on.Contains(c));
+                    GameObject go;
+                    if (icon.TryGetValue(c, out go) && go != null)
+                    {
+                        try { InventoryExporter.WriteTile(j, go, "Trade"); } catch { }
+                    }
+                    j.EndObject();
+                }
+            }
+            catch (Exception e) { Log("[trade] filters failed: " + e.Message); }
+            j.EndArray();
         }
 
         private static void WriteRows(JsonWriter j, TradeScreen sc, int side)
@@ -205,6 +254,16 @@ namespace RavesOfQud
                         // screen's own CancelButton is wired to -- it hides AND completes the task
                         // with OfferStatus.CLOSE, which is the half that lets the game go on.
                         sc.Cancel();
+                        return;
+                    }
+                    if (what == "filter")
+                    {
+                        // Qud's own toggle, with Qud's own rules: selecting a category adds it and
+                        // drops "*All"; selecting it again removes it; emptying the list puts
+                        // "*All" back. filtersUpdated then rebuilds the board, so the strip and the
+                        // rows cannot disagree.
+                        if (sc.filterBar == null || string.IsNullOrEmpty(cat)) return;
+                        sc.filterBar.CategorySelected(cat);
                         return;
                     }
                     if (what == "category")

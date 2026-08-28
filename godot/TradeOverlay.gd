@@ -62,9 +62,27 @@ const DEVICE_W := 176.0
 const DEVICE_Y := 21.0
 const DEVICE_H := 16.0
 
-# the filter band, drawn empty (see the header)
+## THE CATEGORY STRIP — Qud's FilterBar, the same widget the inventory screen already draws, at
+## this screen's own origin. Daniel: "Let's add the item category carosell to the trade screen. It
+## should be the same/similar to the inventory screen."
+##
+## Cells are 46x41 on a 58 pitch, which is the inventory strip's model exactly: 46 because Qud draws
+## polat-category-frame at its native size, and the 12px gap is what a 58 pitch leaves. Measured
+## here at x502 y41 off the UiProbe dump, against the inventory's x618 y177 — same widget, different
+## corner.
 const FILTER_Y := 41.0
 const FILTER_H := 41.0
+const FILT_X := 502.0
+const FILT_W := 46.0
+const FILT_PITCH := 58.0
+## Cell states, straight out of Qud's FilterBarCategoryButton.LateUpdate and reused verbatim from
+## StatusPaneInventory, which measured them: an untouched frame keeps the prefab colour because that
+## LateUpdate only writes on a CHANGE, so a button nobody has pressed is never assigned one of the
+## four states.
+const C_BOX := Color8(51, 80, 91)          # the untouched/prefab frame
+const C_FILT_ON := Color8(122, 126, 71)    # #858951 — this category is filtered ON
+const C_ALL_OFF := Color8(19, 79, 78)      # "*All" has been toggled, so it carries a colour when off
+const C_HOVER := Color8(65, 106, 115)      # #4A757E — focused
 
 # columns
 const COLS_Y := 90.0
@@ -138,6 +156,7 @@ var _totals: Array = []         # [side] -> Label
 var _centre: Label
 var _money: Label
 var _legend: Label
+var _strip: Control              # the category filter cells
 var tiles_dir := ""
 
 
@@ -212,6 +231,11 @@ func _ensure_built() -> void:
 	_rect(Rect2(MID_X, COLS_Y, MID_W, LIST_H + HEAD_H), FRAME * Color(1, 1, 1, 0.18))
 	_rect(Rect2(MID_X, HBORDER_Y, MID_W, 1.0), FRAME)
 
+	_strip = Control.new()
+	_strip.mouse_filter = Control.MOUSE_FILTER_IGNORE   # the cells take their own clicks
+	_place(_strip, Rect2(0.0, FILTER_Y, DESIGN.x, FILTER_H))
+	_design.add_child(_strip)
+
 	var tl := _text(DIM); _place(tl, Rect2(TOTAL_L_X, TOTALS_Y, TOTAL_W, 22.0)); _totals.append(tl)
 	# 78.7 wide, which is what the probe reported. At TOTAL_W it overlapped both totals either side
 	# and printed "e0en" over the left one.
@@ -275,7 +299,63 @@ func _paint() -> void:
 	_heads[1].text = QudText.strip(String(_data.get("you", "You"))).split(",")[0]
 	for side in 2:
 		_fill(_lists[side].content, _side(side).get("rows", []), side)
+	_paint_filters()
 	_paint_totals()
+
+## One cell per category, "*All" first — the strip Qud hands its FilterBar, rebuilt from the same
+## list. The first cell shows TEXT and the rest show ICONS, which is how Qud's own bar is built
+## (the probe's first button carries a `text` child where every other carries an `icon`).
+func _paint_filters() -> void:
+	for c in _strip.get_children():
+		c.queue_free()
+	var i := 0
+	for f in _data.get("filters", []):
+		var cell: Dictionary = f
+		var cat := String(cell.get("cat", ""))
+		var on := bool(cell.get("on", false))
+		var btn := Button.new()
+		# NOT flat: a flat Button draws no background at all, which threw away the styleboxes below
+		# and with them the cell frames — the strip came out as bare floating icons.
+		btn.focus_mode = Control.FOCUS_NONE
+		btn.position = Vector2(FILT_X + float(i) * FILT_PITCH, 0.0)
+		btn.size = Vector2(FILT_W, FILTER_H)
+		btn.custom_minimum_size = btn.size
+		var box := StyleBoxFlat.new()
+		box.bg_color = Color(0, 0, 0, 0)
+		box.border_color = C_FILT_ON if on else (C_ALL_OFF if cat == "*All" else C_BOX)
+		box.set_border_width_all(2)
+		btn.add_theme_stylebox_override("normal", box)
+		var hov := box.duplicate()
+		hov.border_color = C_HOVER if not on else C_FILT_ON
+		btn.add_theme_stylebox_override("hover", hov)
+		btn.add_theme_stylebox_override("pressed", hov)
+		btn.add_theme_stylebox_override("focus", box)
+		if cat == "*All":
+			var lab := Label.new()
+			lab.text = "All"
+			lab.add_theme_font_size_override("font_size", 16)
+			lab.add_theme_color_override("font_color", C_FILT_ON if on else DIM)
+			lab.size = btn.size
+			lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			lab.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			lab.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			btn.add_child(lab)
+		else:
+			var ic := TextureRect.new()
+			ic.position = Vector2((FILT_W - ICON.x) * 0.5, (FILTER_H - ICON.y) * 0.5)
+			ic.size = ICON
+			ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			ic.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+			ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			if _tiles != null:
+				_tiles.tiles_dir = tiles_dir
+				_tiles.palette = _palette
+				ic.texture = _tiles.texture_for(cell, true)
+			btn.add_child(ic)
+		btn.tooltip_text = cat
+		btn.pressed.connect(func() -> void: act.emit({"do": "filter", "cat": cat}))
+		_strip.add_child(btn)
+		i += 1
 
 func _side(i: int) -> Dictionary:
 	var sides: Array = _data.get("sides", [])
