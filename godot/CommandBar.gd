@@ -684,17 +684,24 @@ func _unhandled_key_input(e: InputEvent) -> void:
 		_flip_page(-1 if e.shift_pressed else 1)
 		get_viewport().set_input_as_handled()
 		return
-	# THE DIGITS BELONG TO WHOEVER OWNS THEM. With the `cameras` QoL feature loaded back, 1-9 are
-	# the user camera keys again (Main._unhandled_input, which runs AFTER this pass -- that order is
-	# exactly how this bar silently ate the camera keys when user mode became a 1:1 clone: "fix
-	# first person mode", 2026-08-12). Locked cameras = Qud's behaviour, digits activate the bar.
-	if not Settings.qud_shape("cameras"):
-		return
+	# THE DIGIT ROW IS THE ABILITY BAR'S, IN BOTH MODES. It used to be contested: the digits were
+	# the user camera keys, so this bar stood down whenever the `cameras` QoL feature was loaded and
+	# only claimed them under 1:1. That gate is why an ability could not be used in the mode most
+	# people play in. Daniel: "The camera change keys are overriding the abilities. I'm trying to
+	# use flaming ray, but the Raves just tries to Chat with the Dawngliders."
+	#
+	# The contest is settled — the camera modes moved to SHIFT+digit (see Main._unhandled_input) —
+	# so the bar takes the row unconditionally, which is what Qud does and what the <6> printed in
+	# every cell has been promising all along.
+	#
+	# THE NUMPAD IS STILL NOT OURS in user mode. There the numpad walks the player, and it walks
+	# them in Raves' own handler; only under 1:1, where this bar mirrors Qud's, does it stand in for
+	# the row as before.
 	var slot := -1
 	if e.keycode >= KEY_1 and e.keycode <= KEY_9:
 		slot = e.keycode - KEY_1                       # top-row digits
-	elif e.keycode >= KEY_KP_1 and e.keycode <= KEY_KP_9:
-		slot = e.keycode - KEY_KP_1                    # numpad digits
+	elif e.keycode >= KEY_KP_1 and e.keycode <= KEY_KP_9 and Settings.qud_shape("cameras"):
+		slot = e.keycode - KEY_KP_1                    # numpad digits, 1:1 only
 	if slot < 0:
 		return
 	# the digits act on the VISIBLE page's cells (slots restart per page, like Qud)

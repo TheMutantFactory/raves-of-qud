@@ -16,6 +16,9 @@ extends RefCounted
 ## "Control+7", CP437 arrows). A bare digit is ambiguous (Qud renders numpad7 as
 ## "7"), so digits match BOTH the digit row and the numpad.
 
+## The Qud UI layers whose binds apply while Raves is showing the world and nothing owns input.
+const LAYERS := ["Adventure", "AdventureNav", "System"]
+
 var _map := {}          # "keycode|ctrl|shift|alt" -> command id (first bind wins)
 var _mtime := 0
 var _path := ""
@@ -63,13 +66,26 @@ func _reload_if_changed() -> void:
 			var id := str(c.get("id", ""))
 			if id == "":
 				continue
+			# ONLY THE LAYERS RAVES IS ACTUALLY IN. Qud scopes its binds by UI layer, and the
+			# digit row collides across them: CmdAltFire1 (Targeting) and CmdAbility1 (Adventure)
+			# both hold "1". This fallback runs while the player is walking the world with no modal
+			# up, which is Qud's Adventure/AdventureNav, so a Targeting or Menus bind reaching it
+			# is not a bind at all — it is a command from a screen we are not on. Unknown layers are
+			# kept: an export without the field must behave as it did before.
+			var layer := String(c.get("layer", ""))
+			if layer != "" and not LAYERS.has(layer):
+				continue
+			var keys: Array = c.get("keys", [])
 			for slot in ["b1", "b2", "b3", "b4"]:
-				for combo in _parse(str(c.get(slot, ""))):
+				for combo in _parse(str(c.get(slot, "")), keys):
 					if not _map.has(combo):
 						_map[combo] = id
 
 ## Formatted bind string -> list of matchable "keycode|c|s|a" combos ([] if unparsable).
-func _parse(s: String) -> Array:
+##
+## `defaults` is the command's UNAMBIGUOUS key spelling from the mod ("numpad1", "shift+leftArrow"),
+## used for the one case the display string cannot express — see _key_codes.
+func _parse(s: String, defaults: Array = []) -> Array:
 	if s == "":
 		return []
 	for code in [24, 25, 26, 27]:   # CP437 arrows (raw in the export)
@@ -93,13 +109,13 @@ func _parse(s: String) -> Array:
 	if key.begins_with("Num "):      # Qud renders numpad punctuation as "Num /" etc.
 		numpad = true
 		key = key.substr(4)
-	var codes := _key_codes(key.strip_edges(), numpad)
+	var codes := _key_codes(key.strip_edges(), numpad, defaults)
 	var out: Array = []
 	for kc in codes:
 		out.append("%d|%d%d%d" % [kc, int(ctrl), int(shift), int(alt)])
 	return out
 
-func _key_codes(key: String, numpad: bool) -> Array:
+func _key_codes(key: String, numpad: bool, defaults: Array = []) -> Array:
 	var low := key.to_lower()
 	if numpad and _NUMPAD.has(low):
 		return _NUMPAD[low]
@@ -109,7 +125,33 @@ func _key_codes(key: String, numpad: bool) -> Array:
 			return [KEY_A + (ch - 65)]
 		if ch >= 97 and ch <= 122:
 			return [KEY_A + (ch - 97)]
-		if ch >= 48 and ch <= 57:    # bare digit: Qud shows numpad digits as plain "7"
+		if ch >= 48 and ch <= 57:
+			# A BARE DIGIT IS TWO DIFFERENT KEYS, and Qud's display string cannot tell you which:
+			# numpad 1 and digit-row 1 both print as "1". They do different jobs — numpad 1 moves
+			# southwest, digit-row 1 fires ability 1 — so matching both, as this used to, handed
+			# the digit row to whichever command the export listed first. That was CmdMoveSW, and
+			# it made the ENTIRE ability bar unreachable: pressing 1 walked the player diagonally.
+			# Measured, not deduced: with the camera keys already out of the way, `1` moved the
+			# player (45,20) -> (44,21) and `3` moved (44,21) -> (45,22).
+			#
+			# The mod now ships the command's real key names beside the display string, so the
+			# question can be ANSWERED instead of guessed. Only when it cannot — a rebound command,
+			# whose spelling lives in the keymap rather than Commands.xml — does this fall back to
+			# claiming both, which is no worse than it was.
+			var d := key.substr(0, 1)
+			var pad := false
+			var row := false
+			for k in defaults:
+				var t := String(k).to_lower()
+				t = t.substr(t.rfind("+") + 1)
+				if t == "numpad" + d:
+					pad = true
+				elif t == d:
+					row = true
+			if pad and not row:
+				return [KEY_KP_0 + (ch - 48)]
+			if row and not pad:
+				return [KEY_0 + (ch - 48)]
 			return [KEY_0 + (ch - 48), KEY_KP_0 + (ch - 48)]
 	if _NAMED.has(low):
 		return _NAMED[low]

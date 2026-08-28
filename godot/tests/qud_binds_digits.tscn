@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/qud_binds_digits.gd" id="1"]
+
+[node name="QudBindsDigits" type="Node"]
+script = ExtResource("1")

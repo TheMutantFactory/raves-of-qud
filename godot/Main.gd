@@ -11,7 +11,8 @@ signal popup_option(text: String)   # a mirrored menu popup's picked option (pla
 ## Wires the bridge client to the renderer, drives the camera, and maps input to
 ## Qud movement commands. Built in code so the scene file stays a single node.
 ##
-## CAMERA MODES — pick with the ` debug menu or number keys 1-7; the current mode
+## CAMERA MODES — pick with the ` debug menu or SHIFT+number (the plain digit row is
+## Qud's ability bar, CmdAbility1..10); the current mode
 ## and its controls show on screen.
 ##   1 COMPASS  (default)  cardinal-LOCKED low-angle view. Follows the player's
 ##                         position but NEVER rotates on movement, so the world
@@ -1804,16 +1805,34 @@ func _unhandled_input(event: InputEvent) -> void:
 		if event.keycode == KEY_F and not event.shift_pressed \
 				and not (event.ctrl_pressed or event.meta_pressed or event.alt_pressed):
 			request_command("CmdFire"); return
-		# camera modes by number (mirrored in the ` debug menu)
-		if event.keycode == KEY_1: _set_mode(CamMode.COMPASS); return
-		if event.keycode == KEY_2: _set_mode(CamMode.FOLLOW); return
-		if event.keycode == KEY_3: _set_mode(CamMode.FIRST_PERSON); return
-		if event.keycode == KEY_4: _set_mode(CamMode.CINEMATIC); return
-		if event.keycode == KEY_5: _set_mode(CamMode.MOUSE); return
-		if event.keycode == KEY_6: _set_mode(CamMode.KEYBOARD); return
-		if event.keycode == KEY_7: _set_mode(CamMode.TOP_FOLLOW); return
-		if event.keycode == KEY_8: _set_mode(CamMode.ADVENTURE); return
-		if event.keycode == KEY_0 and not _cam_locked(): _multiview.toggle(); return   # 0 = all-views grid (a camera feature)
+		# THE DIGIT ROW IS QUD'S ABILITY BAR, and the camera modes moved off it to give it back.
+		# Daniel: "The camera change keys are overriding the abilities. I'm trying to use flaming
+		# ray, but the Raves just tries to Chat with the Dawngliders." Qud binds 1-9 and 0 to
+		# CmdAbility1..CmdAbility10, so every activated ability in the game was unreachable — the
+		# key changed the camera and the player was left clicking at things instead.
+		#
+		# The same trade W, S and D already made with the camera's dolly and height controls: Qud's
+		# key wins and the camera function takes a modifier. SHIFT+digit, because Qud itself has
+		# ALT+1..9 (CmdMoveFar*, move to edge/corner) and Shift+digit is free in its whole table —
+		# checked against the player's own exported bindings, not assumed.
+		#
+		# Nothing below has to forward the plain digit: _unhandled_input already ends in the
+		# QudBinds fallback, which runs whatever the player has BOUND. That routes 1 to whatever
+		# their ability bar is remapped to as readily as to the default, which a hardcoded
+		# CmdAbility1 here would not.
+		var cam_num: bool = event.shift_pressed \
+			and not (event.ctrl_pressed or event.meta_pressed or event.alt_pressed)
+		if cam_num:
+			# camera modes by number (mirrored in the ` debug menu)
+			if event.keycode == KEY_1: _set_mode(CamMode.COMPASS); return
+			if event.keycode == KEY_2: _set_mode(CamMode.FOLLOW); return
+			if event.keycode == KEY_3: _set_mode(CamMode.FIRST_PERSON); return
+			if event.keycode == KEY_4: _set_mode(CamMode.CINEMATIC); return
+			if event.keycode == KEY_5: _set_mode(CamMode.MOUSE); return
+			if event.keycode == KEY_6: _set_mode(CamMode.KEYBOARD); return
+			if event.keycode == KEY_7: _set_mode(CamMode.TOP_FOLLOW); return
+			if event.keycode == KEY_8: _set_mode(CamMode.ADVENTURE); return
+			if event.keycode == KEY_0 and not _cam_locked(): _multiview.toggle(); return   # all-views grid (a camera feature)
 		if event.keycode == KEY_QUOTELEFT:      # ` toggles the debug menu
 			_dbg_menu.toggle(); return
 		# B: "become anything" character-creator menu (pick a blueprint to embody)
