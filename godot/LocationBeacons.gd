@@ -50,6 +50,8 @@ extends Node3D
 const PLATE_FONT := 20
 const PLATE_MIN := 11
 const PLATE_MAX := 28
+## Air between the name and the top of the art, as a fraction of the plate's own font size.
+const PLATE_GAP := 0.55
 
 ## THE WORLD IS TWO PLACES AND A PARASANG IS A DIFFERENT SIZE IN EACH. Daniel: "Let's add the
 ## beacons to the overworld. Need to fix the distances. They're different from the surface
@@ -283,7 +285,10 @@ func _track_plates() -> void:
 			lab.add_theme_constant_override("outline_size", maxi(3, px / 3))
 			lab.reset_size()
 		var sz := lab.get_minimum_size()
-		var at := p - Vector2(sz.x * 0.5, sz.y)        # centred on the slab, sitting above its head
+		# CLEAR OF THE ART, not resting on it. p is the card's top edge, so a plate placed by its own
+		# height alone sits with its descenders in the sprite's outline. The gap is a fraction of the
+		# font rather than a pixel count, because the font itself shrinks with distance.
+		var at := p - Vector2(sz.x * 0.5, sz.y + float(px) * PLATE_GAP)
 		if _hole.size.x > 1.0:
 			at.y = clampf(at.y, _hole.position.y + 2.0, _hole.end.y - sz.y - 2.0)
 		lab.visible = true
@@ -340,7 +345,6 @@ func _retint(root: Node3D, t: Dictionary) -> void:
 	var lab: Label = _plates.get(String(t.get("id", "")), null)
 	if lab != null:
 		lab.text = String(t.get("name", ""))
-		lab.add_theme_color_override("font_color", c)
 	var card: MeshInstance3D = root.get_node_or_null("Card")
 	if card == null:
 		return
@@ -376,6 +380,12 @@ func _retint(root: Node3D, t: Dictionary) -> void:
 	var ink := _ink_rect(tex)
 	tex = _crop(tex, ink)
 	mat.albedo_texture = tex
+	# THE NAME IS PAINTED OUT OF THE PICTURE IT NAMES. Daniel: "Let's also try and make it one of the
+	# sprite colors." The palette colour it used before was a cycle position — the list's way of
+	# telling two rows apart — and had nothing to do with what was standing on the horizon, so a red
+	# massif was captioned in green. Now the plate takes a colour the sprite actually contains.
+	if lab != null:
+		lab.add_theme_color_override("font_color", _plate_color(tex, c))
 	# SIZED TO THE ZONE: a WHOLE tile spans the regime's footprint — a zone across on the ground, one
 	# cell on the world map — so the cropped card keeps that same per-pixel scale rather than being
 	# stretched back out to the full width. A tile whose art is inset stays inset.
@@ -441,3 +451,35 @@ func _crop(tex: Texture2D, r: Rect2i) -> Texture2D:
 	var out := Image.create(r.size.x, r.size.y, false, img.get_format())
 	out.blit_rect(img, r, Vector2i.ZERO)
 	return ImageTexture.create_from_image(out)
+
+## A colour the sprite actually contains, for its name-plate.
+##
+## NOT the average and not the most common: averaging two palette colours lands on a third that is
+## in neither, and the commonest pixel in a landmark tile is usually its darkest shading. So this
+## takes the few colours the art is mostly made of and picks the BRIGHTEST of those — a colour that
+## is genuinely in the picture, and the one most likely to read against sky as well as ground.
+func _plate_color(tex: Texture2D, fallback: Color) -> Color:
+	var img := tex.get_image()
+	if img == null:
+		return fallback
+	var counts := {}
+	for y in range(img.get_height()):
+		for x in range(img.get_width()):
+			var px_c := img.get_pixel(x, y)
+			if px_c.a < 0.5:
+				continue
+			var k := px_c.to_rgba32()
+			counts[k] = int(counts.get(k, 0)) + 1
+	if counts.is_empty():
+		return fallback
+	var keys := counts.keys()
+	keys.sort_custom(func(a, b): return int(counts[a]) > int(counts[b]))
+	var best := fallback
+	var best_l := -1.0
+	for i in range(mini(4, keys.size())):
+		var col := Color(Color.hex(int(keys[i])), 1.0)
+		var l := col.get_luminance()
+		if l > best_l:
+			best_l = l
+			best = col
+	return best
