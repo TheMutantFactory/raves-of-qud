@@ -221,6 +221,12 @@ func _ready() -> void:
 	add_child(_target)
 	_target.setup(renderer)
 	_target.answered.connect(func(x: int, y: int, cancel: bool) -> void:
+		# ARM THE FLAMES BEFORE THE SHOT, PLAY THEM ON QUD'S WORD. The path only exists here — it is
+		# the one the reticle was drawing — but whether the shot HAPPENED is Qud's to say, and it
+		# says so in the message log a moment later. Playing on the click instead would light up a
+		# refused shot, a wall, and every bow shot besides.
+		if not cancel and renderer != null:
+			renderer.arm_ray(_target.path())
 		client.send_command("picktarget", {"x": x, "y": y, "cancel": cancel}))
 	client.picktarget.connect(func(d: Dictionary) -> void: _target.set_state(d))
 	_assist = load("res://MouseAssist.gd").new()

@@ -15,6 +15,10 @@ var _failed: Array[String] = []
 func _ready() -> void:
 	var tc = load("res://TargetCursor.gd").new()
 	add_child(tc)
+	# Built for real, with no renderer to parent to. Without this, set_state writes to nodes that do
+	# not exist and the run fills with "Invalid assignment ... on a base object of type 'Nil'" while
+	# still reporting every check green — a suite that is passing past its own errors.
+	tc.setup(null)
 
 	# THE REAL STRINGS. The second one is why this file exists: {{hotkey|Space}} is a NAMED tag, not
 	# a colour code, and it reached the screen with its braces on.
@@ -56,6 +60,20 @@ func _ready() -> void:
 	# origin from a zone change must not spin the frame away.
 	var far: Array = tc._bresenham(Vector2i(0, 0), Vector2i(100000, 0))
 	_check("a runaway line is capped", far.size() <= 400, "got %d" % far.size())
+
+	# THE PATH THE FLAMES BURN. path() is what the renderer is armed with when a shot is confirmed,
+	# so it has to be the pips the player was just shown, minus the cell they are standing in — a
+	# ray that sets the shooter alight is a different ability.
+	tc.set_state({"active": true, "mode": "PickCells", "text": "Flaming Ray", "px": 35, "py": 21})
+	tc.hover(Vector2i(45, 21))
+	var path: Array = tc.path()
+	_check("the path excludes the shooter", not path.has(Vector2i(35, 21)), "the shooter is in it")
+	_check("the path includes the target", path.has(Vector2i(45, 21)), "the target is missing")
+	_check("ten cells for a ten-cell shot", path.size() == 10, "got %d" % path.size())
+	# Aiming at your own feet is a real case — Qud asks "are you sure you want to target yourself?"
+	# — and it must not come back as a path with nothing in it OR as one that burns the shooter.
+	tc.hover(Vector2i(35, 21))
+	_check("aiming at yourself burns nothing", tc.path().is_empty(), "got %s" % [tc.path()])
 
 	print("\n%s (%d checks failed)" % ["all good" if _failed.is_empty() else "FAILED", _failed.size()])
 	get_tree().quit(0 if _failed.is_empty() else 1)

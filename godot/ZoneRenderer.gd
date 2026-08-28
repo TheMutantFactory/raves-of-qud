@@ -315,6 +315,8 @@ var _light_root: Node3D
 var _remembered_root: Node3D    # parent of the frozen per-zone neighbour subtrees
 var _static_zones := {}         # zoneId -> Node3D (that zone's frozen static geometry)
 var _dynamic_root: Node3D       # the live zone's creatures, rebuilt every step
+var _fx_root: Node3D            # one-shot effects that must outlive a turn (see flash_flames)
+var _ray_path: Array = []       # cells the player just aimed a flaming ray down, armed by Main
 var _live_static_id := ""       # which zone's static is currently built as "live"
 var _live_static_sig := 0       # signature of the live zone's static objects; a change (e.g. a placed
 								# campfire, a dug wall) forces a static rebuild within the same zone
@@ -698,6 +700,11 @@ func _ready() -> void:
 	add_child(_remembered_root)
 	_dynamic_root = Node3D.new()
 	add_child(_dynamic_root)
+	# TRANSIENT EFFECTS LIVE OUTSIDE THE PER-TURN CLEAR. _dynamic_root is emptied at the top of
+	# every rebuild, and a shot's flames outlive the turn that fired them by most of a second — put
+	# them there and they are freed mid-flight, which reads as the effect not having fired at all.
+	_fx_root = Node3D.new()
+	add_child(_fx_root)
 	_glow_tex = _make_radial(64, POOL_TINT, 1.0)   # warm pool of light (the smooth one; see _pool_texture)
 	_flame_tex = _make_radial(32, Color(1.0, 0.80, 0.35), 1.6)  # tighter, brighter core (additive torch flame)
 	_fire_tex = _make_flame_tex(64)                             # a drawn flame SHAPE for daytime campfires (alpha)
@@ -1047,6 +1054,10 @@ func render_snapshot(data: Dictionary, neighbors: Array = []) -> void:
 		_begin_bump.call_deferred()   # deferred: the dynamic pass re-seats the sprite this frame
 	elif not _stuck_now:
 		_stuck_bumped(data)           # keep the message counter current while free
+	# ...and the flaming ray, on the same fresh-message test.
+	if _ray_bumped(data) and not _ray_path.is_empty():
+		flash_flames(_ray_path)
+		_ray_path = []
 
 ## Build one zone's STATIC geometry (walls + non-creature nonwalls + lights) into the
 ## current bank, cells shifted by `offset`. `skip_creatures` drops mobile actors —
@@ -13250,3 +13261,92 @@ func _animate_dust(dt: float) -> void:
 		var v: float = float(_dust_base[r]) * gust
 		pm.initial_velocity_min = v * DUST_ROW_SLOW
 		pm.initial_velocity_max = v * DUST_ROW_FAST
+
+
+## ─── THE FLAMING RAY ────────────────────────────────────────────────────────────────────────────
+##
+## Daniel: "It's like a row of <burning> along the target tile path. The same effect as on a burning
+## character. Just less than a second before they stop emitting."
+##
+## So this is _place_burning's fire, put on every cell of the shot and then taken away again. Same
+## emitter, same material, same tongues — a thing that is on fire looks like a thing that is on
+## fire, whether it is a snapjaw or a square of salt.
+##
+## WHAT IT IS NOT: preprocessed. A burning creature is ALREADY alight when you first see it, so
+## _place_burning pre-rolls a lifetime's worth of particles and the flames are full height on frame
+## one. A ray's flames must be seen to START — pre-rolling them makes the shot look like it arrived
+## before the trigger was pulled.
+##
+## AND IT RUNS OUTWARD. A stagger of a frame or two per cell costs nothing and is the difference
+## between a row of fires that all appear at once and a ray that travels. It is capped so the far
+## end of a ten-cell shot still lights while the near end is burning.
+const RAY_EMIT := 0.85          # "just less than a second before they stop emitting"
+const RAY_STAGGER := 0.035      # per cell, so the shot reads as leaving the hand
+const RAY_STAGGER_MAX := 0.30   # ...but the whole row is alight well inside RAY_EMIT
+const RAY_AMOUNT := 30          # against a burning body's 44: a cell of flame, not a person of it
+
+## Main hands over the cells it aimed down, at the moment the shot is confirmed. They are not played
+## yet: the shot may be refused (out of range, a wall, a cancelled confirm), and the only word that
+## it actually happened is Qud's own message. See _ray_bumped.
+func arm_ray(path: Array) -> void:
+	_ray_path = path.duplicate()
+
+## Qud SAID the ray went off, on this snapshot and not an older one — the same fresh-lines test
+## _stuck_bumped uses, and for the same reason: the line sits in the log for many turns afterwards,
+## so a plain `contains` would re-fire the effect on every snapshot until it scrolled away.
+func _ray_bumped(data: Dictionary) -> bool:
+	var total := int(data.get("msgCount", 0))
+	var prev := _ray_msg_count
+	_ray_msg_count = total
+	if prev < 0 or total <= prev:
+		return false
+	var lines: Array = data.get("messages", [])
+	var fresh: int = mini(total - prev, lines.size())
+	for i in range(lines.size() - fresh, lines.size()):
+		if i < 0:
+			continue
+		if QudText.strip(String(lines[i])).to_lower().contains("emit a flaming ray"):
+			return true
+	return false
+
+var _ray_msg_count := -1
+
+## Set every cell in `cells` alight for RAY_EMIT seconds.
+func flash_flames(cells: Array) -> void:
+	if _one_to_one or _world_map or _fx_root == null or cells.is_empty():
+		return
+	_build_burn_resources()
+	var n := 0
+	for c in cells:
+		var cell := c as Vector2i
+		var delay: float = minf(float(n) * RAY_STAGGER, RAY_STAGGER_MAX)
+		n += 1
+		_light_cell.call_deferred(cell, delay)
+	print("[ray] %d cells alight for %.2fs" % [cells.size(), RAY_EMIT])
+
+func _light_cell(cell: Vector2i, delay: float) -> void:
+	if delay > 0.0:
+		await get_tree().create_timer(delay).timeout
+	if _fx_root == null or not is_instance_valid(_fx_root):
+		return
+	var pf := GPUParticles3D.new()
+	pf.amount = RAY_AMOUNT
+	pf.lifetime = BURN_FIRE_LIFETIME
+	pf.randomness = 0.7
+	pf.process_material = _burn_fire_pm
+	pf.draw_pass_1 = _burn_fire_mesh
+	pf.local_coords = false
+	pf.visibility_aabb = AABB(Vector3(-1.2, -0.6, -1.2), Vector3(2.4, 3.0, 2.4))
+	pf.position = Vector3(float(cell.x), BURN_FIRE_Y, float(cell.y))
+	pf.emitting = true
+	_fx_root.add_child(pf)
+	await get_tree().create_timer(RAY_EMIT).timeout
+	if not is_instance_valid(pf):
+		return
+	# STOP EMITTING, THEN LET IT BURN OUT. Freeing the node here would cut every tongue mid-air;
+	# the last particles have to be allowed to live their lifetime or the fire vanishes rather
+	# than dying down.
+	pf.emitting = false
+	await get_tree().create_timer(BURN_FIRE_LIFETIME).timeout
+	if is_instance_valid(pf):
+		pf.queue_free()

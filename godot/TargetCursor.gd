@@ -118,6 +118,16 @@ func click(cell: Variant, cancel := false) -> bool:
 	answered.emit(_cell.x, _cell.y, false)
 	return true
 
+## The cells this shot would travel, shooter excluded — what the preview was promising. Handed to
+## the renderer at confirm-time so the flames land on exactly the path the player was shown; a
+## second derivation, however careful, is a second thing to keep in step with the pips on screen.
+func path() -> Array:
+	var out: Array = []
+	for c in _bresenham(_from, _cell):
+		if c != _from:
+			out.append(c)
+	return out
+
 func _redraw() -> void:
 	_box.position = Vector3(float(_cell.x), 0.0, float(_cell.y))
 	_box.visible = true
