@@ -2010,6 +2010,10 @@ func _connect_holodeck() -> void:
 			or (_controlmap != null and _controlmap.visible) \
 			or _options != null            # freed on close, so existing == open
 	add_child(_holo)                            # ROOT viewport → 3D renders full-window BEHIND the chrome
+	# The Locations panel emitted its beacons before this existed; ask it again now that there is
+	# somewhere for them to go.
+	if _locations != null:
+		_locations.refresh_beacons()
 	_render_btn.disabled = false
 	UiState.set_scene("in_game")                # highvisor state report: the gameplay frame is up
 	# Apply the saved 1:1 / user mode now that the Holodeck (camera owner) exists. When 1:1, this

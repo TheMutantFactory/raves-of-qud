@@ -503,6 +503,11 @@ func _on_snapshot(data: Dictionary) -> void:
 		_popup.tiles_dir = String(data.get("tilesDir", _popup.tiles_dir))
 	if _assist != null:
 		_assist.set_snapshot(data)
+	# The beacons draw each place's own world-map sprite, so they need the tile directory and the
+	# palette the same way every other panel does.
+	if _beacons != null:
+		_beacons.tiles_dir = String(data.get("tilesDir", _beacons.tiles_dir))
+		_beacons.palette = data.get("palette", _beacons.palette)
 	# Route the render through the store: draw the live zone plus any remembered
 	# neighbours (same stratum) the player has visited, placed by global offset.
 	Profiler.add_us("server", int(data.get("serverUs", 0)))

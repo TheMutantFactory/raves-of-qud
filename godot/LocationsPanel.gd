@@ -227,6 +227,14 @@ func toggle_beacons() -> bool:
 	_emit()
 	return _armed
 
+## Say the beacons again. THE FIRST EMIT IS LOST: this panel is built with the side column, which is
+## long before the Holodeck exists, so the beacons_changed that follows the first load reaches a
+## MainFrame whose _holo is still null and goes nowhere. Nothing re-emitted afterwards either — the
+## poll only rebuilds when the journal file actually changes — so a character whose beacons were
+## already ticked came back from a launch with none of them showing until something was toggled.
+func refresh_beacons() -> void:
+	_emit()
+
 func beacons_on() -> bool:
 	return _armed
 
@@ -323,8 +331,15 @@ func _reload(force := false) -> void:
 			# being thrown away.
 			var full := _plain(String(e.get("text", "")))
 			var nl := full.find("\n")
+			# The place's own sprite, when the mod could find one for that parasang — the beacon is
+			# drawn from it, so a location you have only heard of still looks like itself.
+			var art := {}
+			if String(e.get("tile", "")) != "":
+				art = {"tile": String(e.get("tile", "")), "color": String(e.get("color", "")),
+					"tilecolor": String(e.get("tilecolor", "")), "detail": String(e.get("detail", ""))}
 			found.append({
 				"id": _key(e, mx, my, full),
+				"art": art,
 				"name": full.substr(0, nl) if nl > 0 else full,
 				"note": full.substr(nl + 1).strip_edges() if nl > 0 else "",
 				"category": String(e.get("category", "")),
@@ -520,7 +535,11 @@ func _sort_entries() -> void:
 	for k in keyed:
 		var e: Dictionary = k[1]
 		var nm := String(e["name"])
-		if e.has("art"):
+		# THE CATEGORY SAYS WHICH LIST IT CAME FROM, not the presence of art. This used to test
+		# has("art"), which meant "is a travel-log row" only for as long as journal notes had no
+		# sprite of their own — they carry one now, and the test would have started collapsing Qud's
+		# own notes by name.
+		if String(e.get("category", "")) == VISITED_CAT:
 			if named.has(nm):
 				continue
 			named[nm] = true
@@ -632,6 +651,9 @@ func _emit() -> void:
 				"name": String(e["name"]),
 				"mx": int(e["mx"]),
 				"my": int(e["my"]),
+				# The place's own art rides along; the palette colour is only the fallback for a
+				# location the mod could find no sprite for.
+				"art": e.get("art", {}),
 				"color": QudPalette.of(BEACON_CODES[maxi(order.find(id), 0) % BEACON_CODES.size()]),
 			})
 	beacons_changed.emit(out)

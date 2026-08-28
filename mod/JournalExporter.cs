@@ -193,6 +193,26 @@ namespace RavesOfQud
             if (map != null)
             {
                 try { j.Member("tracked", map.Tracked); } catch { }
+                // THE PLACE'S OWN SPRITE. A map note carries a parasang and nothing to look at, but
+                // the world map has a terrain object standing on that parasang — the one the status
+                // bar names — and that is the picture of the place. Raves' beacons are drawn from it,
+                // so a location you have only HEARD of looks like itself rather than like a coloured
+                // slab. Same lookup MapExporter uses for the travel log, so the two agree.
+                try
+                {
+                    var t = XRL.World.ZoneManager.GetTerrainObjectForZone(
+                        map.ParasangX, map.ParasangY, XRL.The.Player?.CurrentZone?.ZoneID?.Split('.')[0] ?? "JoppaWorld");
+                    var r = t?.GetPart<XRL.World.Parts.Render>();
+                    if (r != null && !string.IsNullOrEmpty(r.Tile))
+                    {
+                        TileExporter.Ensure(r.Tile);
+                        j.Member("tile", r.Tile)
+                         .Member("color", r.ColorString ?? "")
+                         .Member("tilecolor", r.TileColor ?? "")
+                         .Member("detail", r.DetailColor ?? "");
+                    }
+                }
+                catch { }
                 // JournalLineData.mapTarget for a map note is just its parasang coords; the map
                 // panel centres on this when the entry is selected.
                 try { j.Member("mx", map.ParasangX).Member("my", map.ParasangY); } catch { }

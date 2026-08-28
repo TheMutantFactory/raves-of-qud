@@ -98,7 +98,9 @@ var _pz := 0.0
 var _para := Vector2.ZERO
 var _regime := "surface"
 var _t := 0.0
-var _shader_cache: Shader
+var _tiles: RefCounted          # QudTiles — recolours a place's own sprite
+var tiles_dir := ""             # pushed from Main with the snapshot
+var palette := {}
 
 func _ready() -> void:
 	set_process(true)
@@ -145,17 +147,16 @@ func _is_world_map(zone: Dictionary) -> bool:
 func _apply_regime() -> void:
 	var r: Dictionary = PARA[_regime]
 	for m in _marks.values():
-		var slab: MeshInstance3D = m.get_node_or_null("Slab")
-		if slab == null:
-			continue
-		var box: BoxMesh = slab.mesh
-		box.size = Vector3(r.foot.x, r.tall, r.foot.y)
-		slab.position = Vector3(0, r.tall * 0.5, 0)
-		slab.extra_cull_margin = r.tall
-		var mat: ShaderMaterial = slab.get_surface_override_material(0)
-		if mat != null:
-			mat.set_shader_parameter("slab_h", r.tall)
-			mat.set_shader_parameter("near_ref", r.near_ref)
+		# The card is sized from the regime and its own art; _retint knows both, so a crossing just
+		# asks it again rather than restating the arithmetic here.
+		for t in _targets:
+			if String(t.get("id", "")) == _mark_id(m):
+				_retint(m, t)
+				break
+
+## Which target a marker node belongs to — its node name carries the id it was built with.
+func _mark_id(m: Node3D) -> String:
+	return String(m.name).trim_prefix("Beacon_")
 
 ## The enabled locations, from the Locations panel. Rebuilds only what changed.
 func set_targets(list: Array) -> void:
@@ -226,12 +227,13 @@ func _process(dt: float) -> void:
 	# they read as one system, which is what they are.
 	var k: float = 1.0 - PULSE_DEPTH * 0.5 * (1.0 - cos(_t * TAU * PULSE_HZ))
 	for m in _marks.values():
-		var slab: MeshInstance3D = m.get_node_or_null("Slab")
-		if slab != null:
-			var mat: ShaderMaterial = slab.get_surface_override_material(0)
-			if mat != null:
-				var c: Color = m.get_meta("tint", Color.WHITE)
-				mat.set_shader_parameter("tint", Color(c.r, c.g, c.b, c.a * k))
+		var card: MeshInstance3D = m.get_node_or_null("Card")
+		if card != null:
+			var mat2: StandardMaterial3D = card.material_override
+			if mat2 != null:
+				# The card breathes on its own alpha; its COLOUR is the sprite's, untouched.
+				var base: Color = m.get_meta("tint", Color.WHITE)
+				mat2.albedo_color = Color(base.r, base.g, base.b, k)
 	_track_plates()
 
 ## Put each name-plate where its column's head lands on screen. THE LIVE CAMERA, asked of the
@@ -250,7 +252,7 @@ func _track_plates() -> void:
 		var m: Node3D = _marks.get(id, null)
 		if m == null:
 			continue
-		var head: Vector3 = m.global_position + Vector3(0, float(PARA[_regime].tall), 0)
+		var head: Vector3 = m.global_position + Vector3(0, float(m.get_meta("top", PARA[_regime].tall)), 0)
 		# BEHIND THE CAMERA STILL UNPROJECTS — to a point mirrored back into the frame. Without this
 		# test a beacon at your back draws its name in front of you, pointing the wrong way.
 		if cam.is_position_behind(head):
@@ -285,21 +287,28 @@ func _track_plates() -> void:
 func _make_mark(t: Dictionary) -> Node3D:
 	var root := Node3D.new()
 	root.name = "Beacon_" + String(t.get("id", "?"))
-
-	var slab := MeshInstance3D.new()
-	slab.name = "Slab"
-	var box := BoxMesh.new()
 	var r: Dictionary = PARA[_regime]
-	box.size = Vector3(r.foot.x, r.tall, r.foot.y)   # one zone of ground, or one world-map cell
-	slab.mesh = box
-	slab.position = Vector3(0, float(r.tall) * 0.5, 0)
-	# NEVER CULLED BY DISTANCE OR ANGLE: a beacon can be 500 cells out and half of it below the
-	# horizon, and Godot's default AABB culling is fine with that — but the extra margin costs
-	# nothing and a beacon that blinks out as you turn is the one bug nobody would report clearly.
-	slab.extra_cull_margin = float(r.tall)
-	slab.set_surface_override_material(0, _slab_mat())
-	root.add_child(slab)
 
+	# THE PLACE, AT THE SIZE OF A ZONE. Daniel: "Let's use the location sprite and make it the size
+	# of the zone and the color of the sprite."
+	#
+	# The slab this replaces said "something is over there" in a colour picked from a cycle. Qud
+	# already has a picture of every one of these — the world-map terrain object standing on that
+	# parasang, the same art its own map draws — so the beacon IS that picture: Joppa's huts, Red
+	# Rock's red rock, in the colours Qud gives them. Nothing has to be invented and nothing has to
+	# be looked up twice.
+	# A QUAD WITH OUR OWN MATERIAL, not a Sprite3D. Sprite3D builds its material internally and
+	# gives no way to switch fog off — and SkyGrade's depth fog is total by 240 cells, while these
+	# stand at their real distance, routinely further. The slab this replaces disabled fog in its
+	# shader; losing that is why the first version of this card was invisible from four parasangs
+	# and looked for all the world like it had never been created.
+	var card := MeshInstance3D.new()
+	card.name = "Card"
+	card.mesh = QuadMesh.new()
+	card.material_override = _card_mat()
+	card.position = Vector3(0, float(r.tall) * 0.5, 0)
+	card.extra_cull_margin = float(r.tall)
+	root.add_child(card)
 	_retint(root, t)
 	return root
 
@@ -316,59 +325,76 @@ func _make_plate(t: Dictionary) -> Label:
 	lab.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
 	return lab
 
-## Name + colour, applied to an existing marker (a rename or a recolour must not rebuild the mesh).
+## Name, art and size, applied to an existing marker — a rename or a recolour must not rebuild it.
+##
+## SIZED TO THE ZONE, from the art's own aspect: the width is the regime's footprint (a zone across
+## on the ground, one cell on the world map) and the height follows the tile, so a 16x24 sprite
+## stands half again as tall as it is wide instead of being squashed into a square.
 func _retint(root: Node3D, t: Dictionary) -> void:
 	var c: Color = t.get("color", Color8(0x45, 0xd5, 0xc9))
-	root.set_meta("tint", Color(c.r, c.g, c.b, 0.55))
+	root.set_meta("tint", Color(c.r, c.g, c.b, 1.0))
 	var lab: Label = _plates.get(String(t.get("id", "")), null)
 	if lab != null:
 		lab.text = String(t.get("name", ""))
 		lab.add_theme_color_override("font_color", c)
-	var slab: MeshInstance3D = root.get_node_or_null("Slab")
-	if slab != null:
-		var mat: ShaderMaterial = slab.get_surface_override_material(0)
-		if mat != null:
-			mat.set_shader_parameter("tint", Color(c.r, c.g, c.b, 0.55))
+	var card: MeshInstance3D = root.get_node_or_null("Card")
+	if card == null:
+		return
+	var mat: StandardMaterial3D = card.material_override
+	var art: Dictionary = t.get("art", {})
+	var tex: Texture2D = null
+	if not art.is_empty() and String(art.get("tile", "")) != "":
+		if _tiles == null:
+			_tiles = load("res://QudTiles.gd").new()
+		_tiles.tiles_dir = tiles_dir
+		_tiles.palette = palette
+		tex = _tiles.texture_for(art, true)
+	if tex == null:
+		# NO ART, STILL A BEACON: a location the mod found no terrain object for falls back to a
+		# plain coloured card rather than vanishing, which is the failure nobody would report.
+		tex = _blank_tex()
+		mat.albedo_color = Color(c.r, c.g, c.b, 1.0)
+	else:
+		# ...and when there IS art it keeps ITS OWN colours. That is the "color of the sprite" half
+		# of the ask: the cycling palette only names the beacon in the list and on its plate.
+		mat.albedo_color = Color.WHITE
+	mat.albedo_texture = tex
+	root.set_meta("tint", mat.albedo_color)
+	# SIZED TO THE ZONE: the width is the regime's footprint — a zone across on the ground, one cell
+	# on the world map — and the height follows the ART's aspect, so a 16x24 tile stands half again
+	# as tall as it is wide instead of being squashed square.
+	var r2: Dictionary = PARA[_regime]
+	var w: float = float(r2.foot.x)
+	var h: float = w * float(tex.get_height()) / float(maxi(tex.get_width(), 1))
+	var q: QuadMesh = card.mesh
+	q.size = Vector2(w, h)
+	card.position = Vector3(0, h * 0.5, 0)
+	card.extra_cull_margin = h
+	# THE PLATE RIDES THE CARD'S TOP, not the regime's slab height. The card is as tall as the art
+	# makes it — a 16x24 tile a zone wide stands 120 up — so a plate pinned to the old 45 sat in the
+	# middle of the picture it was supposed to be labelling.
+	root.set_meta("top", h)
 
-## The slab's material. A SHADER rather than a StandardMaterial3D with a ramp texture, because a
-## BoxMesh's six faces do not share one vertical UV — the fade has to come from the vertex height,
-## which is the one thing every face agrees on.
-func _slab_mat() -> ShaderMaterial:
-	var m := ShaderMaterial.new()
-	m.shader = _shader()
-	m.set_shader_parameter("tint", Color(1, 1, 1, 0.55))
-	m.set_shader_parameter("slab_h", PARA[_regime].tall)
-	m.set_shader_parameter("near_ref", PARA[_regime].near_ref)
+## The card's material: camera-facing, unlit, translucent, and OUT OF THE FOG — see _make_mark.
+func _card_mat() -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	m.billboard_keep_scale = true          # without this the quad's own size is thrown away
+	m.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	m.disable_fog = true                   # SkyGrade's depth fog is total by 240 cells
+	m.no_depth_test = true                 # a landmark is not hidden by the hill in front of it
 	m.render_priority = 2
 	return m
 
-## Solid at the foot, gone at the head: a flat-topped block reads as something BUILT, one that
-## dissolves upward reads as light.
-##
-## depth_draw_never keeps the two visible faces from cutting each other; the depth TEST stays on, so
-## the world still occludes it — Daniel: "The beacon is shining through the floor", and it is the
-## ground in front of you that has to win. fog_disabled is not a preference: SkyGrade's depth fog is
-## total by 240 cells and these now stand at their real distance, which is routinely further.
-func _shader() -> Shader:
-	if _shader_cache != null:
-		return _shader_cache
-	_shader_cache = Shader.new()
-	_shader_cache.code = """
-shader_type spatial;
-render_mode unshaded, blend_add, cull_disabled, depth_draw_never, fog_disabled, shadows_disabled;
-uniform vec4 tint : source_color = vec4(1.0);
-uniform float slab_h = 45.0;
-uniform float near_ref = 300.0;
-varying float up;
-varying float depth;
-void vertex() {
-	up = clamp((VERTEX.y + slab_h * 0.5) / max(slab_h, 0.001), 0.0, 1.0);
-	depth = -(VIEW_MATRIX * MODEL_MATRIX * vec4(VERTEX, 1.0)).z;
-}
-void fragment() {
-	ALBEDO = tint.rgb;
-	// Fades toward the head (light, not masonry) AND toward the viewer (see near_ref).
-	ALPHA = tint.a * pow(1.0 - up, 1.6) * clamp(depth / near_ref, 0.16, 1.0);
-}
-"""
-	return _shader_cache
+## The fallback card: one opaque pixel, tinted by the beacon's own colour and stretched to the same
+## size as a real sprite would be.
+var _blank: Texture2D
+func _blank_tex() -> Texture2D:
+	if _blank == null:
+		var img := Image.create(16, 24, false, Image.FORMAT_RGBA8)
+		img.fill(Color(1, 1, 1, 0.85))
+		_blank = ImageTexture.create_from_image(img)
+	return _blank
