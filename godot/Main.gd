@@ -1378,6 +1378,13 @@ func _travel_click(pos: Vector2) -> void:
 	if cell == null:
 		return
 	var c := Vector2i(cell.x, cell.y)
+	# CLICKED INTO A NEIGHBOUR ZONE. Daniel: "You need to be able to walk off-zone using the mouse."
+	# Raves draws the zones either side, so clicking into one is the obvious way to ask to go there
+	# -- and it did nothing, because a click becomes `moveto` and Qud's travel only addresses cells
+	# in the CURRENT zone. The mod logged "outside the zone" and stopped.
+	if _edge_dir(c) != "":
+		client.send_command("moveedge", {"dir": _edge_dir(c)})
+		return
 	var verb: String = _assist.verb_at(c) if (_assist != null and _assist.enabled()) else "walk"
 	var pc: Dictionary = store.live_record().get("snapshot", {}).get("player", {})
 	var here := Vector2i(int(pc.get("x", -999)), int(pc.get("y", -999)))
@@ -2533,3 +2540,38 @@ func _cell_screen_pos(c: Vector2i) -> Vector2:
 		return Vector2(-9999, -9999)
 	var wq := Vector3(float(c.x), 0.0, float(c.y) * _cam_rig.zstretch())
 	return _cam_rig._cam.unproject_position(wq)
+
+
+## Which way out of the zone a cell lies, or "" if it is inside it.
+##
+## MEASURED AS A FRACTION OF THE ZONE, not in cells. A zone is 80x25, so a click three cells past
+## the south edge and three past the east edge is not an ambiguous diagonal -- three cells is an
+## eighth of the way down a zone and a twenty-sixth of the way across one, and south is plainly the
+## way that click was pointing. Comparing raw cell counts would have sent it east.
+func _edge_dir(c: Vector2i) -> String:
+	if renderer == null:
+		return ""
+	return edge_dir_for(c, int(renderer._live_w), int(renderer._live_h))
+
+## ...as a pure function of the cell and the zone's size, so it can be asked directly. The rule is
+## the whole of the feature's judgement and it is the part with no visible symptom when it is
+## wrong: a mis-chosen axis just walks the player somewhere reasonable-looking that is not where
+## they pointed.
+static func edge_dir_for(c: Vector2i, w: int, h: int) -> String:
+	if w <= 0 or h <= 0:
+		return ""
+	var over_x := 0
+	var over_y := 0
+	if c.x < 0:
+		over_x = c.x
+	elif c.x >= w:
+		over_x = c.x - (w - 1)
+	if c.y < 0:
+		over_y = c.y
+	elif c.y >= h:
+		over_y = c.y - (h - 1)
+	if over_x == 0 and over_y == 0:
+		return ""
+	if absf(float(over_y) / float(h)) >= absf(float(over_x) / float(w)):
+		return "S" if over_y > 0 else "N"
+	return "E" if over_x > 0 else "W"

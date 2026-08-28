@@ -814,6 +814,15 @@ namespace RavesOfQud
                         gmg.uiQueue.queueTask(() => { try { GlyphExporter.Export(); } catch { } }, 0);
                     return;
                 }
+                if (name == "moveedge")
+                {
+                    // Walk to the zone edge in this direction and step across it. See
+                    // Navigator.MoveToEdge; the client sends this when the clicked cell is in a
+                    // NEIGHBOURING zone rather than the live one.
+                    f.TryGetValue("dir", out string edgeDir);
+                    Navigator.MoveToEdge(edgeDir ?? "");
+                    return;
+                }
                 if (name == "picktarget")
                 {
                     // The viewer aimed Qud's target cursor. See PickTargetBridge for the input

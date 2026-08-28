@@ -49,6 +49,12 @@ namespace RavesOfQud
         // threads. -1 = nothing pending.
         private static readonly object _lock = new object();
         private static int _wantX = -1, _wantY = -1;
+        // The parked EDGE order: a cardinal, plus how many turns it may take before we give up on
+        // it. Same threading story as _wantX/_wantY -- written from the socket thread, read and
+        // cleared on the turn thread.
+        private static string _edgeDir = null;
+        private static bool _edgeWalking;
+        private static int _edgeTurns;
 
         /// <summary>Ask for a walk to zone cell (x,y). Returns immediately: this only parks the
         /// target and wakes the turn loop. Whether a path exists is Qud's answer and it arrives
@@ -61,6 +67,89 @@ namespace RavesOfQud
             // whatever Unity's main loop is doing.
             Keyboard.PushCommand("CmdWait", null);
             return true;
+        }
+
+        /// <summary>Walk to the zone's edge in `dir` and step across it.
+        ///
+        /// Daniel: "You need to be able to walk off-zone using the mouse."
+        ///
+        /// Raves draws the neighbouring zones, so clicking into one is the obvious way to ask to go
+        /// there -- and it did nothing at all, because a click becomes `moveto` and Qud's travel
+        /// (AutoAct "M x,y") only addresses cells in the CURRENT zone. The mod logged "cell 35,30
+        /// is outside the zone" and stopped, which is correct for that command and useless as an
+        /// answer to the gesture.
+        ///
+        /// TWO PHASES, because Qud's own edge walk is two things. `AutoAct.Setting = "G" + dir` is
+        /// Qud's "move to edge" (what CmdMoveToEdge sets after its direction prompt), and it walks
+        /// the player to the boundary and STOPS THERE -- TryFindEdgeStep paths to x=79 / y=0 and no
+        /// further. Crossing is a further step in that direction, which is what Qud's own CmdMoveE
+        /// does: `The.Player.Move("E")`, the same call the adjacent-step path above already makes.
+        ///
+        /// So the order is parked, the walk is started once, and every later turn asks the only
+        /// question that matters: is the player standing on the edge yet? When they are, one Move
+        /// takes them over and the order is done.
+        ///
+        /// IT GIVES UP. A blocked route, a wall along the whole boundary, an interruption that
+        /// cancels the AutoAct -- any of these leave the player somewhere short of the edge, and an
+        /// order that waited forever would cross the moment the player later wandered into the
+        /// boundary row for their own reasons. EDGE_TURNS is a budget, not a timeout: it counts
+        /// turns the player actually took.</summary>
+        private const int EDGE_TURNS = 240;
+
+        public static bool MoveToEdge(string dir)
+        {
+            if (dir != "N" && dir != "S" && dir != "E" && dir != "W")
+            { Log("[nav] edge: not a cardinal: " + dir); return false; }
+            lock (_lock) { _edgeDir = dir; _edgeWalking = false; _edgeTurns = 0; }
+            Keyboard.PushCommand("CmdWait", null);
+            return true;
+        }
+
+        /// TURN THREAD. The edge order's state machine — see MoveToEdge.
+        private static void PumpEdge(GameObject player)
+        {
+            string dir;
+            bool walking;
+            lock (_lock)
+            {
+                if (_edgeDir == null) return;
+                dir = _edgeDir;
+                walking = _edgeWalking;
+                if (++_edgeTurns > EDGE_TURNS)
+                {
+                    _edgeDir = null;
+                    Log("[nav] edge " + dir + ": gave up after " + EDGE_TURNS + " turns");
+                    return;
+                }
+            }
+            try
+            {
+                Cell here = player?.CurrentCell;
+                Zone z = player?.CurrentZone;
+                if (here == null || z == null) return;
+                // AT THE BOUNDARY? Then one step leaves the zone, and Move does the crossing the
+                // same way Qud's own CmdMove* does.
+                bool atEdge = (dir == "N" && here.Y == 0)
+                    || (dir == "S" && here.Y == z.Height - 1)
+                    || (dir == "W" && here.X == 0)
+                    || (dir == "E" && here.X == z.Width - 1);
+                if (atEdge)
+                {
+                    lock (_lock) { _edgeDir = null; }
+                    AutoAct.Setting = null;   // the walk is over; do not let it re-path in the new zone
+                    Log("[nav] edge " + dir + ": crossing from " + here.X + "," + here.Y);
+                    player.Move(dir);
+                    return;
+                }
+                if (!walking)
+                {
+                    lock (_lock) { _edgeWalking = true; }
+                    The.Core.PlayerAvoid.Clear();
+                    AutoAct.Setting = "G" + dir;      // Qud's own move-to-edge
+                    Log("[nav] edge " + dir + ": walking from " + here.X + "," + here.Y);
+                }
+            }
+            catch (Exception e) { Log("[nav] edge error: " + e.Message); }
         }
 
         /// <summary>Right-click a cell: Qud's own context interaction. Socket thread, no parking.
@@ -144,6 +233,7 @@ namespace RavesOfQud
         /// <summary>Apply a parked target. TURN THREAD ONLY — called from BeginTakeAction.</summary>
         public static void Pump(GameObject player)
         {
+            PumpEdge(player);
             int x, y;
             lock (_lock)
             {
