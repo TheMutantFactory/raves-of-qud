@@ -4893,72 +4893,156 @@ const ORBIT_PRIMES := [2, 3, 5, 7, 11, 13]   # prime speed ratios -> the cluster
 # --- gas: chunky voxel clouds ------------------------------------------------
 #
 # Daniel, after releasing sleep gas: "There are two sprites. A billboard and something that is
-# normal to the ground. Let's work on the gas update. Can we build large chunky brown gas voxel
-# particles in the affected tiles? Maybe a bunch of different chunks that oscillate up and down."
+# normal to the ground." Then, in full: "Use the existing gas tiles as the visible structure of the
+# cloud. The sleeping gas should look deliberately voxelized, blocky, and tile-based, not like
+# smooth volumetric fog… A gas made out of voxels spreading through a tile-based world. Not: a
+# modern volumetric fog shader placed over a tile-based game."
 #
 # THE TWO SPRITES WERE BOTH RIGHT AND BOTH FLAT. Qud draws gas as one animated tile, so Raves drew
-# the billboard AND the 4-frame swirl overlay that replaces it — correct mirroring of a 2D game, and
-# in a 3D one it reads as two pictures of smoke rather than smoke. A cloud has volume; the way to
-# say so here is to give it some.
+# the billboard AND the four-frame swirl overlay that replaces it — correct mirroring of a 2D game,
+# and in a 3D one it reads as two pictures of smoke rather than as smoke.
 #
-# CHUNKS, NOT PARTICLES. A fine mist would be a different game's effect and would cost a fill-rate
-# fortune besides; a handful of big cubes reads as gas at Qud's own resolution and is cheap enough
-# that a room full of it stays a room full of it.
-const GAS_CHUNKS := 5           # per cell — enough to read as a cloud, few enough to fill a corridor
-const GAS_SIZE_MIN := 0.26
-const GAS_SIZE_MAX := 0.46
-const GAS_SPREAD := 0.62        # how much of the cell the chunks scatter across
-const GAS_Y_MIN := 0.18
-const GAS_Y_MAX := 0.72
-const GAS_BOB := 0.13           # how far one chunk rises and falls
-const GAS_PERIOD_MIN := 2.6     # seconds; each chunk drifts on its own clock so the cloud churns
-const GAS_PERIOD_MAX := 4.9
-const GAS_ALPHA := 0.62
+# THE ART IS THE FOOTPRINT. Qud's gas_0..3 tiles already ARE the shape of a cloud in one cell, and
+# every frame is a different one; sampling them as a PLAN gives each gassed tile a blocky outline
+# the game itself authored, and gives the four frames four silhouettes for free. Inventing a random
+# scatter instead would have thrown that away and produced the one thing the brief rules out — a
+# shape with no grid in it.
+#
+# THE GRID STAYS VISIBLE, which is the whole brief. Blocks sit on a 3x3 lattice inside the cell at
+# slightly under a slot wide, so they never merge across a cell edge and the perimeter of a spreading
+# cloud steps from tile to tile. Nothing is interpolated, nothing spans two cells, nothing is blurred.
+#
+# CONCENTRATION DRIVES COUNT, OPACITY AND FILL — never particle size. Qud's Gas.Density comes over
+# the wire; a thin cloud is a few blocks in one layer you can see between, a thick one fills the
+# lattice two or three layers up. Shrinking the blocks would turn it into the mist the brief says
+# it must not become.
+const GAS_LATTICE := 3          # 3x3 footprint slots per cell, as the brief's diagrams read
+const GAS_VOXEL := 0.24         # well under a slot (0.333), so the gaps are gaps and not seams
+const GAS_JITTER := 0.03        # enough to break the ruler, far too little to hide the grid
+const GAS_Y0 := 0.22            # the first layer's centre height
+const GAS_LAYER := 0.30         # and the step up to the next
+const GAS_INK := 0.18           # how much of a slot the art must cover to count as gas
+const GAS_BOB := 0.055          # "slow, subtle movement" — not a swirl
+const GAS_PERIOD_MIN := 3.4     # seconds; each block on its own clock so the cell churns gently
+const GAS_PERIOD_MAX := 6.2
+const GAS_ALPHA_MIN := 0.34
+const GAS_ALPHA_MAX := 0.78
+const GAS_DENSITY_FULL := 60.0  # Qud density at which a cloud reads as thick
 
-## A cell of gas as a few floating blocks, bobbing on their own clocks.
+## Is this object a gas that Raves draws as VOXELS? Asked in two places — the placement and the
+## animation registry, which the gas path calls as separate steps — and defined once so they cannot
+## disagree. Flat-2D and 1:1 keep Qud's own animated tile, which is what those modes are for.
+func _gas_is_voxel(obj: Dictionary) -> bool:
+	return obj.has("animGas") and not _flat_2d and not _one_to_one
+
+## A cell of gas as blocks on a lattice, shaped by the gas tile's own art and thickened by density.
 ##
 ## SEEDED FROM THE CELL, not from randi(): gas is placed on the per-turn pass, so a cloud that
-## re-rolled its chunk positions every step would boil rather than drift. Same reason the glowfish
-## orbits hash their cell — a rebuild has to be invisible.
-func _place_gas_chunks(obj: Dictionary, cx: int, cy: int, light_frac: float) -> void:
+## re-rolled itself every step would boil rather than drift. Same reason the glowfish orbits hash
+## their cell — a rebuild has to be invisible.
+func _place_gas_chunks(obj: Dictionary, tile: String, cx: int, cy: int, light_frac: float) -> void:
+	var dens: float = clampf(float(obj.get("gasDensity", 0)) / GAS_DENSITY_FULL, 0.0, 1.0)
 	var col := _qud_color(String(obj.get("animGas", "")))
-	col.a = GAS_ALPHA
+	col.a = lerpf(GAS_ALPHA_MIN, GAS_ALPHA_MAX, dens)
+	var mat := _gas_material(col, light_frac)
+	var foot := _gas_footprint(tile)
+	if foot.is_empty():
+		return
+	# One layer when it is thin, two when it is thick — the tile FILLS UP rather than the blocks
+	# growing, which is the distinction the brief draws. TWO, not three: at three the lattice packed
+	# 27 blocks into a cell and a dense cloud came out a solid slab, where the brief's own diagram
+	# for high concentration is seven squares of nine with gaps still in it.
+	var layers: int = 1 + int(floorf(dens * 1.5 + 0.01))
 	var nodes: Array = []
 	var bases: Array = []
 	var amps: Array = []
 	var rates: Array = []
 	var phases: Array = []
-	for i in GAS_CHUNKS:
-		var sz: float = lerpf(GAS_SIZE_MIN, GAS_SIZE_MAX, _fish_rand(cx, cy, i, 71))
-		var mi := MeshInstance3D.new()
-		var box := BoxMesh.new()
-		box.size = Vector3(sz, sz, sz)
-		mi.mesh = box
-		mi.material_override = _gas_material(col, light_frac)
-		var y: float = lerpf(GAS_Y_MIN, GAS_Y_MAX, _fish_rand(cx, cy, i, 73))
-		mi.position = Vector3(
-			float(cx) + (_fish_rand(cx, cy, i, 79) - 0.5) * GAS_SPREAD,
-			y,
-			float(cy) + (_fish_rand(cx, cy, i, 83) - 0.5) * GAS_SPREAD)
-		_spawn_parent().add_child(mi)
-		_track(mi)
-		nodes.append(mi)
-		bases.append(y)
-		amps.append(GAS_BOB * (0.5 + _fish_rand(cx, cy, i, 89)))
-		rates.append(TAU / lerpf(GAS_PERIOD_MIN, GAS_PERIOD_MAX, _fish_rand(cx, cy, i, 97)))
-		phases.append(_fish_rand(cx, cy, i, 101) * TAU)
+	var slot := 1.0 / float(GAS_LATTICE)
+	for f in foot:
+		var ix: int = f.x
+		var iz: int = f.y
+		for iy in layers:
+			var id := (iy * GAS_LATTICE + iz) * GAS_LATTICE + ix
+			# EVEN THE GROUND LAYER IS GAPPY WHEN THE GAS IS THIN — the brief's low-concentration
+			# diagram is two squares of nine, not nine faint ones. Upper layers thin out further:
+			# the top of a cloud is where it is running out.
+			# NEVER THE WHOLE LATTICE, however thick the gas: the brief's own diagram for high
+			# concentration is seven squares of nine, and a cell with all nine filled stops being
+			# particles and becomes a block of fog.
+			var keep: float = lerpf(0.25, 0.75, dens)
+			if iy > 0:
+				keep *= lerpf(0.35, 0.80, dens)
+			if _fish_rand(cx, cy, id, 71) > keep:
+				continue
+			var mi := MeshInstance3D.new()
+			var box := BoxMesh.new()
+			box.size = Vector3(GAS_VOXEL, GAS_VOXEL, GAS_VOXEL)
+			mi.mesh = box
+			mi.material_override = mat
+			var y: float = GAS_Y0 + GAS_LAYER * float(iy)
+			mi.position = Vector3(
+				float(cx) - 0.5 + (float(ix) + 0.5) * slot + (_fish_rand(cx, cy, id, 79) - 0.5) * GAS_JITTER,
+				y,
+				float(cy) - 0.5 + (float(iz) + 0.5) * slot + (_fish_rand(cx, cy, id, 83) - 0.5) * GAS_JITTER)
+			_spawn_parent().add_child(mi)
+			_track(mi)
+			nodes.append(mi)
+			bases.append(y)
+			amps.append(GAS_BOB * (0.5 + _fish_rand(cx, cy, id, 89)))
+			rates.append(TAU / lerpf(GAS_PERIOD_MIN, GAS_PERIOD_MAX, _fish_rand(cx, cy, id, 97)))
+			phases.append(_fish_rand(cx, cy, id, 101) * TAU)
 	if not nodes.is_empty():
 		_anim_items.append({"kind": "gaschunk", "nodes": nodes, "base": bases,
 			"amp": amps, "rate": rates, "phase": phases})
 
-## Gas is TRANSLUCENT and unlit — it is its own colour, dimmed by the cell like everything else, and
-## it must not cast the hard edge a solid block would.
+## Which lattice slots this gas tile's art covers, read as a PLAN of the cell. Cached per tile: the
+## four gas frames are the only art that ever comes through here.
+var _gas_foot_cache := {}
+func _gas_footprint(tile: String) -> Array:
+	if _gas_foot_cache.has(tile):
+		return _gas_foot_cache[tile]
+	var out: Array = []
+	var img := _mask(tile)
+	if img == null:
+		# NO ART, NO SILENCE: fall back to the full lattice rather than drawing nothing, so a
+		# missing export is a solid cloud (visibly wrong) instead of an invisible one.
+		for ix in GAS_LATTICE:
+			for iz in GAS_LATTICE:
+				out.append(Vector2i(ix, iz))
+		_gas_foot_cache[tile] = out
+		return out
+	var w := img.get_width()
+	var h := img.get_height()
+	for ix in GAS_LATTICE:
+		for iz in GAS_LATTICE:
+			var x0 := int(floorf(float(ix) * float(w) / float(GAS_LATTICE)))
+			var x1 := int(floorf(float(ix + 1) * float(w) / float(GAS_LATTICE)))
+			var y0 := int(floorf(float(iz) * float(h) / float(GAS_LATTICE)))
+			var y1 := int(floorf(float(iz + 1) * float(h) / float(GAS_LATTICE)))
+			var ink := 0
+			var total := 0
+			for py in range(y0, maxi(y1, y0 + 1)):
+				for px in range(x0, maxi(x1, x0 + 1)):
+					total += 1
+					if img.get_pixel(px, py).a > 0.35:
+						ink += 1
+			if total > 0 and float(ink) / float(total) >= GAS_INK:
+				out.append(Vector2i(ix, iz))
+	_gas_foot_cache[tile] = out
+	return out
+
+## Gas is TRANSLUCENT and unlit — its own colour, dimmed by the cell like everything else, and with
+## no lit face to give a cube the look of masonry.
 func _gas_material(col: Color, light_frac: float) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
 	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	m.albedo_color = Color(col.r * light_frac, col.g * light_frac, col.b * light_frac, col.a)
-	m.cull_mode = BaseMaterial3D.CULL_DISABLED
+	# BACK-FACE CULLED, unlike most of this renderer's flat art: a box is closed, so its inside is
+	# never wanted, and drawing both faces of every transparent cube put a moire checker wherever
+	# two blocks met. Halves the overdraw as well, which a room full of gas notices.
+	m.cull_mode = BaseMaterial3D.CULL_BACK
 	return m
 
 ## Deterministic 0..1 from a glowfish cell + slot, so a fish's orbit params are stable
@@ -9213,9 +9297,10 @@ func _place_nonwall(obj: Dictionary, cx: int, cy: int, idx: int, in_wall: bool, 
 	# GAS IS A VOLUME, not a picture of one. In 3D it becomes a handful of bobbing blocks and
 	# neither flat sprite is drawn — see _place_gas_chunks. Flat-2D and 1:1 keep Qud's own tile,
 	# which is what those modes are for.
-	if obj.has("animGas") and not _flat_2d and not _one_to_one and verdict == "":
-		_place_gas_chunks(obj, cx, cy, light_frac)
-		_note(cx, cy, idx, "gas (%d voxel chunks, bobbing)" % GAS_CHUNKS, 0.5)
+	if _gas_is_voxel(obj) and verdict == "":
+		_place_gas_chunks(obj, tile, cx, cy, light_frac)
+		_note(cx, cy, idx, "gas (voxel lattice from %s, density %d)" % [
+			tile, int(obj.get("gasDensity", 0))], 0.5)
 		return
 
 	# Qud's painted ground layer is flat by default — dirt, gravel, cracked earth.
@@ -12425,6 +12510,13 @@ func _register_anim(win: Dictionary, cx: int, cy: int) -> void:
 	# (250ms) per step, in the gas type's colour. Always exactly one frame visible, so
 	# the overlay fully replaces the steady base (which shows frame 0).
 	var gcol := String(win.get("animGas", ""))
+	# ...UNLESS THE CLOUD IS VOXELS. The gas path calls _register_anim as a SEPARATE step from
+	# _place_nonwall, so returning early in the placement (which the chunk build does) left this
+	# running and Qud's four-frame swirl still went up on its own quad. Daniel: "Raves is still
+	# displaying the Qud animated tile for smoke. It's a billboard, it looks like." Two gates, one
+	# condition — kept identical to the placement's on purpose, so neither can drift alone.
+	if _gas_is_voxel(win):
+		gcol = ""
 	if gcol != "":
 		var gc := _qud_color(gcol)
 		var gnodes: Array = []

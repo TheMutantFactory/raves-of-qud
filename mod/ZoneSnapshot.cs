@@ -45,6 +45,17 @@ namespace RavesOfQud
         /// runs the full markup/adjective pipeline on some objects, and a
         /// snapshot must never be the thing that breaks someone's game.
         /// </summary>
+        /// Qud's Gas.Density for a gas cloud, or 0 for anything else.
+        private static int GasDensity(GameObject go)
+        {
+            try
+            {
+                var g = go?.GetPart<XRL.World.Parts.Gas>();
+                return g != null ? g.Density : 0;
+            }
+            catch { return 0; }
+        }
+
         /// Does this object have something to say — i.e. would Qud open a conversation with it?
         /// Asked of the part rather than of a name list, so a modded talker answers correctly.
         private static bool HasConversation(GameObject go)
@@ -1959,6 +1970,11 @@ namespace RavesOfQud
                             // mobile actor: the client drops these from a REMEMBERED
                             // neighbour zone (they've wandered off since it was live).
                             .Member("creature", go.IsCreature)
+                            // GAS CONCENTRATION, for the voxel cloud: Qud's Gas.Density, which is
+                            // what decides how many blocks a tile gets, how solid they are, and how
+                            // much of the tile's height they fill. Absent on everything that is not
+                            // a gas, so the client can key on its presence.
+                            .Member("gasDensity", GasDensity(go))
                             // CAN YOU TALK TO IT? A cave spider is a creature and a watervine farmer
                             // is a creature; only one of them has anything to say. The mouse-assist
                             // cursor draws a speech bubble over one and a hand over the other, and
