@@ -47,9 +47,15 @@ extends Node3D
 ## The plate is a label, not part of the scenery: it takes the depth cue (so a far beacon's name
 ## recedes with it) but stops well short of the vanishing point, because a name nobody can read
 ## marks nothing.
-const PLATE_FONT := 20
-const PLATE_MIN := 11
-const PLATE_MAX := 28
+## The plate is measured, not tuned (see _zone_font) — these are only the ends of the range. The
+## floor is legibility, since a name nobody can read marks nothing; the ceiling is the point past
+## which a name is shouting rather than labelling, which happens once you are inside the zone and
+## the card is wider than the window.
+const PLATE_MIN := 9
+const PLATE_MAX := 64
+## The size the string is MEASURED at, to get its width per point. Any size would do; a large one
+## keeps the ratio away from hinting noise.
+const PLATE_REF := 40
 ## Air between the name and the top of the art, as a fraction of the plate's own font size.
 const PLATE_GAP := 0.55
 
@@ -70,13 +76,12 @@ const PLATE_GAP := 0.55
 ## out at 20-28 for places the surface called 0.4 and 7.4, because the surface formula was being fed
 ## the -1s.
 const PARA := {
-	# world units per parasang, marker footprint, marker height, "far" distance, plate reference
-	"surface":   {"scale": Vector2(240.0, 75.0), "foot": Vector2(80.0, 25.0),
-		"tall": 45.0, "near_ref": 300.0, "ref_dist": 140.0},
+	# world units per parasang, marker footprint, and the fallback marker height used until the
+	# card has been sized from its own art
+	"surface":   {"scale": Vector2(240.0, 75.0), "foot": Vector2(80.0, 25.0), "tall": 45.0},
 	# On the world map a parasang IS one cell, so the marker is one cell square — anything wider
 	# would cover the places either side of the one it is marking.
-	"overworld": {"scale": Vector2(1.0, 1.0), "foot": Vector2(1.0, 1.0),
-		"tall": 6.0, "near_ref": 5.0, "ref_dist": 7.0},
+	"overworld": {"scale": Vector2(1.0, 1.0), "foot": Vector2(1.0, 1.0), "tall": 6.0},
 }
 
 var _targets: Array = []      # [{id, name, mx, my, color}]
@@ -273,16 +278,17 @@ func _track_plates() -> void:
 		if _hole.size.x > 1.0 and (p.x < _hole.position.x or p.x > _hole.end.x):
 			lab.visible = false
 			continue
-		# THE NAME TAKES THE DEPTH CUE TOO. The slab shrinks with distance on its own now; a plate
-		# that stayed one size would make a beacon five parasangs out shout as loudly as the one in
-		# the next zone. It shrinks by the square root of the distance ratio (gentler than true
-		# perspective) and stops at PLATE_MIN, because a name nobody can read marks nothing.
-		var dist: float = cam.global_position.distance_to(head)
-		var px: int = clampi(int(round(float(PLATE_FONT)
-			* sqrt(float(PARA[_regime].ref_dist) / maxf(dist, 0.001)))), PLATE_MIN, PLATE_MAX)
+		# THE NAME IS AS WIDE AS THE ZONE IT MARKS. Daniel: "Let's make the text as wide as the
+		# zone." It used to be sized from a distance ratio — a curve with a reference distance in it,
+		# tuned by eye — which meant the name and the thing it names shrank at DIFFERENT rates, and
+		# only agreed at whatever range the constant was picked for.
+		#
+		# The card is already a zone across, so the honest size is the one that makes the text span
+		# the same ground. That is measured, not curve-fitted: project the two ends of a zone-wide
+		# segment through the live camera, and scale the font by how far apart they land.
+		var px: int = clampi(int(round(_zone_font(cam, m, lab))), PLATE_MIN, PLATE_MAX)
 		if int(lab.get_theme_font_size("font_size")) != px:
 			lab.add_theme_font_size_override("font_size", px)
-			lab.add_theme_constant_override("outline_size", maxi(3, px / 3))
 			lab.reset_size()
 		var sz := lab.get_minimum_size()
 		# CLEAR OF THE ART, not resting on it. p is the card's top edge, so a plate placed by its own
@@ -328,11 +334,14 @@ func _make_plate(t: Dictionary) -> Label:
 	var lab := Label.new()
 	lab.name = "Plate_" + String(t.get("id", "?"))
 	lab.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	lab.add_theme_font_size_override("font_size", 20)
-	# A hard outline, because the plate floats over sky, ground and buildings by turns and has no
-	# box of its own to sit in.
-	lab.add_theme_constant_override("outline_size", 6)
-	lab.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
+	# BOLD, and the real bold face rather than a synthesised one. The plate is small, sits over sky
+	# and ground by turns, and is the only text in the playfield with no box of its own.
+	lab.add_theme_font_override("font", load("res://fonts/SourceCodePro-Bold.ttf"))
+	lab.add_theme_font_size_override("font_size", PLATE_REF)
+	# NO OUTLINE. It used to carry a hard black one, on the reasoning that the plate floats over sky,
+	# ground and buildings by turns with no box of its own — but at plate sizes it reads as a drop
+	# shadow rather than as contrast, and it muddied the sprite colour the name is now painted in.
+	# Daniel: "Get rid of the drop shadow." The bold face is what carries it instead.
 	return lab
 
 ## Name, art and size, applied to an existing marker — a rename or a recolour must not rebuild it.
@@ -401,6 +410,11 @@ func _retint(root: Node3D, t: Dictionary) -> void:
 	# makes it — a 16x24 tile a zone wide stands 120 up — so a plate pinned to the old 45 sat in the
 	# middle of the picture it was supposed to be labelling.
 	root.set_meta("top", h)
+	# ...and how wide it stands, which is what the name-plate matches itself to. This is the CARD's
+	# width, not the regime's raw footprint: a whole tile spans a zone, so for art that fills its
+	# box the two are the same number, and for art that does not the name tracks the PICTURE rather
+	# than the padding beside it — the same reason the card is cropped to the ink in the first place.
+	root.set_meta("wide", w)
 
 ## The card's material: camera-facing, unlit, translucent, and OUT OF THE FOG — see _make_mark.
 func _card_mat() -> StandardMaterial3D:
@@ -483,3 +497,29 @@ func _plate_color(tex: Texture2D, fallback: Color) -> Color:
 			best_l = l
 			best = col
 	return best
+
+## The font size at which this name spans the same ground as the beacon under it.
+##
+## MEASURED THROUGH THE LIVE CAMERA, not derived from distance. Perspective, the field of view, the
+## camera mode and the zoom all bear on how wide a zone looks right now; asking the camera where the
+## two ends of it land answers for all of them at once, and keeps agreeing when any of them changes.
+##
+## The segment is laid along the CAMERA'S OWN RIGHT, because the card is a billboard: whatever way
+## the beacon is turned, it presents its full width to the viewer, and so should its name.
+func _zone_font(cam: Camera3D, m: Node3D, lab: Label) -> float:
+	var f: Font = lab.get_theme_font("font")
+	if f == null:
+		return float(PLATE_MIN)
+	var base: float = f.get_string_size(lab.text, HORIZONTAL_ALIGNMENT_LEFT, -1, PLATE_REF).x
+	if base < 1.0:
+		return float(PLATE_MIN)
+	var mid: Vector3 = m.global_position + Vector3(0, float(m.get_meta("top", 1.0)) * 0.5, 0)
+	var half: Vector3 = cam.global_transform.basis.x * (float(m.get_meta("wide", 1.0)) * 0.5)
+	if cam.is_position_behind(mid + half) or cam.is_position_behind(mid - half):
+		return float(PLATE_MIN)
+	var span: float = cam.unproject_position(mid + half).distance_to(cam.unproject_position(mid - half))
+	# Once you are close enough that the zone is wider than the window, the name has nothing left to
+	# match — cap it at the view, or standing in a marked zone fills the screen with its own name.
+	if _hole.size.x > 1.0:
+		span = minf(span, _hole.size.x)
+	return float(PLATE_REF) * span / base
