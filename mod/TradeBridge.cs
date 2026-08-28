@@ -183,7 +183,12 @@ namespace RavesOfQud
                     }
                     if (what == "cancel")
                     {
-                        sc.Hide();
+                        // Cancel(), NOT Hide(). Hide() takes the board off the screen and leaves the
+                        // TURN THREAD PARKED on menucomplete: Qud stayed in ModernTrade with nothing
+                        // drawn, which is worse than not closing at all. Cancel() is the method the
+                        // screen's own CancelButton is wired to -- it hides AND completes the task
+                        // with OfferStatus.CLOSE, which is the half that lets the game go on.
+                        sc.Cancel();
                         return;
                     }
                     if (what == "category")
