@@ -132,7 +132,7 @@ namespace RavesOfQud
         /// change, so a viewer that connects — or a rebuilt Raves that reconnects — WHILE a modal is up
         /// would otherwise never learn of it (the turn thread is blocked, so no snapshot flows either).
         /// Flag a one-shot re-broadcast of the current popup on the next poll.</summary>
-        public static void OnClientConnect() { _resend = true; PickerBridge.OnClientConnect(); CyberBridge.OnClientConnect(); TutorialBridge.OnClientConnect(); TombstoneBridge.OnClientConnect(); PickTargetBridge.Resend(); }
+        public static void OnClientConnect() { _resend = true; PickerBridge.OnClientConnect(); CyberBridge.OnClientConnect(); TutorialBridge.OnClientConnect(); TombstoneBridge.OnClientConnect(); PickTargetBridge.Resend(); TradeBridge.Resend(); }
 
         // ---- watcher liveness ------------------------------------------------------------
         // `_pumping` on its own is a flag that cannot fail. The watcher is a task that
@@ -416,6 +416,7 @@ namespace RavesOfQud
             // The TARGET PICKER rides here for the same reason everything else on this watcher does:
             // it spins on the turn thread, so the snapshot channel is silent for its whole duration.
             PickTargetBridge.Poll(Bridge.Server);
+            TradeBridge.Poll(Bridge.Server);
 
             BridgeServer server = Bridge.Server;
             if (server == null || server.ClientCount == 0) return;

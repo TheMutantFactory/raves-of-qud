@@ -43,6 +43,7 @@ namespace RavesOfQud
         public const string TypeCyber    = "cyber";   // server->client: Qud's cybernetics/generic TERMINAL mirrored
         public const string TypeTutorial = "tutorial"; // server->client: Qud TUTORIAL GUIDE box mirrored
         public const string TypePickTarget = "picktarget"; // server->client: Qud's target cursor mirrored
+        public const string TypeTrade    = "trade";   // server->client: Qud's trade screen mirrored
         public const string TypeTombstone = "tombstone"; // server->client: the end-of-run GameSummaryScreen
 
         /// <summary>Length-prefix a JSON string into a ready-to-send frame.</summary>

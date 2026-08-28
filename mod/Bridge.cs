@@ -814,6 +814,20 @@ namespace RavesOfQud
                         gmg.uiQueue.queueTask(() => { try { GlyphExporter.Export(); } catch { } }, 0);
                     return;
                 }
+                if (name == "trade")
+                {
+                    // The viewer acted on the mirrored trade board. See TradeBridge.
+                    f.TryGetValue("do", out string tdo);
+                    f.TryGetValue("side", out string tside);
+                    f.TryGetValue("idx", out string tidx);
+                    f.TryGetValue("n", out string tn);
+                    int ts, ti, tnn;
+                    int.TryParse(tside, out ts);
+                    int.TryParse(tidx, out ti);
+                    int.TryParse(tn, out tnn);
+                    TradeBridge.Answer(tdo ?? "", ts, ti, tnn);
+                    return;
+                }
                 if (name == "moveedge")
                 {
                     // Walk to the zone edge in this direction and step across it. See
