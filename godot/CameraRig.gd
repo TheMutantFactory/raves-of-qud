@@ -12,7 +12,12 @@ extends Node3D
 ## CAMERA MODES (see Main's header for the key bindings):
 ##   COMPASS (default, cardinal-locked), FOLLOW, FIRST_PERSON, CINEMATIC, MOUSE, KEYBOARD, TOP_FOLLOW.
 
-enum CamMode { COMPASS, FOLLOW, FIRST_PERSON, CINEMATIC, MOUSE, KEYBOARD, TOP_FOLLOW, ADVENTURE }
+## DRONE and DRONE_SIDE are ONE RIG SEEN TWICE, which is why they are two modes rather than one.
+## Daniel: "It uses two panels of the camera selector. One is the drone view and the other is the
+## camera view. The drone view is a side view of the player and the drone." DRONE is what the
+## drone's own camera sees; DRONE_SIDE is the elevation you place it from.
+enum CamMode { COMPASS, FOLLOW, FIRST_PERSON, CINEMATIC, MOUSE, KEYBOARD, TOP_FOLLOW, ADVENTURE,
+	DRONE, DRONE_SIDE }
 var _mode: int = int(Settings.get_value("camera", CamMode.COMPASS))   # default from Options; COMPASS = cardinal-locked
 
 # Top-down (Qud-classic): orthographic, straight down, NORTH locked to screen-top, tracking the player.
@@ -87,6 +92,16 @@ const WAIST_LOOK_H := 0.45   # ... or the waist (centres the whole body) — a `
 var _look_head := true       # default: track the head (feet-aim buries the head when zoomed close)
 const FOLLOW_LERP := 6.0     # per-second approach; keeps steps from snapping
 var _player := Vector3(40, 0, 12)
+
+## THE DRONE RIG, in world units. Held as floats rather than the Vector3i the shot list stores,
+## because the glide between two shots passes between tiles — the grid is where you PLACE it, not
+## where it is allowed to be.
+var _drone := Vector3(40, 6, 12)
+var _drone_target := Vector3(40, 0, 12)
+## How far the elevation view stands off, as a multiple of the player-to-drone distance. Both
+## subjects have to fit with room to read the gap, and the gap is the thing that view is for.
+const DRONE_SIDE_STANDOFF := 1.6
+const DRONE_SIDE_MIN := 9.0
 var _facing := Vector2(0, 1)     # +z is south; Qud y grows southward
 var _eye := Vector3.ZERO         # smoothed camera position
 var _look := Vector3.ZERO        # smoothed look-at target
@@ -330,10 +345,65 @@ func adopt_pane_yaw(mode: int, deg: float) -> void:
 	else:
 		_mode_yaw[mode] = fposmod(float(_mode_yaw.get(mode, 0.0)) + deg_to_rad(deg), TAU)
 
+## THE ELEVATION. Stand off to one side of the line between the player and the drone and look at
+## the midpoint, so the picture shows the GAP between them — which is the only thing you need to
+## see while dragging the drone's altitude.
+##
+## PERPENDICULAR TO THE PAIR, not a fixed compass side: fly the drone north of the player and a
+## fixed east-facing view sees the two on top of each other, which is the one arrangement that
+## hides the number you are placing. `yaw_off` spins the standoff so a pane's Q/E still works.
+##
+## Static and pure so the degenerate case is testable: a drone directly above the player has NO
+## horizontal direction to be perpendicular to, and normalising that zero vector is how this kind
+## of function usually ends up pointing the camera at nothing.
+static func drone_side_eye_look(player: Vector3, drone: Vector3, yaw_off := 0.0) -> Array:
+	var mid := (player + drone) * 0.5
+	var flat := Vector3(drone.x - player.x, 0.0, drone.z - player.z)
+	var side := Vector3(1, 0, 0) if flat.length() < 0.001 else flat.normalized().cross(Vector3.UP)
+	var dist: float = maxf(player.distance_to(drone) * DRONE_SIDE_STANDOFF, DRONE_SIDE_MIN)
+	return [mid + side.rotated(Vector3.UP, yaw_off) * dist, mid]
+
+
+## The drone's opening position: the compass camera, snapped to the grid, aimed at the player.
+##
+## THE ALTITUDE FLOOR IS NOT COSMETIC. The compass camera drops toward eye level as you zoom in,
+## so at the closest zoom its rounded height is 0 — a drone buried in the floor, in a side view
+## that then frames a zero-height gap and reads as broken rather than as close.
+static func drone_seed(compass_eye: Vector3, player: Vector3) -> Array:
+	return [
+		Vector3(roundf(compass_eye.x), maxf(roundf(compass_eye.y), 1.0), roundf(compass_eye.z)),
+		Vector3(roundf(player.x), 0.0, roundf(player.z)),
+	]
+
+
+## Where the drone is and what it is pointed at. Main pushes these; the shot list owns them.
+func set_drone(eye: Vector3, target: Vector3) -> void:
+	_drone = eye
+	_drone_target = target
+
+
+func drone_eye() -> Vector3:
+	return _drone
+
+
+func drone_target() -> Vector3:
+	return _drone_target
+
+
 func eye_look_for(mode: int, st: Dictionary = {}) -> Array:
 	var yaw_off: float = float(st.get("yaw", 0.0))
 	var zoom: float = maxf(0.05, float(st.get("zoom", 1.0)))
 	match mode:
+		CamMode.DRONE:
+			# The drone's own camera. Zoom is the shot's, applied as a pull-back along the aim so
+			# a tighter shot frames less — not as an fov change, which would bend the picture the
+			# side view is showing you straight.
+			var aim := _drone_target - _drone
+			if aim.length() < 0.001:
+				aim = Vector3(0, -1, 0)
+			return [_drone - aim.normalized() * (zoom - 1.0), _drone_target]
+		CamMode.DRONE_SIDE:
+			return drone_side_eye_look(_player, _drone, yaw_off)
 		CamMode.KEYBOARD:
 			return [_free_eye, _free_eye + _aim_dir().rotated(Vector3.UP, yaw_off)]
 		CamMode.MOUSE:
@@ -680,4 +750,10 @@ func set_player(pos: Vector3, facing: Vector2, update_facing: bool) -> void:
 		_seeded = true
 		_free_eye = _follow_eye()
 		_eye = _free_eye
+		# THE DRONE STARTS WHERE THE COMPASS CAMERA IS — Daniel's words — and it starts ON THE
+		# GRID it will be dragged on, so its first position is a cell like every one after it
+		# rather than the one off-grid place it can ever occupy.
+		var seed: Array = drone_seed(eye_look_for(CamMode.COMPASS)[0], _player)
+		_drone = seed[0]
+		_drone_target = seed[1]
 		_look = _follow_look()

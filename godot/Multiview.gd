@@ -9,7 +9,9 @@ extends Node
 ## are plain ints matching CameraRig.CamMode's order.
 
 const TOP_FOLLOW := 6              # CamMode.TOP_FOLLOW — the one orthographic mode (kept enum-free)
-const MODES := [0, 1, 2, 3, 4, 5, 6, 7]   # ...and 7 = ADVENTURE, the slider-tuned compass
+## 8 = DRONE (what the drone sees) and 9 = DRONE_SIDE (the elevation you place it from) — the two
+## panes drone-cam asked for. Ten panes still lay out 3-wide; the grid grows a row.
+const MODES := [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]   # ...and 7 = ADVENTURE, the slider-tuned compass
 const PANE_ZOOM_MIN := 0.25
 const PANE_ZOOM_MAX := 4.0   # CamMode order: COMPASS, FOLLOW(3rd-person), FIRST_PERSON, CINEMATIC, MOUSE, KEYBOARD, TOP_FOLLOW, ADVENTURE
 

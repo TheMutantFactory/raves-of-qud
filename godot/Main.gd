@@ -90,7 +90,8 @@ const LEVEL_KEEP_DOWN := 2
 # The camera rig (nodes + modes + placement math) lives in CameraRig.gd, created in _ready. Main keeps
 # this enum as a MIRROR so its mode checks (input, snapshot, multiview) read `CamMode.X`; the values match
 # CameraRig.CamMode exactly. `_cam_rig._mode` is the live mode. (Stage 1 of the Main.gd decomposition.)
-enum CamMode { COMPASS, FOLLOW, FIRST_PERSON, CINEMATIC, MOUSE, KEYBOARD, TOP_FOLLOW, ADVENTURE }
+enum CamMode { COMPASS, FOLLOW, FIRST_PERSON, CINEMATIC, MOUSE, KEYBOARD, TOP_FOLLOW, ADVENTURE,
+	DRONE, DRONE_SIDE }
 var _cam_rig                    # CameraRig (Node3D, loaded); created in _ready. Untyped so the headless
 								# --check-only stays deterministic (a class_name's cache is flaky there);
 								# locals off _cam_rig.* therefore need explicit types, not `:=`.
@@ -1570,6 +1571,8 @@ const _MODE_NAMES := {
 	CamMode.MOUSE: "MOUSE — drag orbits the selected tile",
 	CamMode.KEYBOARD: "KEYBOARD — WASD move, arrows aim",
 	CamMode.TOP_FOLLOW: "TOP-DOWN FOLLOW — classic overhead · north up · tracks you · R/F zoom",
+	CamMode.DRONE: "DRONE — what the drone sees · look cursor flies it · scroll the shot list",
+	CamMode.DRONE_SIDE: "DRONE RIG — side view of you and the drone · drag the drone and its target",
 }
 
 func _update_mode_label() -> void:
