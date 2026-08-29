@@ -1308,6 +1308,11 @@ func _open_options_overlay() -> void:
 	_options.layer = 90            # the status-screen / control-mapping band, under the CRT
 	var scn: Control = scr.new()
 	scn.closed.connect(_close_options_overlay)
+	# Credits, from the one Raves-owned door the in-game menu reaches. Options closes behind it so
+	# the two never stack — the same "one overlay slot" rule MainMenu keeps.
+	scn.open_credits.connect(func() -> void:
+		_close_options_overlay()
+		_open_credits_overlay())
 	# In-game, "Default camera" applies to the LIVE Holodeck too (see OptionsScreen.apply_camera_cb).
 	scn.apply_camera_cb = func(m: int) -> void:
 		if _holo != null and _holo.has_method("set_camera_mode"):
@@ -1315,6 +1320,36 @@ func _open_options_overlay() -> void:
 	_options.add_child(scn)
 	add_child(_options)
 	UiState.set_scene("options")
+
+## Raves' Credits, in-game. Built per open and freed on close for the same reason the options
+## overlay is (a merely-hidden CanvasLayer keeps feeding its children input, and the closed screen
+## goes on eating Esc), and on the same layer so it sits in the status-screen band under the CRT.
+##
+## It does NOT walk Qud back off anything, unlike the options overlay: Qud was never asked to open
+## a screen for this one. Credits is entirely ours.
+var _credits: CanvasLayer
+
+func _open_credits_overlay() -> void:
+	if _credits != null:
+		return
+	var scr: Variant = load("res://CreditsScreen.gd")
+	if scr == null:
+		return
+	_credits = CanvasLayer.new()
+	_credits.name = "CreditsOverlay"
+	_credits.layer = 90
+	var scn: Control = scr.new()
+	scn.closed.connect(_close_credits_overlay)
+	_credits.add_child(scn)
+	add_child(_credits)
+	UiState.set_scene("credits")
+
+func _close_credits_overlay() -> void:
+	if _credits == null:
+		return
+	_credits.queue_free()
+	_credits = null
+	UiState.set_scene("in_game")
 
 ## Esc inside the overlay closes it AND walks Qud back off the ModernOptionsMenu it opened from the
 ## same answer — the control-mapping screen syncs its KeybindsScreen the same way, and leaving Qud

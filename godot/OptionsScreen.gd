@@ -11,6 +11,11 @@ extends Control
 ## Raves via Options.SetOption) is the next phase. Opened as an overlay by MainMenu; Back closes.
 
 signal closed
+## Ask the host to show the Credits screen. Emitted rather than opened directly because the two
+## hosts own their overlay slot differently — MainMenu swaps one full-screen overlay for another,
+## MainFrame stacks a CanvasLayer over the live game — and this screen should not have to know
+## which one it is in.
+signal open_credits
 
 const GOLD := Color8(0xC8, 0xA9, 0x4E)
 const CYAN := Color8(0x6E, 0xB5, 0xC9)
@@ -451,8 +456,13 @@ func _build_footer() -> void:
 	l.scroll_active = false
 	l.theme_type_variation = "Caption"
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	l.text = "[center][url=esc][color=#%s][lb]Esc[rb][/color][color=#%s] Back[/color][/url]      [color=#%s]↑↓[/color][color=#%s] navigate[/color][/center]" % [
-		GOLD.to_html(false), DIM.to_html(false), GOLD.to_html(false), DIM.to_html(false)]
+	# CREDITS LIVES HERE IN-GAME, and it is here because the in-game menu is not ours: the hamburger
+	# and Esc both open QUD's system menu (CmdSystemMenu, mirrored back as a popup), whose rows are
+	# Qud's own. Raves cannot add one to it. This screen is the Raves surface that menu reaches —
+	# it is already how Options works in-game — so the credits hang off the one door we own.
+	l.text = "[center][url=esc][color=#%s][lb]Esc[rb][/color][color=#%s] Back[/color][/url]      [color=#%s]↑↓[/color][color=#%s] navigate[/color]      [url=credits][color=#%s]Credits[/color][/url][/center]" % [
+		GOLD.to_html(false), DIM.to_html(false), GOLD.to_html(false), DIM.to_html(false),
+		GOLD.to_html(false)]
 	l.anchor_left = 0.0
 	l.anchor_right = 1.0
 	l.anchor_top = 0.93
@@ -460,7 +470,10 @@ func _build_footer() -> void:
 	_zero(l)
 	add_child(l)
 	# the same call [Esc] and the "‹ Back" button make — see UiHint
-	preload("res://UiHint.gd").clickable(l, {"esc": func(): closed.emit()})
+	preload("res://UiHint.gd").clickable(l, {
+		"esc": func(): closed.emit(),
+		"credits": func(): open_credits.emit(),
+	})
 	# live write-back status (updated in _process)
 	_status = _label("", DIM, "caption")
 	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT

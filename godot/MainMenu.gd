@@ -1413,6 +1413,14 @@ func _open_overlay(script_path: String) -> void:
 			_send_command({"type": "command", "name": "deletesave", "id": str(id)}))
 	if _overlay.has_signal("open_tool"):
 		_overlay.open_tool.connect(_on_open_tool)
+	# Options offers Credits; swap one overlay for the other rather than stacking, which is the
+	# rule this slot already keeps. DEFERRED because _close_overlay frees the current screen and a
+	# freed node is still in the tree for the rest of this frame — opening inline would find
+	# `_overlay` non-null and refuse.
+	if _overlay.has_signal("open_credits"):
+		_overlay.open_credits.connect(func() -> void:
+			_close_overlay()
+			_open_overlay.call_deferred("res://CreditsScreen.gd"))
 	# highvisor state report: a screen may declare its scene name (`ui_scene`,
 	# e.g. ModdingToolkitScreen -> "modding_toolkit"); otherwise the legacy
 	# derivation from the file name (ModsScreen -> mods, LoadGameScreen ->
