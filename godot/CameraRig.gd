@@ -344,22 +344,29 @@ func adopt_pane_yaw(mode: int, deg: float) -> void:
 	else:
 		_mode_yaw[mode] = fposmod(float(_mode_yaw.get(mode, 0.0)) + deg_to_rad(deg), TAU)
 
-## The elevation for the control pane: stand off to one side of the player-drone line and look at
-## the midpoint, LEVEL with them.
+## The elevation for the control pane. THE DIRECTION IS FIXED; only the framing follows the pair.
 ##
-## PERPENDICULAR TO THE PAIR, not a fixed compass side — fly the drone due north of the player and
-## an east-facing view sees the two stacked on each other, which is the one arrangement that hides
-## what you are adjusting. Level, because tilt makes height stop reading as height.
+## IT USED TO STAND PERPENDICULAR TO THE PLAYER-DRONE LINE, and that was a feedback loop. Daniel:
+## "I press the north button until I get close, then the north button starts moving me away from
+## the player ... Does that toggling make sense?" It does. Deriving the camera's heading from the
+## drone's position means MOVING THE DRONE MOVES THE CAMERA: as the drone crosses the player the
+## perpendicular reverses, the view jumps to the opposite side, and the same button now walks the
+## drone the other way ACROSS THE SCREEN. The step was always right in world terms — north really
+## was north — but a control you steer by eye is wrong if the eye reverses.
 ##
-## Static and pure so the degenerate case is testable: a drone directly overhead has NO horizontal
-## direction to be perpendicular to. Godot returns zero from Vector3.ZERO.normalized() rather than
-## NaN, so the failure is not a crash — it is a camera standing exactly on its own subject.
+## Near the pair it was worse than a flip: inside a thousandth of a tile the old code fell back to
+## a fixed axis, so the view snapped rather than swung. Both symptoms, one cause.
+##
+## So the axis is now a WORLD direction, turned only by the pane's own rotate buttons (yaw_off).
+## The camera never moves on its own, and the ring means the same thing from one press to the next.
+## The cost is honest and manual: with the drone due east or west of the player the two line up on
+## screen and you turn the pane 45° to separate them — a thing you do, not a thing that happens to
+## you.
 static func drone_ctrl_eye_look(player: Vector3, drone: Vector3, yaw_off := 0.0) -> Array:
 	var mid := (player + drone) * 0.5
-	var flat := Vector3(drone.x - player.x, 0.0, drone.z - player.z)
-	var side := Vector3(1, 0, 0) if flat.length() < 0.001 else flat.normalized().cross(Vector3.UP)
+	var side := Vector3(1, 0, 0).rotated(Vector3.UP, yaw_off)
 	var dist: float = maxf(player.distance_to(drone) * CTRL_STANDOFF, CTRL_MIN)
-	return [mid + side.rotated(Vector3.UP, yaw_off) * dist, mid]
+	return [mid + side * dist, mid]
 
 
 ## Step the drone one press, in a COMPASS direction. Goes through this file's own compass_delta
@@ -370,10 +377,17 @@ func step_drone(dir: String) -> void:
 	nudge_drone(Vector3(d.x, 0.0, d.y))
 
 
-## Step the drone one press. Clamped in height so it can be neither buried nor lost.
+## Step the drone one press, clamped to the zone and to a sane height.
+##
+## THE LATERAL CLAMP IS THE SECOND HALF OF THE SAME REPORT: "I've placed the drone on the ground.
+## It's stuck in an adjacent zone." Nothing bounded x/z, so the drone could be walked clean off the
+## live zone — and out there the control view frames a patch of neighbouring ground with no
+## landmark in it, which is a poor place to be steering from.
 func nudge_drone(delta: Vector3) -> void:
-	_drone = Vector3(_drone.x + delta.x,
-		clampf(_drone.y + delta.y, DRONE_MIN_H, DRONE_MAX_H), _drone.z + delta.z)
+	_drone = Vector3(
+		clampf(_drone.x + delta.x, 0.0, maxf(_zone_cells.x - 1.0, 0.0)),
+		clampf(_drone.y + delta.y, DRONE_MIN_H, DRONE_MAX_H),
+		clampf(_drone.z + delta.z, 0.0, maxf(_zone_cells.y - 1.0, 0.0)))
 
 
 func drone_pos() -> Vector3:
