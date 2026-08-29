@@ -757,6 +757,18 @@ func _exec_godot_cmd(cmd: String) -> void:
 							d[k] = [r.position.x, r.position.y, r.size.x, r.size.y]
 					ud.store_string(JSON.stringify(d))
 					ud.close()
+		"dustdump":
+			# Is the wind blowing, and does that match the stratum? Written as a file because the
+			# answer is needed while the turn thread is parked.
+			var dd := FileAccess.open(_support_dir().path_join("dustdump.json"), FileAccess.WRITE)
+			if dd != null:
+				var dr := {}
+				if renderer != null:
+					dr = renderer.dust_report()
+					dr["zone"] = _prev_zone_id
+					dr["depth"] = _depth
+				dd.store_string(JSON.stringify(dr))
+				dd.close()
 		"camdump":
 			# dump the camera/hole state to camdump.json — the deterministic probe for
 			# "why is the 1:1 stage the wrong size" class of bugs.

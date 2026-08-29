@@ -30,7 +30,7 @@ signal beacons_changed(targets: Array)   # -> Main's LocationBeacons: what to st
 ## checkbox."
 signal plates_changed(on: bool)
 signal refresh_requested                 # -> the bridge's `journal` command
-signal lost_changed(lost: bool)          # -> MainFrame: dress (and disable) the nav pin
+signal lock_changed(reason: String)      # -> MainFrame: dress (and disable) the nav pin; "" = open
 
 const REFRESH_S := 6.0        # how often to ask Qud to re-export the journal
 const MAX_ROWS := 60          # a late-game journal is long; the list scrolls past this
@@ -81,6 +81,15 @@ var _tree_btn: Button
 ## previous state." So the lock SUSPENDS the panel rather than changing it — nothing is persisted
 ## while it holds, and both switches come back exactly as they were.
 var _lost := false
+## THE SECOND LOCK, and it works exactly like the first because it is the same kind of fact: Qud's,
+## not this panel's, and temporary. Daniel: "Locations should be off in the subterranean. They
+## should only be on when the user is on the surface." Every place in the list is a WORLD-MAP
+## landmark — the panel measures parasangs across the overworld — and underground the player is not
+## on that map at all. The beacons would stand in a cave pointing through rock at a village
+## somewhere overhead, and the distances beside them would be to a spot on the surface rather than
+## to anywhere reachable from here.
+var _deep := false
+const SURFACE_Z := 10         # Qud's surface stratum; > this is underground (SkyGrade agrees)
 var _pre_expanded := false
 var _sorted := false          # the list has been ordered against a real player position
 var _row_count := 0           # headers + rows actually built, which is what the panel sizes to
@@ -191,6 +200,9 @@ func set_snapshot(data: Dictionary) -> void:
 	var p: Dictionary = data.get("player", {})
 	_player = Vector2i(int(p.get("x", -1)), int(p.get("y", -1)))
 	_set_lost(bool(p.get("lost", false)))
+	# THE SAME FIELD SkyGrade AND ZoneRenderer READ, so the panel locks on exactly the frame the sky
+	# goes away rather than on some second opinion about what counts as underground.
+	_set_deep(int(_zone.get("z", SURFACE_Z)) > SURFACE_Z)
 	if _tiles != null:
 		_tiles.tiles_dir = String(data.get("tilesDir", _tiles.tiles_dir))
 		_tiles.palette = data.get("palette", _tiles.palette)
@@ -200,7 +212,7 @@ func set_snapshot(data: Dictionary) -> void:
 ## whether or not the panel that armed them is open — a collapsed panel that stopped noticing new
 ## places would leave the list a character-hour out of date the moment you expanded it again.
 func _process(dt: float) -> void:
-	if _lost or _one_to_one or not visible:
+	if _locked() or _one_to_one or not visible:
 		return
 	_since += dt
 	if _since < REFRESH_S:
@@ -218,7 +230,7 @@ func set_one_to_one(on: bool) -> void:
 	_emit()
 
 func set_expanded(on: bool) -> void:
-	if _lost or on == _expanded:
+	if _locked() or on == _expanded:
 		return
 	_expanded = on
 	Settings.set_value(OPEN_KEY, on)
@@ -233,26 +245,59 @@ func set_expanded(on: bool) -> void:
 func _set_lost(on: bool) -> void:
 	if on == _lost:
 		return
+	var was := _locked()
 	_lost = on
-	if on:
-		_pre_expanded = _expanded
-		_expanded = false
-	else:
-		_expanded = _pre_expanded
+	_apply_lock(was)
+
+## The player changed stratum. Same suspension, same restore.
+func _set_deep(on: bool) -> void:
+	if on == _deep:
+		return
+	var was := _locked()
+	_deep = on
+	_apply_lock(was)
+
+## TAKE THE BEFORE-STATE AS AN ARGUMENT rather than reading it here, because the caller has already
+## flipped its flag by now. The two locks overlap — you can be lost in a cave — and the collapse
+## must happen on the way INTO the locked state and the restore on the way OUT of it, once each.
+## Saving _pre_expanded per-flag instead would let the second lock save the first lock's collapse,
+## and the panel would come back shut on a player who had left it open.
+func _apply_lock(was: bool) -> void:
+	var now := _locked()
+	if now != was:
+		if now:
+			_pre_expanded = _expanded
+			_expanded = false
+		else:
+			_expanded = _pre_expanded
 	_refresh_toggle()
 	_refresh_title()
 	_apply_height()
 	_emit()
-	lost_changed.emit(on)
+	if now != was:
+		lock_changed.emit(locked_reason())
 
-func is_lost() -> bool:
-	return _lost
+## ONE SOURCE, ASKED TWO WAYS. Deriving this from the reason rather than re-listing the flags means
+## a third lock can never be added to one and forgotten in the other.
+func _locked() -> bool:
+	return locked_reason() != ""
+
+## Why the panel is shut, as a phrase that completes "You are ___" — or "" when it is open. BOTH
+## READ THE SAME WAY to the player: the list is gone and the pin will not arm. Lost wins when both
+## hold, because it is the stranger state and the one that also disables the map.
+func locked_reason() -> String:
+	if _lost:
+		return "lost"
+	if _deep:
+		return "underground"
+	return ""
+
 
 ## The nav pin: arm or disarm every beacon at once. Returns the new state so the caller can dress
 ## its icon and say which way it went.
 func toggle_beacons() -> bool:
-	if _lost:
-		return _armed          # the pin is disabled while lost; nothing to flip and nothing to save
+	if _locked():
+		return _armed          # the pin is disabled while locked; nothing to flip and nothing to save
 	_armed = not _armed
 	Settings.set_value(ARMED_KEY, _armed)
 	Settings.save()
@@ -296,10 +341,12 @@ func _refresh_title() -> void:
 	# arm, and dressing them only on the not-lost path left it lit over a panel that had stopped
 	# working.
 	_refresh_head_btns()
-	if _lost:
+	var why := locked_reason()
+	if why != "":
 		# THE HEADING SAYS WHY. A panel that just went empty and stopped opening reads as broken;
-		# one that says "lost" is the game speaking, and the player already knows what it means.
-		_title.text = "Locations 🔒 lost"
+		# one that says "lost" (or "underground") is the game speaking, and the player already knows
+		# what it means.
+		_title.text = "Locations 🔒 " + why
 		_title.add_theme_color_override("font_color", Color(1, 1, 1, 0.45))
 		return
 	# JUST "LOCATIONS". Daniel: "Remove the (Beacons off) text ... It's redundant to the eye icon."
@@ -317,10 +364,14 @@ func _refresh_title() -> void:
 func _refresh_toggle() -> void:
 	if _toggle == null:
 		return
-	_toggle.disabled = _lost
+	_toggle.disabled = _locked()
 	if _lost:
 		_toggle.text = "🔒"
 		_toggle.tooltip_text = "You are lost — Qud does not know where you are, so neither does this"
+		return
+	if _deep:
+		_toggle.text = "🔒"
+		_toggle.tooltip_text = "You are underground — every place here is a landmark on the surface"
 		return
 	_toggle.text = "▾" if _expanded else "▸"
 	_toggle.tooltip_text = "Collapse the locations list" if _expanded else "Expand the locations list"
@@ -716,7 +767,7 @@ func _set_tick(id: String, on: bool) -> void:
 ## go. Colour by position in the list would repaint every column whenever a nearer place appeared.
 func _emit() -> void:
 	var out: Array = []
-	if _armed and not _lost and not _one_to_one:
+	if _armed and not _locked() and not _one_to_one:
 		# COLOUR BY TICK ORDER, not by row order. `_on` is a Dictionary and Godot keeps its insertion
 		# order (and JSON preserves it across a save), so its keys ARE the order the player armed
 		# them in. Numbering off `_entries` instead — which is sorted by distance — would repaint
@@ -798,7 +849,7 @@ func plates_on() -> bool:
 ## _refresh_title applies when off — so the row reads as part of the heading rather than as four
 ## bright glyphs parked beside it.
 func _refresh_head_btns() -> void:
-	_dress(_eye, "res://art/look.svg", "E", _armed and not _lost,
+	_dress(_eye, "res://art/look.svg", "E", _armed and not _locked(),
 		"Hide the landmarks" if _armed else "Show the landmarks")
 	_dress(_signpost, "res://art/signpost.svg", "N", _plates_on,
 		"Hide location names" if _plates_on else "Show location names")

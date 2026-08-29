@@ -4358,6 +4358,7 @@ var _dust_rows: Array = []       ## one emitter per zone row, each with its own 
 var _dust_base: Array = []       ## ...and that row's un-gusted speed, for the LFO to scale
 var _dust_t := 0.0               ## the gust's own clock
 var _dust_on := false
+var _dust_terrain := ""          ## the last terrain string the wind was chosen from
 
 ## Which zones blow dust. Qud names its zones ("salt dunes", "desert canyon", "salt marsh,
 ## surface"), so the terrain string is the honest source — a marsh is wet and gets none. Keyword
@@ -4365,7 +4366,7 @@ var _dust_on := false
 ## turns out to belong on it.
 const DUST_TERRAIN := ["desert", "dune", "canyon", "waste", "flats", "sand", "scrub"]
 
-func _dusty(terrain: String) -> bool:
+static func _dusty(terrain: String) -> bool:
 	var t := terrain.to_lower()
 	if t.contains("marsh") or t.contains("river") or t.contains("water"):
 		return false
@@ -4373,6 +4374,12 @@ func _dusty(terrain: String) -> bool:
 		if t.contains(k):
 			return true
 	return false
+
+## THE WHOLE DECISION, in one place that can be asked without a renderer. It was four `and`s inside
+## _update_dust, which meant the only way to find out whether a cave blows dust was to stand in one.
+static func dust_wanted(terrain: String, underground: bool, one_to_one: bool,
+		flat_2d: bool, world_map: bool) -> bool:
+	return _dusty(terrain) and not underground and not one_to_one and not flat_2d and not world_map
 
 ## One emitter PER ZONE ROW, created once and thereafter only pointed and toggled. Not tracked for
 ## per-turn cleanup: the wind is a property of the place, not of the turn, and rebuilding the
@@ -4438,13 +4445,43 @@ func _make_dust_row(r: int) -> GPUParticles3D:
 	add_child(g)
 	return g
 
+## WHAT THE WIND IS ACTUALLY DOING, read back off the emitters rather than off the flag that was
+## supposed to set them. `_dust_on` is a value this file writes, so reporting it would only prove
+## the assignment ran; `emitting` is what the particles are really doing, which is the claim.
+func dust_report() -> Dictionary:
+	var live := 0
+	for d in _dust_rows:
+		if d != null and is_instance_valid(d) and d.emitting:
+			live += 1
+	return {
+		"underground": _underground,
+		"rows": _dust_rows.size(),
+		"emitting": live,
+		"flag": _dust_on,
+		# EVERY INPUT TO THE DECISION, not just its output — a report that says "off" without
+		# saying which of five reasons turned it off sends you looking in the wrong place.
+		"terrain": _dust_terrain,
+		"dusty_name": _dusty(_dust_terrain),
+		"one_to_one": _one_to_one,
+		"flat_2d": _flat_2d,
+		"world_map": _world_map,
+	}
+
 ## Point the dust at the live zone and switch it on or off. Called every snapshot; cheap when
 ## nothing changed, because the emitters are reused.
 func _update_dust(data: Dictionary) -> void:
 	var stats: Dictionary = data.get("stats", {})
 	var terrain := QudText.strip(String(stats.get("terrain", "")))
+	_dust_terrain = terrain      # kept only so dust_report can say what it decided from
 	# USER MODE ONLY. 1:1 is Qud's own screen and Qud blows no dust across it.
-	var want: bool = _dusty(terrain) and not _one_to_one and not _flat_2d and not _world_map
+	#
+	# AND SURFACE ONLY. Daniel: "I'm in a subterranean desert canyon. There is no dust blowing
+	# underground." The terrain name is what picks the wind, and Qud goes on calling a zone a desert
+	# canyon at every stratum below it — so the name alone said "dusty" a hundred feet down, in a
+	# cave with no sky to blow it and no sun to light it. Depth is the same field the cavern
+	# lighting above already switches on, so the two agree by construction: wherever the sky is
+	# gone, so is the wind.
+	var want: bool = dust_wanted(terrain, _underground, _one_to_one, _flat_2d, _world_map)
 	if not want:
 		for d in _dust_rows:
 			if d != null and is_instance_valid(d):
