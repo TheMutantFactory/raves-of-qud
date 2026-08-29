@@ -68,6 +68,12 @@ var _sky_grade                     # SkyGrade (Node3D); created in _ready
 ## in the world, not an overlay: a beacon is a thing standing on the ground four parasangs away, and
 ## the camera has to be able to look away from it.
 var _beacons                       # LocationBeacons (Node3D); created in _ready
+## THE WALK BETWEEN CELLS. `_walk_to` is Qud's answer — a whole cell — and `_walk_at` is where the
+## player is actually drawn, chasing it at a walking pace. See SmoothMove and _walk_step.
+var _walk_to := Vector2.ZERO
+var _walk_at := Vector2.ZERO
+var _walk_seeded := false
+const _SMOOTH := preload("res://SmoothMove.gd")
 var _target                        # TargetCursor: Qud's target picker, mirrored
 var _trade: TradeOverlay           # Qud's trade screen, mirrored
 var _assist                        # MouseAssist (Node); created in _ready
@@ -641,7 +647,16 @@ func _on_snapshot(data: Dictionary) -> void:
 	var stepped := moved and not crossed
 	var step_dir := Vector2(tile.x - _prev_tile.x, tile.y - _prev_tile.y) if stepped else Vector2.ZERO
 	_prev_tile = tile
-	_cam_rig.set_player(Vector3(px, 0, py), step_dir, stepped)
+	# WHERE THE PLAYER IS is not where they are DRAWN — see _walk_step. The camera follows the
+	# walking position so it does not arrive a cell before its subject; the cell itself is recorded
+	# here as the target the walk is heading for.
+	_walk_to = Vector2(px, py)
+	if crossed or not _walk_seeded:
+		# A CROSSING IS NOT A WALK. The coordinates re-anchor to the new zone's origin, so easing
+		# between them slides the player the width of a zone through whatever is in the way.
+		_walk_at = _walk_to
+		_walk_seeded = true
+	_cam_rig.set_player(Vector3(_walk_at.x, 0, _walk_at.y), step_dir, stepped)
 
 ## Remembered zones to draw around the live one: every OTHER stored zone on the
 ## same stratum, offset by the difference of its global origin from the live zone's
@@ -888,7 +903,26 @@ func _exec_godot_cmd(cmd: String) -> void:
 var _bg_draw_accum := 0.0
 const BG_DRAW_INTERVAL := 0.05   # ~20fps forced draws while unfocused
 
+## One frame of the walk, then everything that follows the player is told where he is DRAWN rather
+## than which cell he occupies: the camera, the sprite, and the torch he carries.
+##
+## THE PACE IS auto_walk_rate, the same setting a held direction key repeats at, so a held key
+## produces continuous motion instead of a sprite that lurches and waits. A different number here
+## would be a second, silent speed setting that disagrees with the one in Options.
+func _walk_step(dt: float) -> void:
+	if not _walk_seeded or _cam_rig == null:
+		return
+	var was := _walk_at
+	_walk_at = _SMOOTH.step(_walk_at, _walk_to, dt,
+		maxf(1.0, float(Settings.get_value("auto_walk_rate", 6.0))))
+	if _walk_at == was:
+		return
+	_cam_rig.set_player(Vector3(_walk_at.x, 0, _walk_at.y), Vector2.ZERO, false)
+	if renderer != null:
+		renderer.set_walk_offset(_walk_at - _walk_to)
+
 func _process(dt: float) -> void:
+	_walk_step(dt)
 	_remote.poll(dt)
 	_hold_step(dt)   # Final-Fantasy hold-to-walk: a held direction keeps stepping
 	_assist_step()   # the cursor's verb, re-read at most once a frame

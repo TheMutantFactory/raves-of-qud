@@ -336,6 +336,11 @@ var _live_build := false        # true only while building the LIVE zone's stati
                                 # torches register for the _process flicker; neighbours don't)
 var _hidden_cell := Vector2i(-9999, -9999)   # a live cell whose creature is not drawn (first-person: the player)
 var _player_cell := Vector2i(-9999, -9999)   # the player's cell this snapshot (from data.player), for the world-map "on top" rule
+## THE WALK BETWEEN CELLS. Qud's answer is always a whole cell; these hold the player's sprite and
+## the cell it was seated on, so Main can draw it part-way to the next one. See SmoothMove.
+var _walk_node: Node3D
+var _walk_home := Vector3.ZERO
+var _walk_off := Vector2.ZERO
 var _placing_player := false                 # true while placing the player's own sprite in the dynamic pass
 
 ## The visual layer the PLAYER'S OWN CELL is drawn on, so a camera can drop it without anything
@@ -366,6 +371,11 @@ func _tag_player_cell() -> void:
 		# (glow quads, particle emitters) sit within it.
 		if absf(n3.position.x - px) <= 0.5 and absf(n3.position.z - pz) <= 0.5:
 			_tag_layer(n3, PLAYER_LAYER)
+			# ...and KEEP IT, for the walk between cells. Sprites are pooled and re-seated every
+			# turn, so this is captured on the pass that already finds it rather than searched for
+			# each frame — the same reason _begin_bump captures rather than looks up.
+			_walk_node = n3
+			_walk_home = n3.position
 
 ## cameras that do not cull it).
 func _tag_layer(n: Node, bit: int) -> void:
@@ -8075,7 +8085,11 @@ func _aim_held() -> void:
 	var zs: float = scale.z if absf(scale.z) > 1e-6 else 1.0
 	var k: Vector2i = _held_rig["cell"]
 	var so: float = _held_rig["sprite_off"]
-	s.position = Vector3(float(k.x) + r.x * so, s.position.y, float(k.y) + r.z * so / zs)
+	# ...PLUS THE WALK. A torch that stayed on the cell while its carrier walked out of it would
+	# light the ground behind them. _aim_held already runs every frame for the camera, so the walk
+	# offset costs nothing extra here.
+	s.position = Vector3(float(k.x) + _walk_off.x + r.x * so, s.position.y,
+		float(k.y) + _walk_off.y + r.z * so / zs)
 	var f = _held_rig.get("fire")
 	if is_instance_valid(f):
 		var fo: float = _held_rig["fire_off"]
@@ -13350,3 +13364,16 @@ func _light_cell(cell: Vector2i, delay: float) -> void:
 	await get_tree().create_timer(BURN_FIRE_LIFETIME).timeout
 	if is_instance_valid(pf):
 		pf.queue_free()
+
+
+## Draw the player part-way between cells. `off` is in cells, from their real position — the sprite
+## is MOVED rather than rebuilt, because a rebuild is a turn's worth of work and this runs every
+## frame.
+func set_walk_offset(off: Vector2) -> void:
+	_walk_off = off
+	if _walk_node != null and is_instance_valid(_walk_node):
+		_walk_node.position = _walk_home + Vector3(off.x, 0.0, off.y)
+	# The held torch is placed against the camera every frame anyway; re-aiming it here carries it
+	# along with its owner.
+	if not _held_rig.is_empty():
+		_aim_held()
