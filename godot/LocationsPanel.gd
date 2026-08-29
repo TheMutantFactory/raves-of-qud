@@ -302,9 +302,17 @@ func _refresh_title() -> void:
 		_title.text = "Locations 🔒 lost"
 		_title.add_theme_color_override("font_color", Color(1, 1, 1, 0.45))
 		return
-	_title.text = "Locations" if _armed else "Locations (beacons off)"
-	_title.add_theme_color_override("font_color",
-		QudPalette.TEXT if _armed else Color(1, 1, 1, 0.45))
+	# JUST "LOCATIONS". Daniel: "Remove the (Beacons off) text ... It's redundant to the eye icon."
+	#
+	# The DIMMING went with it, and for the same reason: it was the other half of that one signal.
+	# A heading greyed out with the words removed is worse than either — a state indicator with no
+	# legend, reading as a panel that has stopped working rather than as beacons that are off. The
+	# eye says it now, in the place you press to change it.
+	#
+	# The LOST heading above keeps both its word and its dim, because that is a different fact: the
+	# game has disabled the panel, and nothing in the header row can turn it back on.
+	_title.text = "Locations"
+	_title.add_theme_color_override("font_color", QudPalette.TEXT)
 
 func _refresh_toggle() -> void:
 	if _toggle == null:

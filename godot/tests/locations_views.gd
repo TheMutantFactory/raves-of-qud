@@ -63,6 +63,21 @@ func _ready() -> void:
 	_check("tree adds category headers", panel._row_count > _item_rows(panel).size(),
 		"row_count %d vs %d item rows" % [panel._row_count, _item_rows(panel).size()])
 
+	# THE HEADING CARRIES NO STATE. It used to read "Locations (beacons off)" and grey itself, which
+	# is the eye's job now — and a second indicator is one that can disagree. Checked in BOTH armed
+	# states so re-adding a suffix fails here rather than surviving as a quiet duplicate.
+	for armed in [true, false]:
+		panel._armed = armed
+		panel._lost = false
+		panel._refresh_title()
+		_check("heading is just the name (armed=%s)" % armed, panel._title.text == "Locations",
+			"got %s" % panel._title.text)
+	# ...but LOST still speaks, because that is the game disabling the panel and nothing in the
+	# header row can turn it back on.
+	panel._lost = true
+	panel._refresh_title()
+	_check("lost still says so", panel._title.text.contains("lost"), "got %s" % panel._title.text)
+
 	print("\n%s (%d checks failed)" % ["all good" if _failed.is_empty() else "FAILED", _failed.size()])
 	get_tree().quit(0 if _failed.is_empty() else 1)
 
