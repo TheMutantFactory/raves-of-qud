@@ -61,6 +61,11 @@ const URL_GOG := "https://www.gog.com/game/caves_of_qud"
 const URL_ELSEWHERE := "https://www.cavesofqud.com/"
 const URL_STEAM_RUN := "steam://rungameid/333640"   # launches an installed copy
 const URL_DONATE := "«donation link for Raves of Mud»"   # placeholder
+## The project's own source. A public repo under an open licence should be reachable FROM the
+## credits that claim it — a licence nobody can go and read is a claim, not a licence.
+const URL_REPO := "https://github.com/TheMutantFactory/raves-of-qud"
+## SIL's own text, for the two fonts that ship under it. Linked rather than paraphrased.
+const URL_OFL := "https://openfontlicense.org/"
 
 ## Where in-game feedback is submitted (feedback-service; see its schema/envelope.v1.md).
 ## A CUSTOM DOMAIN on purpose -- this was feedback-service.daniel-dee.workers.dev, and a personal
@@ -93,6 +98,7 @@ static func credit_branches() -> Array:
 			"note": ("Every tile, glyph and colour %s draws is %s's, read live from the copy of "
 				+ "%s you own. None of it is contained in or redistributed by this project.") % [
 					GAME_NAME, BASE_GAME_RIGHTS_HOLDER, BASE_GAME],
+			"url": URL_ELSEWHERE,
 			"entries": [
 				{"name": "Creature, item and terrain tiles", "tile": "Creatures/sw_farmer.bmp",
 					"note": "Rendered from your install at runtime"},
@@ -111,14 +117,21 @@ static func credit_branches() -> Array:
 			"entries": [
 				{"name": "Look", "art": "res://art/look.svg",
 					"note": ("The interaction cursor. Icon 2400060 from Noun Project — "
-						+ "«creator name» / «licence: free-tier credit or royalty-free»")},
+						+ "«creator name» / «licence: free-tier credit or royalty-free»"),
+					"url": "https://thenounproject.com/icon/2400060/"},
 				{"name": "Source Code Pro", "art": "",
-					"note": "© 2023 Adobe, Reserved Font Name 'Source' — SIL Open Font License 1.1"},
+					"note": "© 2023 Adobe, Reserved Font Name 'Source' — SIL Open Font License 1.1",
+					"url": "https://github.com/adobe-fonts/source-code-pro"},
 				{"name": "Atkinson Hyperlegible", "art": "",
 					"note": ("© 2020 Braille Institute of America, Inc. — "
-						+ "SIL Open Font License 1.1")},
+						+ "SIL Open Font License 1.1"),
+					"url": "https://www.brailleinstitute.org/freefont/"},
+				{"name": "SIL Open Font License 1.1", "art": "",
+					"note": "The licence both fonts above ship under",
+					"url": URL_OFL},
 				{"name": "%s itself" % GAME_NAME, "art": "",
-					"note": "%s, by %s — see the licence panel on the title screen" % [LICENSE, ORG_NAME]},
+					"note": "%s, by %s — see the licence panel on the title screen" % [LICENSE, ORG_NAME],
+					"url": URL_REPO},
 			],
 		},
 	]

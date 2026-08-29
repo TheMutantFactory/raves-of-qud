@@ -133,6 +133,7 @@ func _build_box() -> void:
 	_tree.anchor_bottom = 0.93
 	for k in ["left", "top", "right", "bottom"]:
 		_tree.set("offset_" + k, 0.0)
+	_tree.button_clicked.connect(_on_link)
 	_box.add_child(_tree)
 	_fill_tree()
 
@@ -165,6 +166,7 @@ func _fill_tree() -> void:
 		head.set_custom_color(0, TITLE_GOLD)
 		head.set_selectable(0, false)
 		head.set_collapsed(false)
+		_add_link(head, String(branch.get("url", "")))
 		var note := _tree.create_item(head)
 		note.set_text(0, String(branch.get("note", "")))
 		note.set_custom_color(0, NOTE)
@@ -181,6 +183,7 @@ func _fill_tree() -> void:
 			if tex != null:
 				row.set_icon(0, tex)
 				row.set_icon_max_width(0, 24)
+			_add_link(row, String(entry.get("url", "")))
 
 ## The row's picture: a Qud tile out of the player's own export, or a res:// asset this repo does
 ## ship. Nothing is drawn when neither is available — a credits screen should not invent art.
@@ -201,3 +204,52 @@ func _unhandled_input(e: InputEvent) -> void:
 	if e is InputEventKey and e.pressed and not e.echo and e.keycode == KEY_ESCAPE:
 		get_viewport().set_input_as_handled()
 		closed.emit()
+
+## A LINK IS A BUTTON, not a clickable row. Daniel: "Add a link to external browser for assets that
+## can be linked."
+##
+## Rows here are prose you read, and making the prose itself open a browser means a stray click
+## while scanning the list throws you out to Safari. Qud's own screens hang an explicit affordance
+## off a row for exactly this reason. So the arrow is its own target, it carries the destination in
+## its tooltip, and a row with nowhere to go simply has none.
+func _add_link(item: TreeItem, url: String) -> void:
+	if url == "" or url.begins_with("«"):
+		return                      # a placeholder is not a destination
+	item.add_button(0, _link_tex(), 0, false, url)
+	item.set_metadata(0, url)
+
+## Drawn rather than shipped, like every other icon this project makes itself: a box with an arrow
+## leaving it, the common "opens elsewhere" mark.
+var _link_icon: Texture2D
+func _link_tex() -> Texture2D:
+	if _link_icon != null:
+		return _link_icon
+	var n := 12
+	var img := Image.create(n, n, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	# the box, open at its top-right where the arrow leaves
+	for i in range(1, n - 1):
+		img.set_pixel(i, n - 2, ITEM)                      # bottom
+		if i <= n - 5:
+			img.set_pixel(i, 3, ITEM)                      # top, stopping short of the gap
+		if i >= 3:
+			img.set_pixel(1, i, ITEM)                      # left
+		if i >= 6:
+			img.set_pixel(n - 2, i, ITEM)                  # right, lower half only
+	# the arrow, out through the gap
+	for d in 5:
+		img.set_pixel(4 + d, 6 - d, ITEM)
+	for d in 3:
+		img.set_pixel(n - 2 - d, 1, ITEM)
+		img.set_pixel(n - 2, 1 + d, ITEM)
+	_link_icon = ImageTexture.create_from_image(img)
+	return _link_icon
+
+## OS.shell_open, the same call the toolkit screen makes for Qud's own wiki link — it hands the URL
+## to the user's browser and nothing of theirs travels with it.
+func _on_link(item: TreeItem, _col: int, _id: int, _mb: int) -> void:
+	var url := String(item.get_metadata(0))
+	if url == "":
+		return
+	print("[credits] opening %s" % url)
+	OS.shell_open(url)
