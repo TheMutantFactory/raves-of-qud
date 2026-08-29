@@ -968,6 +968,34 @@ func _process(dt: float) -> void:
 		_multiview.update()
 
 
+## ── the drone's shot lists ────────────────────────────────────────────────────
+##
+## THE PANEL OWNS THE LISTS AND MAIN OWNS THE WORLD, and these three are the whole seam between
+## them. The panel never asks where the drone is and Main never stores a shot.
+const _DRONE := preload("res://Drone.gd")
+var _drone_paths := {"drone": [], "look": []}
+
+## Where the rig is standing, as a shot would record it: on the grid, because that is what the
+## list stores and what a dragged drone snaps to.
+func drone_pose() -> Array:
+	return [_DRONE.snap(_cam_rig.drone_eye()), _DRONE.snap(_cam_rig.drone_target()),
+		_cam_rig.drone_zoom()]
+
+
+func set_drone_points(list: String, pts: Array) -> void:
+	_drone_paths[list] = pts
+
+
+## Fly to where the scrub says. A path with no shots poses nothing — Drone.at returns {} and the
+## drone keeps doing what it was doing, which is the whole reason it returns {} rather than an
+## origin.
+func set_drone_scrub(list: String, t: float) -> void:
+	var pose: Dictionary = _DRONE.at(_drone_paths.get(list, []), t)
+	if pose.is_empty():
+		return
+	_cam_rig.set_drone(pose["drone"], pose["target"], float(pose["zoom"]))
+
+
 ## The rig's markers follow the rig, and are only up when you are working with it: while the
 ## camera selector is open, or while a drone camera is the live one. A gold diamond hanging over
 ## the world during ordinary play is scenery, not a tool.

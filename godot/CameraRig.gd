@@ -98,6 +98,9 @@ var _player := Vector3(40, 0, 12)
 ## where it is allowed to be.
 var _drone := Vector3(40, 6, 12)
 var _drone_target := Vector3(40, 0, 12)
+## The SHOT's zoom, composed with whatever zoom the pane it is drawn in carries — the shot says how
+## tight the framing is, the pane says how far the viewer has wheeled. Multiplying keeps both.
+var _drone_zoom := 1.0
 ## How far the elevation view stands off, as a multiple of the player-to-drone distance. Both
 ## subjects have to fit with room to read the gap, and the gap is the thing that view is for.
 const DRONE_SIDE_STANDOFF := 1.6
@@ -377,9 +380,14 @@ static func drone_seed(compass_eye: Vector3, player: Vector3) -> Array:
 
 
 ## Where the drone is and what it is pointed at. Main pushes these; the shot list owns them.
-func set_drone(eye: Vector3, target: Vector3) -> void:
+func set_drone(eye: Vector3, target: Vector3, zoom := 1.0) -> void:
 	_drone = eye
 	_drone_target = target
+	_drone_zoom = maxf(zoom, 0.05)
+
+
+func drone_zoom() -> float:
+	return _drone_zoom
 
 
 func drone_eye() -> Vector3:
@@ -401,7 +409,7 @@ func eye_look_for(mode: int, st: Dictionary = {}) -> Array:
 			var aim := _drone_target - _drone
 			if aim.length() < 0.001:
 				aim = Vector3(0, -1, 0)
-			return [_drone - aim.normalized() * (zoom - 1.0), _drone_target]
+			return [_drone - aim.normalized() * (zoom * _drone_zoom - 1.0), _drone_target]
 		CamMode.DRONE_SIDE:
 			return drone_side_eye_look(_player, _drone, yaw_off)
 		CamMode.KEYBOARD:

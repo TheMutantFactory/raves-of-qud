@@ -109,9 +109,19 @@ func _ready() -> void:
 	_rows.add_theme_constant_override("separation", 1)
 	_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_scroll.add_child(_rows)
+	# NOTHING IN HERE MAY WIDEN THE COLUMN. A shot named by the user is arbitrary text, and one
+	# long name would do to this panel exactly what the empty note did: push the whole side column
+	# off the window rather than clip itself.
+	clip_contents = true
 	_empty = Label.new()
-	# The panel's own voice: an empty list is a thing you can fix with the button above it.
-	_empty.text = "No shots yet — press + to take one."
+	# SHORT, because a Label's minimum width is its whole text and this column is narrow: the
+	# first version read "No shots yet — press + to take one." and widened the panel past the
+	# column, pushing every row in it off the left edge of the window. The "+" is directly above
+	# this line anyway, so the sentence was explaining a button already in view.
+	_empty.text = "No shots yet."
+	_empty.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_empty.custom_minimum_size.x = 0
+	_empty.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_empty.add_theme_color_override("font_color", Color(1, 1, 1, 0.45))
 	_body.add_child(_empty)
 
@@ -291,6 +301,7 @@ func _make_row(i: int) -> Control:
 	name_l.name = "Name"
 	name_l.text = String(_points[i].get("name", "shot %d" % (i + 1)))
 	name_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_l.clip_text = true          # a long shot name truncates; it does not resize the column
 	row.add_child(name_l)
 
 	var bin := Button.new()

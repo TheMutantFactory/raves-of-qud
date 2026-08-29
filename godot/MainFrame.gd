@@ -116,6 +116,7 @@ var _command: Control       # the Command bar view (CommandBar.gd, row 5)
 var _info_btn: Button       # top-menu Perceived/Full toggle
 var _full_info := bool(Settings.get_value("full_info", false))  # perceived (false) vs full; Options default
 var _panels: Array = []     # every sub-view; each has set_snapshot(data) (some also set_full_info)
+var _drone: Control         # DronePanel — the drone rig's shot lists
 
 # --- 1:1 (parity) layout handles ----------------------------------------------
 # In 1:1 mode the chrome is reshaped to match Qud: a wider side column, the verbose top menu collapses
@@ -212,7 +213,7 @@ func _ready() -> void:
 	rows.add_child(_row_command())       # 5: command bar (abilities)
 
 	# The registry of sub-views (created inside the row builders above). _apply_stats feeds them all.
-	_panels = [_minimap, _nearby, _msglog, _locations, _effects, _target, _context, _command].filter(
+	_panels = [_minimap, _nearby, _msglog, _locations, _drone, _effects, _target, _context, _command].filter(
 		func(p): return p != null)
 	_apply_full_info()                   # init the toggle label + push the default (perceived) to views
 	# Follow the GAME's lifecycle: when a once-live game ends (Save and Quit / death /
@@ -1498,6 +1499,8 @@ func _panel_feature(p: Object) -> String:
 		return "nearby"
 	if p == _locations:
 		return "locations"
+	if p == _drone:
+		return "drone"
 	return ""
 
 ## Reshape the chrome to match Qud (1:1) or restore the QoL layout (user). Three moves: widen the side
@@ -1921,12 +1924,30 @@ func _row_main() -> Control:
 		if _msglog != null:
 			_msglog.add_message("{{K|beacons: %s}}" % ("locked — you are " + reason
 				if reason != "" else "unlocked")))
+	# THE DRONE'S SHOT LIST. Built here and wired late for the same reason the Locations panel is:
+	# _holo does not exist yet when this column is assembled.
+	_drone = load("res://DronePanel.gd").new()
+	_drone.name = "Drone"
+	_drone.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_drone.points_changed.connect(func(list: String, pts: Array) -> void:
+		if _holo != null and _holo.has_method("set_drone_points"):
+			_holo.set_drone_points(list, pts))
+	_drone.scrub_changed.connect(func(list: String, t: float) -> void:
+		if _holo != null and _holo.has_method("set_drone_scrub"):
+			_holo.set_drone_scrub(list, t))
+	# "+" asks MAIN for the shot, because Main is what knows where the rig is standing — the panel
+	# owns the list and nothing about the world.
+	_drone.capture_requested.connect(func(_list: String) -> void:
+		if _holo != null and _holo.has_method("drone_pose"):
+			var pose: Array = _holo.drone_pose()
+			_drone.add_point(pose[0], pose[1], float(pose[2])))
 	_locations.metrics_cb = func(mx: int, my: int) -> Dictionary:
 		return _holo.beacon_metrics(mx, my) if _holo != null else {"para": 0.0, "dir": "?"}
 	side.add_child(_minimap)
 	side.add_child(_nearby)
 	side.add_child(_msglog)
 	side.add_child(_locations)
+	side.add_child(_drone)
 	_restore_panel_order()
 	side_box.add_child(side)
 	split.add_child(side_box)
