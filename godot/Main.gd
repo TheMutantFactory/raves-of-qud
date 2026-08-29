@@ -96,6 +96,7 @@ var _cam_rig                    # CameraRig (Node3D, loaded); created in _ready.
 								# --check-only stays deterministic (a class_name's cache is flaky there);
 								# locals off _cam_rig.* therefore need explicit types, not `:=`.
 var _multiview                  # Multiview (Node, loaded); the all-views grid. Created in _ready.
+var _drone_gizmo                # DroneGizmo (Node3D); the drone body, its target ring and the aim line
 var _remote                     # RemoteControl (RefCounted); the godot_cmd file channel. Created in _ready.
 
 # Remembered view/render settings, saved on exit and restored on launch (so Raves doesn't
@@ -265,6 +266,11 @@ func _ready() -> void:
 
 	# Multi-view grid (its own file). Built BEFORE the debug menu, whose button connects to its toggle.
 	# Pane clicks call back into Main._multiview_inspect (Main owns the inspector + report form).
+	# THE RIG'S MARKERS. Added to the scene, not to the renderer's per-turn subtree: that subtree
+	# is cleared and rebuilt every step, and a gizmo the user is dragging must not vanish under a
+	# turn — the same reason ZoneRenderer keeps _fx_root outside it.
+	_drone_gizmo = load("res://DroneGizmo.gd").new()
+	add_child(_drone_gizmo)
 	_multiview = load("res://Multiview.gd").new()
 	add_child(_multiview)
 	# The last argument is how a pane's compass ring moves the player: it hands back a COMPASS
@@ -957,8 +963,22 @@ func _process(dt: float) -> void:
 	# _unhandled_input has consulted TypingGuard for a while; Input.is_key_pressed never did, and
 	# does not consult focus at all, so the camera keys went on firing under a form's caret.
 	_cam_rig.process(dt, _multiview.is_on(), TypingGuard.typing(get_viewport()))
+	_update_drone_gizmo()
 	if _multiview.is_on():
 		_multiview.update()
+
+
+## The rig's markers follow the rig, and are only up when you are working with it: while the
+## camera selector is open, or while a drone camera is the live one. A gold diamond hanging over
+## the world during ordinary play is scenery, not a tool.
+func _update_drone_gizmo() -> void:
+	if _drone_gizmo == null:
+		return
+	var want: bool = _multiview.is_on() or _cam_rig._mode == CamMode.DRONE \
+		or _cam_rig._mode == CamMode.DRONE_SIDE
+	_drone_gizmo.set_shown(want)
+	if want:
+		_drone_gizmo.place(_cam_rig.drone_eye(), _cam_rig.drone_target())
 
 # ── hold to walk, and walk-in-a-direction ─────────────────────────────────────
 #
