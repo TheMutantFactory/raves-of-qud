@@ -199,14 +199,53 @@ namespace RavesOfQud
                         }
                     }
                 }
+                // THE STRIP'S LIVE COLOURS, read off the buttons themselves — the same thing
+                // InventoryExporter does, and for the same reason it explains there:
+                // FilterBarCategoryButton.LateUpdate paints `background` only ON A STATE CHANGE, so
+                // a cell nobody has ever toggled keeps its prefab colour. Which of the four a given
+                // cell shows depends on the save's whole interaction history and cannot be derived
+                // from outside. Read what each button IS.
+                var live = new Dictionary<string, string>();
+                try
+                {
+                    foreach (var fb in UnityEngine.Resources.FindObjectsOfTypeAll<Qud.UI.FilterBarCategoryButton>())
+                    {
+                        if (fb == null || fb.background == null) continue;
+                        if (!fb.gameObject.activeInHierarchy) continue;   // pooled copies lie
+                        if (string.IsNullOrEmpty(fb.category)) continue;
+                        var c2 = fb.background.color;
+                        live[fb.category] = string.Format("#{0:x2}{1:x2}{2:x2}",
+                            (int)(c2.r * 255f), (int)(c2.g * 255f), (int)(c2.b * 255f));
+                    }
+                }
+                catch (Exception fe) { Log("[trade] filter colours: " + fe.Message); }
+
                 var on = sc.filterBar?.enabledCategories;
                 foreach (string c in order)
                 {
                     j.BeginObject();
                     j.Member("cat", c);
                     j.Member("on", on != null && on.Contains(c));
+                    string lc;
+                    if (live.TryGetValue(c, out lc)) j.Member("color", lc);
+                    // QUD'S OWN CATEGORY ICON, out of FilterBarCategoryButton.categoryImageMap --
+                    // the same source the inventory strip draws from. Standing in with the first
+                    // item of the category, as this did, was never necessary: these exist.
+                    bool drew = false;
+                    try
+                    {
+                        string ic;
+                        if (Qud.UI.FilterBarCategoryButton.categoryImageMap.TryGetValue(c, out ic)
+                            && !string.IsNullOrEmpty(ic))
+                        {
+                            TileExporter.Ensure(ic);
+                            j.Member("icon", ic);
+                            drew = true;
+                        }
+                    }
+                    catch { }
                     GameObject go;
-                    if (icon.TryGetValue(c, out go) && go != null)
+                    if (!drew && icon.TryGetValue(c, out go) && go != null)
                     {
                         try { InventoryExporter.WriteTile(j, go, "Trade"); } catch { }
                     }

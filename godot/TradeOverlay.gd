@@ -62,25 +62,28 @@ const DEVICE_W := 176.0
 const DEVICE_Y := 21.0
 const DEVICE_H := 16.0
 
-## THE CATEGORY STRIP — Qud's FilterBar, the same widget the inventory screen already draws, at
-## this screen's own origin. Daniel: "Let's add the item category carosell to the trade screen. It
-## should be the same/similar to the inventory screen."
+## THE CATEGORY STRIP is Qud's FilterBarCategoryButton, and it is drawn through the SHARED helper
+## rather than rebuilt here. Daniel: "Let's switch the trade category carosell with the same carosel
+## as the inventory. (Frames, and colors)"
 ##
-## Cells are 46x41 on a 58 pitch, which is the inventory strip's model exactly: 46 because Qud draws
-## polat-category-frame at its native size, and the 12px gap is what a 58 pitch leaves. Measured
-## here at x502 y41 off the UiProbe dump, against the inventory's x618 y177 — same widget, different
-## corner.
+## QudFilterBar exists for exactly this: it was lifted out of StatusPaneInventory so the journal's
+## carousel would get the same pixels instead of a second, drifting copy — and then this screen went
+## and made the third copy anyway, out of StyleBoxFlat borders. It owns the real nine-sliced
+## `polat-category-frame` sprite, the 46x41 cell on a 58 pitch, and the 20x30 icon slot with Qud's
+## own stretch (the WHOLE 16x24 tile scaled 1.25x, never normalised to the opaque box — a
+## distinction that cost the inventory three attempts).
+##
+## Only the origin is this screen's: x502 y41 off the UiProbe dump, against the inventory's x618
+## y177.
 const FILTER_Y := 41.0
 const FILTER_H := 41.0
 const FILT_X := 502.0
-const FILT_W := 46.0
-const FILT_PITCH := 58.0
-## Cell states, straight out of Qud's FilterBarCategoryButton.LateUpdate and reused verbatim from
-## StatusPaneInventory, which measured them: an untouched frame keeps the prefab colour because that
-## LateUpdate only writes on a CHANGE, so a button nobody has pressed is never assigned one of the
-## four states.
+## Cell states, Qud's law verbatim — but only as the FALLBACK. The live colour rides on each cell in
+## the frame (see the mod), because LateUpdate paints the four states only ON CHANGE: a cell nobody
+## has toggled keeps its prefab colour, and which one it shows depends on the save's whole
+## interaction history. That is not derivable from outside, so it is read rather than modelled.
 const C_BOX := Color8(51, 80, 91)          # the untouched/prefab frame
-const C_FILT_ON := Color8(122, 126, 71)    # #858951 — this category is filtered ON
+const C_FILT_ON := Color8(122, 126, 71)    # #858951 — filtered ON
 const C_ALL_OFF := Color8(19, 79, 78)      # "*All" has been toggled, so it carries a colour when off
 const C_HOVER := Color8(65, 106, 115)      # #4A757E — focused
 
@@ -176,7 +179,12 @@ var _offer: Button               # the TRADE [n] cell — pressing it offers
 var _money: RichTextLabel
 var _purse: RichTextLabel        # the trader's own drams, left of the band
 var _legend: Label
-var _strip: Control              # the category filter cells
+var _strip: Control              # the category filter cells, drawn through QudFilterBar
+var _bar: RefCounted = load("res://QudFilterBar.gd").new()
+var _filt_rects: Array = []      # [[Rect2, category], …] for hit-testing, rebuilt with the strip
+var _filt_hover := -1
+var _strip_font: Font
+const C_LABEL := Color8(175, 198, 193)   # Qud's flat #afc6c1 on the ALL cell's glyphs
 var _bars: Array = []            # [side] -> {scroll, track, handle}: Qud's left-gutter scrollbar
 var tiles_dir := ""
 
@@ -277,9 +285,13 @@ func _ensure_built() -> void:
 	_rect(Rect2(MID_X, COLS_Y, MID_W, LIST_H + HEAD_H), FRAME * Color(1, 1, 1, 0.18))
 	_rect(Rect2(MID_X, HBORDER_Y, MID_W, 1.0), FRAME)
 
+	_strip_font = load("res://fonts/SourceCodePro-Regular.ttf")
 	_strip = Control.new()
-	_strip.mouse_filter = Control.MOUSE_FILTER_IGNORE   # the cells take their own clicks
+	_strip.mouse_filter = Control.MOUSE_FILTER_STOP     # it hit-tests its own cells
+	_strip.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST   # or every icon comes out smeared
 	_place(_strip, Rect2(0.0, FILTER_Y, DESIGN.x, FILTER_H))
+	_strip.draw.connect(_draw_strip)
+	_strip.gui_input.connect(_strip_input)
 	_design.add_child(_strip)
 
 	var tl := _rich(DIM); _place(tl, Rect2(TOTAL_L_X, TOTALS_Y, TOTAL_W, 22.0))
@@ -403,56 +415,80 @@ func _paint_bars() -> void:
 ## list. The first cell shows TEXT and the rest show ICONS, which is how Qud's own bar is built
 ## (the probe's first button carries a `text` child where every other carries an `icon`).
 func _paint_filters() -> void:
-	for c in _strip.get_children():
-		c.queue_free()
+	if _strip != null:
+		_strip.queue_redraw()
+
+## Drawn, not built out of Buttons — QudFilterBar paints Qud's own nine-sliced frame onto a
+## CanvasItem, which is how the inventory and the journal both draw this strip.
+func _draw_strip() -> void:
+	_filt_rects.clear()
 	var i := 0
 	for f in _data.get("filters", []):
 		var cell: Dictionary = f
 		var cat := String(cell.get("cat", ""))
-		var on := bool(cell.get("on", false))
-		var btn := Button.new()
-		# NOT flat: a flat Button draws no background at all, which threw away the styleboxes below
-		# and with them the cell frames — the strip came out as bare floating icons.
-		btn.focus_mode = Control.FOCUS_NONE
-		btn.position = Vector2(FILT_X + float(i) * FILT_PITCH, 0.0)
-		btn.size = Vector2(FILT_W, FILTER_H)
-		btn.custom_minimum_size = btn.size
-		var box := StyleBoxFlat.new()
-		box.bg_color = Color(0, 0, 0, 0)
-		box.border_color = C_FILT_ON if on else (C_ALL_OFF if cat == "*All" else C_BOX)
-		box.set_border_width_all(2)
-		btn.add_theme_stylebox_override("normal", box)
-		var hov := box.duplicate()
-		hov.border_color = C_HOVER if not on else C_FILT_ON
-		btn.add_theme_stylebox_override("hover", hov)
-		btn.add_theme_stylebox_override("pressed", hov)
-		btn.add_theme_stylebox_override("focus", box)
+		var r := Rect2(Vector2(FILT_X + float(i) * float(_bar.CELL_PITCH), 0.0),
+			Vector2(float(_bar.CELL_W), float(_bar.CELL_H)))
+		# QUD'S LIVE COLOUR WINS. The four-state law is only the fallback for a cell the frame
+		# carries none for — see the note on the constants.
+		var col: Color = _filt_state(cell, cat)
+		if i == _filt_hover:
+			col = C_HOVER            # hover is ours to render, live or not
+		_bar.cell(_strip, r, col, C_HOVER, true, Color(0, 0, 0, 0), Vector2(4, 3))
+		_filt_rects.append([r, cat])
 		if cat == "*All":
-			var lab := Label.new()
-			lab.text = "All"
-			lab.add_theme_font_size_override("font_size", 16)
-			lab.add_theme_color_override("font_color", C_FILT_ON if on else DIM)
-			lab.size = btn.size
-			lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			lab.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-			lab.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			btn.add_child(lab)
+			var aw := _strip_font.get_string_size("ALL", HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
+			# THE LABEL DOES NOT FOLLOW THE FRAME: selecting *All golds the cell's frame, and Qud's
+			# own glyphs stay a flat grey inside it. The inventory learned that one the hard way.
+			_strip.draw_string(_strip_font, Vector2(r.position.x + (r.size.x - aw) * 0.5,
+				r.position.y + 25.0), "ALL", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, C_LABEL)
 		else:
-			var ic := TextureRect.new()
-			ic.position = Vector2((FILT_W - ICON.x) * 0.5, (FILTER_H - ICON.y) * 0.5)
-			ic.size = ICON
-			ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-			ic.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-			ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			if _tiles != null:
-				_tiles.tiles_dir = tiles_dir
-				_tiles.palette = _palette
-				ic.texture = _tiles.texture_for(cell, true)
-			btn.add_child(ic)
-		btn.tooltip_text = cat
-		btn.pressed.connect(func() -> void: act.emit({"do": "filter", "cat": cat}))
-		_strip.add_child(btn)
+			var icon := String(cell.get("icon", ""))
+			# THE FIXED TWO-TONE, not the tile's own colours. SetCategory hands the icon one brass
+			# pair for every category, which is why Qud's strip is all one metal — drawing each in
+			# its item's colours made a row of mismatched trinkets.
+			var main: Color = _bar.ICON_MAIN
+			var det: Color = _bar.ICON_DETAIL
+			if icon == "":
+				icon = String(cell.get("tile", ""))
+				main = _tiles.color_of(String(cell.get("color", "")), Color.WHITE)
+				det = _tiles.color_of(String(cell.get("detail", "")), Color.WHITE)
+			if icon != "":
+				var tex: Texture2D = _tiles.texture(icon, main, det)
+				if tex != null:
+					var isz: Vector2 = _bar.ICON
+					_strip.draw_texture_rect(tex, Rect2(
+						r.position + Vector2((r.size.x - isz.x) * 0.5, (r.size.y - isz.y) * 0.5),
+						isz), false)
 		i += 1
+
+## Qud's live colour for a cell, or the four-state law when the frame carries none.
+func _filt_state(cell: Dictionary, cat: String) -> Color:
+	var hex := String(cell.get("color", ""))
+	if hex != "":
+		return Color(hex)
+	if bool(cell.get("on", false)):
+		return C_FILT_ON
+	return C_ALL_OFF if cat == "*All" else C_BOX
+
+func _strip_input(e: InputEvent) -> void:
+	var mm := e as InputEventMouseMotion
+	if mm != null:
+		var was := _filt_hover
+		_filt_hover = -1
+		for i in _filt_rects.size():
+			if (_filt_rects[i][0] as Rect2).has_point(mm.position):
+				_filt_hover = i
+				break
+		if was != _filt_hover:
+			_strip.queue_redraw()
+		return
+	var mb := e as InputEventMouseButton
+	if mb == null or not mb.pressed or mb.button_index != MOUSE_BUTTON_LEFT:
+		return
+	for row in _filt_rects:
+		if (row[0] as Rect2).has_point(mb.position):
+			act.emit({"do": "filter", "cat": row[1]})
+			return
 
 func _side(i: int) -> Dictionary:
 	var sides: Array = _data.get("sides", [])
