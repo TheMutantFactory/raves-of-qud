@@ -96,8 +96,21 @@ var _look_head := true       # default: track the head (feet-aim buries the head
 const FOLLOW_LERP := 6.0     # per-second approach; keeps steps from snapping
 var _player := Vector3(40, 0, 12)
 
-## THE DRONE, in world units. Whole tiles: the control ring steps it a cell at a time.
-var _drone := Vector3(40, 6, 12)
+## THE DRONE, AS AN OFFSET FROM THE PLAYER — not an absolute spot on the map. Daniel: "make it so
+## after you select drone cam, it follows the player in that relative offset."
+##
+## HOLDING THE OFFSET IS ALSO WHAT MAKES A PLAYER-FACING AIM SAFE. Every reversal in this feature
+## came from the drone crossing the player and inverting the direction between them; a constant
+## offset cannot cross, so the aim below can point at the player without spinning. The one way to
+## reach zero is to fly the drone through yourself, which is a thing you do on purpose, and the
+## aim holds its last heading when you do.
+var _drone_off := Vector3(0, 6, 0)
+
+## WHAT THE DRONECAM LOOKS AT. Daniel: "Target (Player-head, Player-center, Player floor,
+## drone-1st)". FIRST is the drone's own heading — the first-person focus this started as.
+enum DroneTarget { HEAD, CENTER, FLOOR, FIRST }
+var _drone_target := DroneTarget.FIRST
+var _drone_aim := Vector3(-1, 0, 0)   # last good aim, for the degenerate zero-offset case
 const DRONE_MIN_H := 1.0      # never in the floor
 const DRONE_MAX_H := 40.0
 ## How far ahead on the ground the dronecam looks. Sets the pitch: bigger is flatter.
@@ -353,21 +366,58 @@ func step_drone(dir: String) -> void:
 	nudge_drone(Vector3(d.x, 0.0, d.y))
 
 
-## Step the drone one press, clamped to the zone and to a sane height.
+## Step the drone one press.
 ##
-## THE LATERAL CLAMP IS THE SECOND HALF OF THE SAME REPORT: "I've placed the drone on the ground.
-## It's stuck in an adjacent zone." Nothing bounded x/z, so the drone could be walked clean off the
-## live zone — and out there the control view frames a patch of neighbouring ground with no
-## landmark in it, which is a poor place to be steering from.
+## THE OFFSET IS CLAMPED HERE TOO, against where the player is standing right now — otherwise it
+## WINDS UP. Clamping only in drone_pos means holding a direction at the zone wall keeps growing an
+## offset you cannot see, and coming back costs exactly as many presses as you wasted. Clamped
+## here, the button simply stops doing anything at the wall and the first press back moves you.
+##
+## drone_pos still clamps as well, and that is not redundant: this bounds what YOU can ask for,
+## and that bounds what WALKING can do to a shot you already set.
 func nudge_drone(delta: Vector3) -> void:
-	_drone = Vector3(
-		clampf(_drone.x + delta.x, 0.0, maxf(_zone_cells.x - 1.0, 0.0)),
-		clampf(_drone.y + delta.y, DRONE_MIN_H, DRONE_MAX_H),
-		clampf(_drone.z + delta.z, 0.0, maxf(_zone_cells.y - 1.0, 0.0)))
+	var mx: float = maxf(_zone_cells.x - 1.0, 0.0)
+	var mz: float = maxf(_zone_cells.y - 1.0, 0.0)
+	_drone_off = Vector3(
+		clampf(_player.x + _drone_off.x + delta.x, 0.0, mx) - _player.x,
+		clampf(_drone_off.y + delta.y, DRONE_MIN_H, DRONE_MAX_H),
+		clampf(_player.z + _drone_off.z + delta.z, 0.0, mz) - _player.z)
 
 
+## Where the drone actually is: the player, plus the offset, kept inside the zone.
+##
+## THE ZONE CLAMP IS APPLIED HERE AND NOT TO THE OFFSET — "I've placed the drone on the ground.
+## It's stuck in an adjacent zone." Clamping the offset instead would mean walking toward a zone
+## edge permanently SHORTENS your framing, and you would have to re-fly the drone every time you
+## approached a wall. This way it noses against the edge and springs back to the shot you set.
 func drone_pos() -> Vector3:
-	return _drone
+	return Vector3(
+		clampf(_player.x + _drone_off.x, 0.0, maxf(_zone_cells.x - 1.0, 0.0)),
+		clampf(_drone_off.y, DRONE_MIN_H, DRONE_MAX_H),
+		clampf(_player.z + _drone_off.z, 0.0, maxf(_zone_cells.y - 1.0, 0.0)))
+
+
+func drone_offset() -> Vector3:
+	return _drone_off
+
+
+func set_drone_target(t: int) -> void:
+	_drone_target = t
+
+
+func drone_target_mode() -> int:
+	return _drone_target
+
+
+## Height above the player's feet that each target aims at. Reuses the rig's OWN head/waist
+## constants rather than inventing a second pair — this file already has one answer to "where is
+## the head", and the camera that agrees with it is the one that frames the same way.
+func drone_target_point() -> Vector3:
+	match _drone_target:
+		DroneTarget.HEAD: return _player + Vector3(0, HEAD_LOOK_H, 0)
+		DroneTarget.CENTER: return _player + Vector3(0, WAIST_LOOK_H, 0)
+		DroneTarget.FLOOR: return _player
+	return _player
 
 
 func eye_look_for(mode: int, st: Dictionary = {}) -> Array:
@@ -375,18 +425,24 @@ func eye_look_for(mode: int, st: Dictionary = {}) -> Array:
 	var zoom: float = maxf(0.05, float(st.get("zoom", 1.0)))
 	match mode:
 		CamMode.DRONECAM:
-			# FIRST-PERSON FOCUS: the drone looks where it is pointed, and nothing else moves it.
-			# Daniel: "There's a way to switch among (player focus, first-person focus, look
-			# follow-focus). Let's start with first person focus." The other two are the reason
-			# this is worth naming — a player-focus aim is what flipped the camera 180 degrees
-			# when the drone crossed the player, so when it comes back it comes back as a CHOICE,
-			# not as the only behaviour.
-			var fwd := Vector3(-1, 0, 0).rotated(Vector3.UP, yaw_off)
-			# AIMED AT THE GROUND AHEAD, not level. A camera six tiles up looking flat sees
-			# horizon and sky; tying the look-down to the drone's own height tilts it further as
-			# it climbs, the way an operator would.
-			var look := _drone + fwd * DRONECAM_AHEAD - Vector3(0, _drone.y, 0)
-			return [_drone - fwd * (zoom - 1.0), look]
+			# FOUR TARGETS, chosen in the pane. Three of them frame the player at a height;
+			# the fourth is the drone's own heading, which is where this started.
+			var eye := drone_pos()
+			if _drone_target == DroneTarget.FIRST:
+				# AIMED AT THE GROUND AHEAD, not level. A camera six tiles up looking flat sees
+				# horizon and sky; tying the look-down to the drone's own height tilts it
+				# further as it climbs, the way an operator would.
+				var fwd := Vector3(-1, 0, 0).rotated(Vector3.UP, yaw_off)
+				return [eye - fwd * (zoom - 1.0),
+					eye + fwd * DRONECAM_AHEAD - Vector3(0, eye.y, 0)]
+			var tgt := drone_target_point()
+			# HOLD THE LAST AIM when the drone is standing on the player. There is no direction
+			# from a point to itself, and every reversal this feature has had came from a
+			# direction that could invert — so here it simply does not change.
+			var to_t := tgt - eye
+			if Vector3(to_t.x, 0.0, to_t.z).length() > 0.001:
+				_drone_aim = to_t.normalized()
+			return [eye - _drone_aim * (zoom - 1.0), eye + _drone_aim * maxf(to_t.length(), 0.001)]
 		CamMode.KEYBOARD:
 			return [_free_eye, _free_eye + _aim_dir().rotated(Vector3.UP, yaw_off)]
 		CamMode.MOUSE:
@@ -738,5 +794,6 @@ func set_player(pos: Vector3, facing: Vector2, update_facing: bool) -> void:
 		# height at the closest zoom is 0 — a drone in the floor, and an elevation framing a
 		# zero-height gap, which reads as broken rather than as close.
 		var ce: Vector3 = eye_look_for(CamMode.COMPASS)[0]
-		_drone = Vector3(roundf(ce.x), maxf(roundf(ce.y), DRONE_MIN_H), roundf(ce.z))
+		_drone_off = Vector3(roundf(ce.x - _player.x),
+			maxf(roundf(ce.y), DRONE_MIN_H), roundf(ce.z - _player.z))
 		_look = _follow_look()

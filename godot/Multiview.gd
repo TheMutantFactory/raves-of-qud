@@ -13,6 +13,14 @@ const TOP_FOLLOW := 6              # CamMode.TOP_FOLLOW — the one orthographic
 const DRONECAM := 8
 const MODES := [0, 1, 2, 3, 4, 5, 6, 7, 8]   # ...and 7 = ADVENTURE, the slider-tuned compass
 const DroneMarker = preload("res://DroneMarker.gd")
+## The dronecam's four targets: [enum value, button label, tooltip]. Short labels — the pane is a
+## camera, not a form, and these sit over live picture.
+const TARGETS := [
+	[0, "head", "Look at the player's head"],
+	[1, "ctr", "Look at the player's centre"],
+	[2, "feet", "Look at the player's feet"],
+	[3, "1st", "Look where the drone is pointed (first person)"],
+]
 const PANE_ZOOM_MIN := 0.25
 const PANE_ZOOM_MAX := 4.0   # CamMode order: COMPASS, FOLLOW(3rd-person), FIRST_PERSON, CINEMATIC, MOUSE, KEYBOARD, TOP_FOLLOW, ADVENTURE
 
@@ -212,6 +220,28 @@ func _build_pane_ui(cell: Control, i: int, m: int) -> void:
 		cell.add_child(lift)
 		_cams[i]["ui"].append(lift)
 
+		# TARGET — what the camera looks at. Daniel: "Target (Player-head, Player-center, Player
+		# floor, drone-1st)". A row of four rather than a cycling button: with a cycler you cannot
+		# see which one you are on without pressing it, and pressing it is the thing that changes
+		# the shot you were judging.
+		var tgt := HBoxContainer.new()
+		tgt.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+		tgt.position = Vector2(6, -96)
+		tgt.add_theme_constant_override("separation", 1)
+		var tbtns := {}
+		for spec in TARGETS:
+			var b2 := _small_btn(String(spec[1]), String(spec[2]), 34.0, 18.0)
+			var tv: int = int(spec[0])
+			b2.pressed.connect(func():
+				_cam_rig.set_drone_target(tv)
+				_refresh_targets(tbtns))
+			tbtns[tv] = b2
+			tgt.add_child(b2)
+		cell.add_child(tgt)
+		_cams[i]["ui"].append(tgt)
+		_cams[i]["tgt_btns"] = tbtns
+		_refresh_targets(tbtns)
+
 	# ROTATE + ZOOM, bottom-right. Rotation is per pane by design; the slider multiplies whatever
 	# distance this pane's MODE computes, so it means the same thing in every pane without any
 	# mode needing to know about it.
@@ -317,6 +347,14 @@ func _build_pane_ui(cell: Control, i: int, m: int) -> void:
 ## the pointer from the pane onto one of its own buttons makes the pane emit `exited` -- the
 ## controls would vanish the instant you reached for them, which is the one moment they must not.
 ## A rect test asks the question that was actually meant: is the pointer inside this pane.
+## Which target is live, lit. A row of four that all look the same is a row that tells you nothing.
+func _refresh_targets(btns: Dictionary) -> void:
+	var cur: int = _cam_rig.drone_target_mode()
+	for k in btns:
+		var b: Button = btns[k]
+		b.modulate = Color(1, 1, 1, 1) if int(k) == cur else Color(1, 1, 1, 0.45)
+
+
 func _update_hover() -> void:
 	if _layer == null or not _on:
 		return
