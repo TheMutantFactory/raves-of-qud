@@ -9,9 +9,18 @@ extends PanelContainer
 ## playhead, reordering mid-drag) testable without a viewport. This file owns rows, drags and
 ## clicks; it owns no rules.
 
-signal points_changed(points: Array)   # -> Main: the path the drone flies
-signal scrub_changed(t: float)         # -> Main: where along it the drone is right now
-signal capture_requested                # -> Main: "+" — take a shot from wherever the rig stands
+## THE LIST NAME RIDES ALONG. Two lists share these signals, and a consumer that had to remember
+## which one was showing would mis-attribute the first edit after every swap.
+signal points_changed(list: String, points: Array)
+signal scrub_changed(list: String, t: float)
+signal capture_requested(list: String)   # "+" — take a shot from wherever the rig stands
+
+## THE TWO LISTS. Daniel asked for look mode to keep its own set of views rather than share the
+## drone's shots: same +/trash/drag/scrub machinery, separate contents. They are structurally
+## identical — an eye, a thing it points at, and how tight the shot is — so the only thing that
+## differs is which one is showing.
+const LISTS := ["drone", "look"]
+const LIST_LABEL := {"drone": "drone", "look": "look"}
 
 const OPEN_KEY := "drone_open"
 const INVERT_KEY := "drone_invert_scroll"
@@ -29,8 +38,14 @@ var _empty: Label
 var _invert_box: CheckBox
 var _expanded := false
 var _one_to_one := false
+## The ACTIVE list and playhead. The inactive one is parked in _by_list and swapped back in on
+## set_list — so every method below goes on working on "the list", and none of them has to ask
+## which one it is.
 var _points: Array = []
 var _t := 0.0
+var _list := "drone"
+var _by_list := {"drone": {"points": [], "t": 0.0}, "look": {"points": [], "t": 0.0}}
+var _list_btns := {}
 var _invert := false
 ## The row being dragged, or -1. Held here rather than on the row so that a row destroyed by a
 ## rebuild mid-drag cannot take the drag state with it.
@@ -61,7 +76,7 @@ func _ready() -> void:
 	_add.text = "+"
 	_add.tooltip_text = "Add a shot here — the drone's position, its target and the zoom"
 	_add.focus_mode = Control.FOCUS_NONE
-	_add.pressed.connect(func() -> void: capture_requested.emit())
+	_add.pressed.connect(func() -> void: capture_requested.emit(_list))
 	head.add_child(_add)
 	_toggle = Button.new()
 	_toggle.focus_mode = Control.FOCUS_NONE
@@ -71,6 +86,21 @@ func _ready() -> void:
 	_body = VBoxContainer.new()
 	_body.add_theme_constant_override("separation", 2)
 	v.add_child(_body)
+	# THE SWAP, above the rows rather than in the heading: it changes WHICH LIST you are looking
+	# at, so it belongs with the list, not with the panel's own open/shut state.
+	var pick := HBoxContainer.new()
+	pick.add_theme_constant_override("separation", 8)
+	var grp := ButtonGroup.new()
+	for n in LISTS:
+		var b := CheckBox.new()
+		b.text = String(LIST_LABEL[n])
+		b.button_group = grp
+		b.focus_mode = Control.FOCUS_NONE
+		b.button_pressed = n == _list
+		b.pressed.connect(func() -> void: set_list(n))
+		_list_btns[n] = b
+		pick.add_child(b)
+	_body.add_child(pick)
 	_scroll = ScrollContainer.new()
 	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -94,7 +124,9 @@ func _ready() -> void:
 	_expanded = bool(Settings.get_value(OPEN_KEY, false))
 	_invert = bool(Settings.get_value(INVERT_KEY, false))
 	_invert_box.button_pressed = _invert
-	_points = _load_points()
+	_by_list = _load_points()
+	_points = _by_list[_list]["points"]
+	_t = float(_by_list[_list]["t"])
 	_refresh_toggle()
 	_rebuild()
 	_apply_height()
@@ -126,6 +158,31 @@ func expanded() -> bool:
 	return _expanded
 
 
+## Which list is showing. Main asks so it knows whether a scrub is flying the drone or posing a
+## look-mode view.
+func active_list() -> String:
+	return _list
+
+
+## Show the other list. PARK THE ONE LEAVING, playhead and all: a look-mode view list that came
+## back scrubbed to wherever the drone happened to be is not a separate list, it is one list
+## wearing two names.
+func set_list(name: String) -> void:
+	if name == _list or not LISTS.has(name):
+		return
+	_by_list[_list] = {"points": _points, "t": _t}
+	_list = name
+	_points = _by_list[name]["points"]
+	_t = float(_by_list[name]["t"])
+	var b: CheckBox = _list_btns.get(name)
+	if b != null:
+		b.button_pressed = true
+	_rebuild()
+	_apply_height()
+	points_changed.emit(_list, _points)
+	scrub_changed.emit(_list, _t)
+
+
 func points() -> Array:
 	return _points
 
@@ -143,7 +200,7 @@ func invert() -> bool:
 ## the two end up disagreeing.
 func scroll_by(notches: float) -> float:
 	_t = D.scrub(_t, notches, _points.size(), _invert)
-	scrub_changed.emit(_t)
+	scrub_changed.emit(_list, _t)
 	_paint_playhead()
 	return _t
 
@@ -159,7 +216,7 @@ func remove_point(i: int) -> void:
 	_points = r["points"]
 	_t = r["t"]
 	_commit()
-	scrub_changed.emit(_t)
+	scrub_changed.emit(_list, _t)
 
 
 func move_point(from_i: int, to_i: int) -> void:
@@ -178,7 +235,7 @@ func _commit() -> void:
 	_save_points()
 	_rebuild()
 	_apply_height()
-	points_changed.emit(_points)
+	points_changed.emit(_list, _points)
 
 
 func _refresh_toggle() -> void:
@@ -288,8 +345,18 @@ func _paint_playhead() -> void:
 				QudPalette.TEXT if i == cur else Color(1, 1, 1, 0.55))
 
 
-func _load_points() -> Array:
-	var raw: Variant = Settings.get_value(POINTS_KEY, [])
+## Both lists, keyed by name. A bare Array is the ONE-LIST shape this file shipped with for a
+## day; it is read as the drone's, so an early saved list is not silently dropped.
+func _load_points() -> Dictionary:
+	var raw: Variant = Settings.get_value(POINTS_KEY, {})
+	var out := {}
+	for n in LISTS:
+		var lst: Variant = raw[n] if (raw is Dictionary and raw.has(n)) else (raw if (raw is Array and n == "drone") else [])
+		out[n] = {"points": _read_list(lst), "t": 0.0}
+	return out
+
+
+static func _read_list(raw: Variant) -> Array:
 	var out: Array = []
 	if raw is Array:
 		for e in raw:
@@ -308,16 +375,28 @@ func _load_points() -> Array:
 func _save_points() -> void:
 	if not persist:
 		return
-	var raw: Array = []
-	for p in _points:
-		raw.append({
-			"name": String(p.get("name", "shot")),
-			"drone": [p["drone"].x, p["drone"].y, p["drone"].z],
-			"target": [p["target"].x, p["target"].y, p["target"].z],
-			"zoom": float(p.get("zoom", 1.0)),
-		})
-	Settings.set_value(POINTS_KEY, raw)
+	# THE LIVE LIST IS NOT IN _by_list until a swap parks it, so write it in before saving —
+	# otherwise every edit to the list you are looking at is the one edit that never persists.
+	_by_list[_list] = {"points": _points, "t": _t}
+	Settings.set_value(POINTS_KEY, _encode(_by_list))
 	Settings.save()
+
+
+## What gets written, as a value. SEPARATE FROM THE WRITE so it can be checked without one: the
+## test that proves both lists are saved should not be able to save them over the developer's own.
+static func _encode(by_list: Dictionary) -> Dictionary:
+	var raw := {}
+	for n in LISTS:
+		var arr: Array = []
+		for p in by_list.get(n, {}).get("points", []):
+			arr.append({
+				"name": String(p.get("name", "shot")),
+				"drone": [p["drone"].x, p["drone"].y, p["drone"].z],
+				"target": [p["target"].x, p["target"].y, p["target"].z],
+				"zoom": float(p.get("zoom", 1.0)),
+			})
+		raw[n] = arr
+	return raw
 
 
 static func _vec(v: Variant) -> Vector3i:
