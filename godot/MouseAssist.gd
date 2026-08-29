@@ -181,7 +181,7 @@ func _icon_for(v: String) -> Texture2D:
 		"talk":
 			tex = _speech_tex()
 		"use":
-			tex = _hand_tex()
+			tex = _look_tex()
 	if tex != null:
 		_icons[v] = tex
 	return tex
@@ -209,7 +209,11 @@ func _line_material() -> StandardMaterial3D:
 	m.vertex_color_use_as_albedo = false
 	m.albedo_color = BOX_COLOR
 	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	m.no_depth_test = true     # the tile you are pointing at is one you can see
+	# DEPTH-TESTED, because it is a mark ON THE FLOOR. Daniel: "It's showing above the Dromad, which
+	# means it's not on the floor it's over everything?" — exactly right. no_depth_test drew the
+	# outline over the merchant standing on the tile and over every wall between, so it read as a
+	# decal floating in front of the scene rather than a square painted on the ground.
+	m.no_depth_test = false
 	m.render_priority = 3
 	return m
 
@@ -249,6 +253,38 @@ func _speech_tex() -> Texture2D:
 
 ## A hand: palm, four fingers, a thumb. The conventional "you can use this", at a size where a
 ## realistic one would be mud.
+## THE INTERACTION ICON: a Noun Project eye, tinted. Daniel supplied the SVG and the colour.
+##
+## It replaces a hand drawn here pixel by pixel (below, kept as the fallback). Two notes:
+##
+## FIRST ART IN THE REPO. Every other icon Raves shows is either built in code or pulled from Qud's
+## own exported tiles at runtime; this is the first bitmap the project ships. It is imported at
+## svg/scale 0.053 rather than 1.0 — the source is 1200pt, which Godot renders at 1600px, and a
+## cursor does not need a 2.5-megapixel texture.
+##
+## TINTED INTO THE TEXTURE, not by modulating the sprite. `_mark` carries every verb's icon in turn,
+## so a modulate would recolour the boots and the stairs arrows too.
+const USE_TINT := Color8(0x40, 0xa4, 0xb9)
+
+func _look_tex() -> Texture2D:
+	var src: Texture2D = load("res://art/look.svg")
+	if src == null:
+		return _hand_tex()
+	var img: Image = src.get_image()
+	if img == null:
+		return _hand_tex()
+	img = img.duplicate()
+	img.convert(Image.FORMAT_RGBA8)
+	# The glyph is solid white, so the tint is a straight replace against its own alpha — no
+	# multiply needed, and the antialiased edge keeps its coverage.
+	for y in img.get_height():
+		for x in img.get_width():
+			var a := img.get_pixel(x, y).a
+			if a > 0.0:
+				img.set_pixel(x, y, Color(USE_TINT.r, USE_TINT.g, USE_TINT.b, a))
+	return ImageTexture.create_from_image(img)
+
+## The hand this replaced, kept as the fallback for a build whose art did not import.
 func _hand_tex() -> Texture2D:
 	var w := 16
 	var h := 18
