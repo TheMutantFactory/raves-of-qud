@@ -85,6 +85,60 @@ namespace RavesOfQud
             return false;
         }
 
+        /// <summary>UI THREAD. WHY a visible modal is not being mirrored.
+        ///
+        /// FindVisiblePopup screens every candidate on four predicates and returns null if any of
+        /// them rejects it — and a null is indistinguishable from "Qud raised nothing". That gap
+        /// cost a long session: Qud's system menu (Esc / the hamburger) opens on screen, the mod
+        /// publishes no popup frame, and every channel outside Qud agrees the modal does not exist.
+        /// So report the predicates themselves, for EVERY instance, and let the answer name itself.
+        ///
+        /// Writes a FILE as well as logging, because the case this exists for parks Qud's turn
+        /// thread — the snapshot channel is silent for exactly as long as the answer is needed.</summary>
+        public static string Why()
+        {
+            var sb = new System.Text.StringBuilder();
+            try
+            {
+                var all = UnityEngine.Object.FindObjectsByType<PopupMessage>(FindObjectsSortMode.None);
+                sb.Append("instances=").Append(all.Length);
+                for (int i = 0; i < all.Length; i++)
+                {
+                    PopupMessage w = all[i];
+                    bool vis = false, cmd = false, sel = false, pooled = false;
+                    int opts = -1; string msg = "";
+                    try { vis = w.Visible; } catch { }
+                    try { cmd = w.commandCallback != null; } catch { }
+                    try { sel = w.selectCallback != null; } catch { }
+                    try { pooled = InFreePool(w); } catch { }
+                    try { opts = (w.controller != null && w.controller.menuData != null)
+                                 ? w.controller.menuData.Count : -1; } catch { }
+                    try { msg = w.Message != null ? (w.Message.text ?? "") : ""; } catch { }
+                    if (msg.Length > 48) msg = msg.Substring(0, 48);
+                    sb.Append("\n  #").Append(i)
+                      .Append(" visible=").Append(vis)
+                      .Append(" cmdCb=").Append(cmd)
+                      .Append(" selCb=").Append(sel)
+                      .Append(" pooled=").Append(pooled)
+                      .Append(" options=").Append(opts)
+                      .Append("  -> mirrored=").Append(IsLive(w) && !pooled)
+                      .Append("  msg=").Append(msg.Replace("\n", " "));
+                }
+                if (all.Length == 0) sb.Append("  (no PopupMessage in the scene at all)");
+            }
+            catch (Exception e) { sb.Append(" FAILED: ").Append(e.Message); }
+            string outp = sb.ToString();
+            Log("[popupwhy] " + outp);
+            try
+            {
+                string dir = System.IO.Directory.GetParent(TileExporter.Dir).FullName;
+                System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "popupwhy.txt"),
+                    outp + "\n");
+            }
+            catch { }
+            return outp;
+        }
+
         private static PopupMessage FindVisiblePopup(bool force)
         {
             if (IsLive(_pm) && !InFreePool(_pm)) return _pm;

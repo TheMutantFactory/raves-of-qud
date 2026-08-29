@@ -747,6 +747,15 @@ namespace RavesOfQud
                         }, 0);
                     return;
                 }
+                if (name == "popupwhy")
+                {
+                    // Why is a visible modal not mirroring? Runs on the uiQueue, which is the only
+                    // pump still draining while the modal in question parks the turn thread.
+                    var gmw = GameManager.Instance;
+                    if (gmw != null && gmw.uiQueue != null)
+                        gmw.uiQueue.queueTask(() => { try { PopupBridge.Why(); } catch { } }, 0);
+                    return;
+                }
                 if (name == "uiprobe")
                 {
                     // Dump a live Qud screen's RectTransform layout for a parity pass.
