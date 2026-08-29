@@ -752,15 +752,21 @@ func _build_links() -> void:
 		var l := _label(txt, MUTED, "title")
 		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 		_apply_elliot(l, "Bold", 21)
+		# The live links (the rest stay cosmetic for now): hover brightens like Qud, click opens
+		# the overlay. Credits joined Modding Toolkit here — Brand has carried the attribution copy
+		# since the rename with nothing to render it, which is a credit nobody can read.
+		var overlay := ""
 		if txt == "Modding Toolkit":
-			# live link (the rest stay cosmetic for now): hover brightens like Qud,
-			# click opens the toolkit menu overlay
+			overlay = "res://ModdingToolkitScreen.gd"
+		elif txt == "Credits":
+			overlay = "res://CreditsScreen.gd"
+		if overlay != "":
 			l.mouse_filter = Control.MOUSE_FILTER_STOP
 			l.mouse_entered.connect(func(): l.add_theme_color_override("font_color", SEL))
 			l.mouse_exited.connect(func(): l.add_theme_color_override("font_color", MUTED))
 			l.gui_input.connect(func(e: InputEvent):
 				if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
-					_open_overlay("res://ModdingToolkitScreen.gd"))
+					_open_overlay(overlay))
 		v.add_child(l)
 	add_child(v)
 	_place(v, "links")

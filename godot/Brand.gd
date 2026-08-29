@@ -73,6 +73,56 @@ const FEEDBACK_ENDPOINT := "https://feedback.mutantfactory.net"
 static func title() -> String:
 	return GAME_NAME
 
+## THE CREDITS TREE — who made what, in two branches.
+##
+## Daniel: "It's a tree that contains a node with Freehold Games images and credit and another node
+## that displays open images and credits."
+##
+## The split is the one that matters legally and is the one a reader needs: assets that belong to
+## someone else and are only RENDERED from the copy you own, against assets that ship in this
+## repository under an open licence. Everything Raves draws falls in one or the other.
+##
+## Lives here because Brand.gd is where the project's fixed external facts live, and a credit is
+## exactly that — a fact about someone else that a rename or a new screen must not be able to drift
+## from. `tile` names a Qud sprite to show beside the row (resolved at runtime from the player's own
+## export, so nothing is redistributed); `art` is a res:// path for art this repo does ship.
+static func credit_branches() -> Array:
+	return [
+		{
+			"head": "%s — %s" % [BASE_GAME, BASE_GAME_RIGHTS_HOLDER],
+			"note": ("Every tile, glyph and colour %s draws is %s's, read live from the copy of "
+				+ "%s you own. None of it is contained in or redistributed by this project.") % [
+					GAME_NAME, BASE_GAME_RIGHTS_HOLDER, BASE_GAME],
+			"entries": [
+				{"name": "Creature, item and terrain tiles", "tile": "Creatures/sw_farmer.bmp",
+					"note": "Rendered from your install at runtime"},
+				{"name": "World-map terrain art", "tile": "Terrain/sw_joppa.bmp",
+					"note": "Used to mark places you have found"},
+				{"name": "UI frames and category icons", "tile": "Items/sw_book_3.bmp",
+					"note": "polat-category-frame and FilterBarCategoryButton art"},
+				{"name": "The 18-colour palette and CP437 glyphs", "tile": "",
+					"note": "Read from your install; see docs/decisions"},
+			],
+		},
+		{
+			"head": "Open assets shipped with %s" % GAME_NAME,
+			"note": ("These are the only assets contained in this repository. Each is used under "
+				+ "an open licence, and each licence text ships beside it."),
+			"entries": [
+				{"name": "Look", "art": "res://art/look.svg",
+					"note": ("The interaction cursor. Icon 2400060 from Noun Project — "
+						+ "«creator name» / «licence: free-tier credit or royalty-free»")},
+				{"name": "Source Code Pro", "art": "",
+					"note": "© 2023 Adobe, Reserved Font Name 'Source' — SIL Open Font License 1.1"},
+				{"name": "Atkinson Hyperlegible", "art": "",
+					"note": ("© 2020 Braille Institute of America, Inc. — "
+						+ "SIL Open Font License 1.1")},
+				{"name": "%s itself" % GAME_NAME, "art": "",
+					"note": "%s, by %s — see the licence panel on the title screen" % [LICENSE, ORG_NAME]},
+			],
+		},
+	]
+
 ## The right-hand-panel legal / attribution copy. Best-faith, plain-language summary —
 ## NOT legal advice. Assembled from the constants so a rename or a confirmed rights
 ## holder flows through automatically. Returned as an Array of {head, body} sections
