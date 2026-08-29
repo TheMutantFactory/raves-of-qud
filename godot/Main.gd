@@ -90,11 +90,13 @@ const LEVEL_KEEP_DOWN := 2
 # The camera rig (nodes + modes + placement math) lives in CameraRig.gd, created in _ready. Main keeps
 # this enum as a MIRROR so its mode checks (input, snapshot, multiview) read `CamMode.X`; the values match
 # CameraRig.CamMode exactly. `_cam_rig._mode` is the live mode. (Stage 1 of the Main.gd decomposition.)
-enum CamMode { COMPASS, FOLLOW, FIRST_PERSON, CINEMATIC, MOUSE, KEYBOARD, TOP_FOLLOW, ADVENTURE }
+enum CamMode { COMPASS, FOLLOW, FIRST_PERSON, CINEMATIC, MOUSE, KEYBOARD, TOP_FOLLOW, ADVENTURE,
+	DRONE_CONTROL, DRONECAM }
 var _cam_rig                    # CameraRig (Node3D, loaded); created in _ready. Untyped so the headless
 								# --check-only stays deterministic (a class_name's cache is flaky there);
 								# locals off _cam_rig.* therefore need explicit types, not `:=`.
 var _multiview                  # Multiview (Node, loaded); the all-views grid. Created in _ready.
+var _drone_marker               # DroneMarker (Node3D); the amber diamond the control pane flies
 var _remote                     # RemoteControl (RefCounted); the godot_cmd file channel. Created in _ready.
 
 # Remembered view/render settings, saved on exit and restored on launch (so Raves doesn't
@@ -264,6 +266,10 @@ func _ready() -> void:
 
 	# Multi-view grid (its own file). Built BEFORE the debug menu, whose button connects to its toggle.
 	# Pane clicks call back into Main._multiview_inspect (Main owns the inspector + report form).
+	# The drone's marker. In the scene, not in the renderer's per-turn subtree — that subtree is
+	# cleared and rebuilt every step.
+	_drone_marker = load("res://DroneMarker.gd").new()
+	add_child(_drone_marker)
 	_multiview = load("res://Multiview.gd").new()
 	add_child(_multiview)
 	# The last argument is how a pane's compass ring moves the player: it hands back a COMPASS
@@ -956,6 +962,12 @@ func _process(dt: float) -> void:
 	# _unhandled_input has consulted TypingGuard for a while; Input.is_key_pressed never did, and
 	# does not consult focus at all, so the camera keys went on firing under a form's caret.
 	_cam_rig.process(dt, _multiview.is_on(), TypingGuard.typing(get_viewport()))
+	if _drone_marker != null:
+		# Up while you are working the rig — the selector, or a drone camera live. An amber
+		# diamond hanging over the world during ordinary play is scenery, not a tool.
+		_drone_marker.set_shown(_multiview.is_on() or _cam_rig._mode == CamMode.DRONE_CONTROL \
+			or _cam_rig._mode == CamMode.DRONECAM)
+		_drone_marker.place(_cam_rig.drone_pos())
 	if _multiview.is_on():
 		_multiview.update()
 
@@ -1570,6 +1582,8 @@ const _MODE_NAMES := {
 	CamMode.MOUSE: "MOUSE — drag orbits the selected tile",
 	CamMode.KEYBOARD: "KEYBOARD — WASD move, arrows aim",
 	CamMode.TOP_FOLLOW: "TOP-DOWN FOLLOW — classic overhead · north up · tracks you · R/F zoom",
+	CamMode.DRONE_CONTROL: "DRONE CONTROL — side view of you and the drone · ring flies it · ▲▼ height",
+	CamMode.DRONECAM: "DRONECAM — the camera on the drone · scroll to zoom",
 }
 
 func _update_mode_label() -> void:

@@ -12,7 +12,12 @@ extends Node3D
 ## CAMERA MODES (see Main's header for the key bindings):
 ##   COMPASS (default, cardinal-locked), FOLLOW, FIRST_PERSON, CINEMATIC, MOUSE, KEYBOARD, TOP_FOLLOW.
 
-enum CamMode { COMPASS, FOLLOW, FIRST_PERSON, CINEMATIC, MOUSE, KEYBOARD, TOP_FOLLOW, ADVENTURE }
+## DRONE_CONTROL and DRONECAM are ONE RIG SEEN TWICE. Daniel: "The Dronecam is the camera on the
+## drone at the drone position. The Drone control is a side view of the player and the drone."
+## Two modes rather than one special-cased pane, because the selector already renders one pane per
+## mode and eye_look_for is the single seam every pane goes through.
+enum CamMode { COMPASS, FOLLOW, FIRST_PERSON, CINEMATIC, MOUSE, KEYBOARD, TOP_FOLLOW, ADVENTURE,
+	DRONE_CONTROL, DRONECAM }
 var _mode: int = int(Settings.get_value("camera", CamMode.COMPASS))   # default from Options; COMPASS = cardinal-locked
 
 # Top-down (Qud-classic): orthographic, straight down, NORTH locked to screen-top, tracking the player.
@@ -87,6 +92,15 @@ const WAIST_LOOK_H := 0.45   # ... or the waist (centres the whole body) — a `
 var _look_head := true       # default: track the head (feet-aim buries the head when zoomed close)
 const FOLLOW_LERP := 6.0     # per-second approach; keeps steps from snapping
 var _player := Vector3(40, 0, 12)
+
+## THE DRONE, in world units. Whole tiles: the control ring steps it a cell at a time.
+var _drone := Vector3(40, 6, 12)
+const DRONE_MIN_H := 1.0      # never in the floor
+const DRONE_MAX_H := 40.0
+## How far the elevation stands off, as a multiple of the player-drone gap — both have to fit with
+## room to read the gap, and the gap is what that view is for.
+const CTRL_STANDOFF := 1.6
+const CTRL_MIN := 9.0
 var _facing := Vector2(0, 1)     # +z is south; Qud y grows southward
 var _eye := Vector3.ZERO         # smoothed camera position
 var _look := Vector3.ZERO        # smoothed look-at target
@@ -330,10 +344,56 @@ func adopt_pane_yaw(mode: int, deg: float) -> void:
 	else:
 		_mode_yaw[mode] = fposmod(float(_mode_yaw.get(mode, 0.0)) + deg_to_rad(deg), TAU)
 
+## The elevation for the control pane: stand off to one side of the player-drone line and look at
+## the midpoint, LEVEL with them.
+##
+## PERPENDICULAR TO THE PAIR, not a fixed compass side — fly the drone due north of the player and
+## an east-facing view sees the two stacked on each other, which is the one arrangement that hides
+## what you are adjusting. Level, because tilt makes height stop reading as height.
+##
+## Static and pure so the degenerate case is testable: a drone directly overhead has NO horizontal
+## direction to be perpendicular to. Godot returns zero from Vector3.ZERO.normalized() rather than
+## NaN, so the failure is not a crash — it is a camera standing exactly on its own subject.
+static func drone_ctrl_eye_look(player: Vector3, drone: Vector3, yaw_off := 0.0) -> Array:
+	var mid := (player + drone) * 0.5
+	var flat := Vector3(drone.x - player.x, 0.0, drone.z - player.z)
+	var side := Vector3(1, 0, 0) if flat.length() < 0.001 else flat.normalized().cross(Vector3.UP)
+	var dist: float = maxf(player.distance_to(drone) * CTRL_STANDOFF, CTRL_MIN)
+	return [mid + side.rotated(Vector3.UP, yaw_off) * dist, mid]
+
+
+## Step the drone one press, in a COMPASS direction. Goes through this file's own compass_delta
+## rather than a second table — a duplicate was written here first, and two tables for "which way
+## is SE" is exactly how a ring ends up disagreeing with the world it moves in.
+func step_drone(dir: String) -> void:
+	var d := compass_delta(dir)
+	nudge_drone(Vector3(d.x, 0.0, d.y))
+
+
+## Step the drone one press. Clamped in height so it can be neither buried nor lost.
+func nudge_drone(delta: Vector3) -> void:
+	_drone = Vector3(_drone.x + delta.x,
+		clampf(_drone.y + delta.y, DRONE_MIN_H, DRONE_MAX_H), _drone.z + delta.z)
+
+
+func drone_pos() -> Vector3:
+	return _drone
+
+
 func eye_look_for(mode: int, st: Dictionary = {}) -> Array:
 	var yaw_off: float = float(st.get("yaw", 0.0))
 	var zoom: float = maxf(0.05, float(st.get("zoom", 1.0)))
 	match mode:
+		CamMode.DRONECAM:
+			# The camera ON the drone, aimed at the player. Zoom pulls the eye BACK along the aim
+			# rather than changing fov, so the control pane's picture of the rig stays honest
+			# about where the drone is.
+			var aim := _player - _drone
+			if aim.length() < 0.001:
+				aim = Vector3(0, -1, 0)
+			return [_drone - aim.normalized() * (zoom - 1.0), _player]
+		CamMode.DRONE_CONTROL:
+			return drone_ctrl_eye_look(_player, _drone, yaw_off)
 		CamMode.KEYBOARD:
 			return [_free_eye, _free_eye + _aim_dir().rotated(Vector3.UP, yaw_off)]
 		CamMode.MOUSE:
@@ -680,4 +740,10 @@ func set_player(pos: Vector3, facing: Vector2, update_facing: bool) -> void:
 		_seeded = true
 		_free_eye = _follow_eye()
 		_eye = _free_eye
+		# The drone starts where the compass camera is, on whole tiles. The height floor is not
+		# cosmetic: the compass camera drops toward eye level as you zoom in, so its rounded
+		# height at the closest zoom is 0 — a drone in the floor, and an elevation framing a
+		# zero-height gap, which reads as broken rather than as close.
+		var ce: Vector3 = eye_look_for(CamMode.COMPASS)[0]
+		_drone = Vector3(roundf(ce.x), maxf(roundf(ce.y), DRONE_MIN_H), roundf(ce.z))
 		_look = _follow_look()
