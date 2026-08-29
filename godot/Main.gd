@@ -91,7 +91,7 @@ const LEVEL_KEEP_DOWN := 2
 # this enum as a MIRROR so its mode checks (input, snapshot, multiview) read `CamMode.X`; the values match
 # CameraRig.CamMode exactly. `_cam_rig._mode` is the live mode. (Stage 1 of the Main.gd decomposition.)
 enum CamMode { COMPASS, FOLLOW, FIRST_PERSON, CINEMATIC, MOUSE, KEYBOARD, TOP_FOLLOW, ADVENTURE,
-	DRONE_CONTROL, DRONECAM }
+	DRONECAM }
 var _cam_rig                    # CameraRig (Node3D, loaded); created in _ready. Untyped so the headless
 								# --check-only stays deterministic (a class_name's cache is flaky there);
 								# locals off _cam_rig.* therefore need explicit types, not `:=`.
@@ -965,8 +965,7 @@ func _process(dt: float) -> void:
 	if _drone_marker != null:
 		# Up while you are working the rig — the selector, or a drone camera live. An amber
 		# diamond hanging over the world during ordinary play is scenery, not a tool.
-		_drone_marker.set_shown(_multiview.is_on() or _cam_rig._mode == CamMode.DRONE_CONTROL \
-			or _cam_rig._mode == CamMode.DRONECAM)
+		_drone_marker.set_shown(_multiview.is_on() or _cam_rig._mode == CamMode.DRONECAM)
 		_drone_marker.place(_cam_rig.drone_pos())
 	if _multiview.is_on():
 		_multiview.update()
@@ -1582,8 +1581,7 @@ const _MODE_NAMES := {
 	CamMode.MOUSE: "MOUSE — drag orbits the selected tile",
 	CamMode.KEYBOARD: "KEYBOARD — WASD move, arrows aim",
 	CamMode.TOP_FOLLOW: "TOP-DOWN FOLLOW — classic overhead · north up · tracks you · R/F zoom",
-	CamMode.DRONE_CONTROL: "DRONE CONTROL — side view of you and the drone · ring flies it · ▲▼ height",
-	CamMode.DRONECAM: "DRONECAM — the camera on the drone · scroll to zoom",
+	CamMode.DRONECAM: "DRONECAM — first person from the drone · ring flies it · ▲▼ height · rotate to turn",
 }
 
 func _update_mode_label() -> void:

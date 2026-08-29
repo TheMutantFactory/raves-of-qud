@@ -19,60 +19,11 @@ const R = preload("res://CameraRig.gd")
 func _ready() -> void:
 	var player := Vector3(40, 0, 12)
 
-	# ── the control view ──────────────────────────────────────────────────────
-	var drone := Vector3(46, 6, 12)
-	var el: Array = R.drone_ctrl_eye_look(player, drone)
-	# THE PLAYER IS NAILED DOWN. Framing the midpoint slid BOTH subjects on every press, so
-	# nothing held still to judge the drone's offset against — which is what the pane is for.
-	_check("it looks at the player, on the player's own column",
-		is_equal_approx(el[1].x, player.x) and is_equal_approx(el[1].z, player.z), str(el[1]))
-	var far: Array = R.drone_ctrl_eye_look(player, Vector3(70, 9, 40))
-	_check("...wherever the drone is",
-		is_equal_approx(far[1].x, player.x) and is_equal_approx(far[1].z, player.z), str(far[1]))
-	# THE CAMERA MUST NOT MOVE WHEN THE DRONE DOES. Daniel: "I press the north button until I get
-	# close, then the north button starts moving me away from the player." The view used to stand
-	# PERPENDICULAR to the player-drone line, so the drone's own position set the camera's heading:
-	# crossing the player reversed the perpendicular, the view jumped to the other side, and the
-	# same button then walked the drone the other way across the screen. The step was always right
-	# in world terms; the eye you steer by reversed.
-	#
-	# So: sweep the drone all the way around the player and assert the viewing direction never
-	# changes. One sample either side would pass on a camera that flips only at the crossing.
-	var dirs: Array = []
-	for deg in range(0, 360, 15):
-		var a := deg_to_rad(float(deg))
-		var d := player + Vector3(6.0 * cos(a), 5.0, 6.0 * sin(a))
-		var e: Array = R.drone_ctrl_eye_look(player, d)
-		dirs.append(Vector3(e[0].x - e[1].x, 0.0, e[0].z - e[1].z).normalized())
-	var spun := 0
-	for v in dirs:
-		if v.distance_to(dirs[0]) > 0.001:
-			spun += 1
-	_check("the view never turns when the drone moves", spun == 0,
-		"%d of %d sample positions moved the camera" % [spun, dirs.size()])
-	# ...including the crossing itself, which is where the old flip happened.
-	var north: Array = R.drone_ctrl_eye_look(player, player + Vector3(0, 5, -3))
-	var south: Array = R.drone_ctrl_eye_look(player, player + Vector3(0, 5, 3))
-	_check("north of the player and south of it look from the same side",
-		Vector3(north[0].x - north[1].x, 0, north[0].z - north[1].z).normalized().distance_to(
-			Vector3(south[0].x - south[1].x, 0, south[0].z - south[1].z).normalized()) < 0.001)
-	# The pane's own rotate buttons are the ONLY thing that turns it.
-	var turned: Array = R.drone_ctrl_eye_look(player, drone, PI * 0.5)
-	_check("the rotate buttons still turn it", not turned[0].is_equal_approx(el[0]))
-	# LEVEL: tilt it and height stops reading as height, and height is what the ▲▼ buttons change.
-	_check("it is level with what it frames", is_equal_approx(el[0].y, el[1].y),
-		"%f vs %f" % [el[0].y, el[1].y])
-	var over: Array = R.drone_ctrl_eye_look(player, Vector3(40, 8, 12))
-	_check("a drone straight overhead still gets a camera off its own subject",
-		over[0].distance_to(over[1]) > 1.0, str(over[0].distance_to(over[1])))
-	# The drone sitting EXACTLY on the player was the snap case, and a fixed axis has no
-	# singularity there at all — but assert it, because that is where the user was steering.
-	var same: Array = R.drone_ctrl_eye_look(player, player)
-	_check("a drone exactly on the player still gets a camera",
-		same[0].distance_to(same[1]) >= R.CTRL_MIN - 0.001, str(same[0].distance_to(same[1])))
-	_check("a drone almost on top of you keeps the standoff floor",
-		R.drone_ctrl_eye_look(player, Vector3(40.5, 0.5, 12))[0].distance_to(
-			R.drone_ctrl_eye_look(player, Vector3(40.5, 0.5, 12))[1]) >= R.CTRL_MIN - 0.001)
+	# ── the dronecam's aim ────────────────────────────────────────────────────
+	# THE SIDE VIEW IS GONE. Daniel: "Let's drop the drone control view and just have the dronecam
+	# view." Two rounds of reversal bugs went with it — it took the camera's heading from the
+	# drone's own position, so flying the drone turned the camera. A camera you look THROUGH
+	# cannot do that, and the checks below are what keeps it that way.
 
 	# ── the ring's steps ──────────────────────────────────────────────────────
 	var rig = R.new()
@@ -171,11 +122,14 @@ func _ready() -> void:
 
 	# ── the panes are in the picker ───────────────────────────────────────────
 	var mv = load("res://Multiview.gd")
-	_check("both panes are in the selector",
-		mv.MODES.has(mv.DRONE_CONTROL) and mv.MODES.has(mv.DRONECAM), str(mv.MODES))
+	_check("the dronecam is in the selector", mv.MODES.has(mv.DRONECAM), str(mv.MODES))
+	# ...and the side view is NOT. A mode left in MODES with no branch in eye_look_for renders a
+	# pane from whatever the match falls through to, which looks like a camera rather than a
+	# leftover.
+	_check("the side view is gone from it", mv.MODES.size() == 9, str(mv.MODES))
 	var names: Dictionary = load("res://Main.gd")._MODE_NAMES
-	_check("and both are captioned",
-		String(names.get(mv.DRONE_CONTROL, "")) != "" and String(names.get(mv.DRONECAM, "")) != "")
+	_check("the dronecam is captioned", String(names.get(mv.DRONECAM, "")) != "")
+	_check("...and nothing is captioned past it", not names.has(9), str(names.keys()))
 
 	_report()
 

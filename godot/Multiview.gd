@@ -9,11 +9,9 @@ extends Node
 ## are plain ints matching CameraRig.CamMode's order.
 
 const TOP_FOLLOW := 6              # CamMode.TOP_FOLLOW — the one orthographic mode (kept enum-free)
-## 8 = DRONE_CONTROL (the side view you fly it from) and 9 = DRONECAM (the camera on the drone).
-## Ten panes still lay out three wide; the grid grows a row.
-const DRONE_CONTROL := 8
-const DRONECAM := 9
-const MODES := [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]   # ...and 7 = ADVENTURE, the slider-tuned compass
+## 8 = DRONECAM, a first-person camera that flies. The side view it used to sit beside is gone.
+const DRONECAM := 8
+const MODES := [0, 1, 2, 3, 4, 5, 6, 7, 8]   # ...and 7 = ADVENTURE, the slider-tuned compass
 const DroneMarker = preload("res://DroneMarker.gd")
 const PANE_ZOOM_MIN := 0.25
 const PANE_ZOOM_MAX := 4.0   # CamMode order: COMPASS, FOLLOW(3rd-person), FIRST_PERSON, CINEMATIC, MOUSE, KEYBOARD, TOP_FOLLOW, ADVENTURE
@@ -196,10 +194,11 @@ func _build_pane_ui(cell: Control, i: int, m: int) -> void:
 	_cams[i]["btns"] = btns
 	_cams[i]["ui"] = [ring]
 
-	# UP AND DOWN, beside the ring and only where they mean something. The ring is flat — eight
-	# compass directions and no altitude — so height needs its own pair, and the control pane is
-	# the one place a press has anything to move.
-	if m == DRONE_CONTROL:
+	# UP AND DOWN, beside the ring. The ring is flat — eight compass directions and no altitude —
+	# so height needs its own pair. Daniel: "Don't forget to move/add the up/down controls to the
+	# Dronecam panel." They lived on the side view, which is gone; this is the only pane left with
+	# anything to move.
+	if m == DRONECAM:
 		var lift := VBoxContainer.new()
 		lift.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 		lift.position = Vector2(90, -74)
@@ -339,10 +338,12 @@ func _pane_move(i: int, screen_dir: int) -> void:
 	var d := _world_dir_for(i, screen_dir)
 	if d == "":
 		return
-	# THE CONTROL PANE'S RING FLIES THE DRONE, not the player. Same eight buttons, same
-	# screen-to-world mapping — so "the arrow that points up-left in this pane" still means the
-	# same compass direction it does in every other pane, and rotating the pane still relabels it.
-	if int(_cams[i]["mode"]) == DRONE_CONTROL:
+	# THE DRONECAM'S RING FLIES THE DRONE, not the player. Same eight buttons, same screen-to-world
+	# mapping — so "the arrow that points up-left in this pane" still means the same compass
+	# direction it does in every other pane, and rotating the pane still relabels it. Because the
+	# pane's heading IS the drone's heading, that makes the ring read first-person: the top button
+	# is whichever way the drone is facing.
+	if int(_cams[i]["mode"]) == DRONECAM:
 		_cam_rig.step_drone(d)
 		return
 	if _on_move.is_valid():

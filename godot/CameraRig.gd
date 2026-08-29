@@ -12,12 +12,15 @@ extends Node3D
 ## CAMERA MODES (see Main's header for the key bindings):
 ##   COMPASS (default, cardinal-locked), FOLLOW, FIRST_PERSON, CINEMATIC, MOUSE, KEYBOARD, TOP_FOLLOW.
 
-## DRONE_CONTROL and DRONECAM are ONE RIG SEEN TWICE. Daniel: "The Dronecam is the camera on the
-## drone at the drone position. The Drone control is a side view of the player and the drone."
-## Two modes rather than one special-cased pane, because the selector already renders one pane per
-## mode and eye_look_for is the single seam every pane goes through.
+## DRONECAM is a first-person camera that happens to be flying. Daniel: "Let's drop the drone
+## control view and just have the dronecam view. Let's give it the same controls as first-person
+## mode, but for the drone."
+##
+## THE SIDE VIEW IS GONE, and its two rounds of bugs went with it: it derived the camera's heading
+## from the drone's own position, so flying the drone turned the camera and the controls appeared
+## to reverse. A camera you look THROUGH cannot have that problem — forward is forward.
 enum CamMode { COMPASS, FOLLOW, FIRST_PERSON, CINEMATIC, MOUSE, KEYBOARD, TOP_FOLLOW, ADVENTURE,
-	DRONE_CONTROL, DRONECAM }
+	DRONECAM }
 var _mode: int = int(Settings.get_value("camera", CamMode.COMPASS))   # default from Options; COMPASS = cardinal-locked
 
 # Top-down (Qud-classic): orthographic, straight down, NORTH locked to screen-top, tracking the player.
@@ -97,10 +100,6 @@ var _player := Vector3(40, 0, 12)
 var _drone := Vector3(40, 6, 12)
 const DRONE_MIN_H := 1.0      # never in the floor
 const DRONE_MAX_H := 40.0
-## How far the elevation stands off, as a multiple of the player-drone gap — both have to fit with
-## room to read the gap, and the gap is what that view is for.
-const CTRL_STANDOFF := 1.6
-const CTRL_MIN := 9.0
 ## How far ahead on the ground the dronecam looks. Sets the pitch: bigger is flatter.
 const DRONECAM_AHEAD := 8.0
 var _facing := Vector2(0, 1)     # +z is south; Qud y grows southward
@@ -346,40 +345,6 @@ func adopt_pane_yaw(mode: int, deg: float) -> void:
 	else:
 		_mode_yaw[mode] = fposmod(float(_mode_yaw.get(mode, 0.0)) + deg_to_rad(deg), TAU)
 
-## The elevation for the control pane. THE DIRECTION IS FIXED; only the framing follows the pair.
-##
-## IT USED TO STAND PERPENDICULAR TO THE PLAYER-DRONE LINE, and that was a feedback loop. Daniel:
-## "I press the north button until I get close, then the north button starts moving me away from
-## the player ... Does that toggling make sense?" It does. Deriving the camera's heading from the
-## drone's position means MOVING THE DRONE MOVES THE CAMERA: as the drone crosses the player the
-## perpendicular reverses, the view jumps to the opposite side, and the same button now walks the
-## drone the other way ACROSS THE SCREEN. The step was always right in world terms — north really
-## was north — but a control you steer by eye is wrong if the eye reverses.
-##
-## Near the pair it was worse than a flip: inside a thousandth of a tile the old code fell back to
-## a fixed axis, so the view snapped rather than swung. Both symptoms, one cause.
-##
-## So the axis is now a WORLD direction, turned only by the pane's own rotate buttons (yaw_off).
-## The camera never moves on its own, and the ring means the same thing from one press to the next.
-## The cost is honest and manual: with the drone due east or west of the player the two line up on
-## screen and you turn the pane 45° to separate them — a thing you do, not a thing that happens to
-## you.
-static func drone_ctrl_eye_look(player: Vector3, drone: Vector3, yaw_off := 0.0) -> Array:
-	# LOOK AT THE PLAYER, NOT THE MIDPOINT. Daniel: "I'm still not clear how the drone control
-	# works." Framing the midpoint meant BOTH subjects slid whenever the drone moved — press a
-	# button and the player drifts one way while the drone drifts the other, so nothing on screen
-	# holds still to judge the offset against. The player is the reference you are placing the
-	# drone RELATIVE to ("a reference image a tile or two away from the player"), so the player is
-	# what stays nailed to the centre and the drone is the only thing that moves.
-	#
-	# The eye is lifted to the drone's height so the pair sit level in frame rather than the
-	# camera staring up at a high drone from the floor.
-	var anchor := Vector3(player.x, maxf(drone.y, 1.0) * 0.5, player.z)
-	var side := Vector3(1, 0, 0).rotated(Vector3.UP, yaw_off)
-	var dist: float = maxf(player.distance_to(drone) * CTRL_STANDOFF, CTRL_MIN)
-	return [anchor + side * dist, anchor]
-
-
 ## Step the drone one press, in a COMPASS direction. Goes through this file's own compass_delta
 ## rather than a second table — a duplicate was written here first, and two tables for "which way
 ## is SE" is exactly how a ring ends up disagreeing with the world it moves in.
@@ -410,23 +375,18 @@ func eye_look_for(mode: int, st: Dictionary = {}) -> Array:
 	var zoom: float = maxf(0.05, float(st.get("zoom", 1.0)))
 	match mode:
 		CamMode.DRONECAM:
-			# A CAMERA ON A TRIPOD: a fixed world heading, turned only by the pane's own rotate
-			# buttons. It used to aim AT the player, and that was the same feedback loop the
-			# control pane had — Daniel: "I try moving into the zone and then the controls
-			# reverse." Measured, the aim flipped from (0,0,-1) to (0,0,+1) the moment the drone
-			# crossed the player, so steering by the shot you were composing reversed exactly
-			# where you were trying to work.
-			#
-			# The cost, stated plainly: the player is no longer framed for you. You place the
-			# drone so they are in shot, which is what the control pane is for.
+			# FIRST-PERSON FOCUS: the drone looks where it is pointed, and nothing else moves it.
+			# Daniel: "There's a way to switch among (player focus, first-person focus, look
+			# follow-focus). Let's start with first person focus." The other two are the reason
+			# this is worth naming — a player-focus aim is what flipped the camera 180 degrees
+			# when the drone crossed the player, so when it comes back it comes back as a CHOICE,
+			# not as the only behaviour.
 			var fwd := Vector3(-1, 0, 0).rotated(Vector3.UP, yaw_off)
 			# AIMED AT THE GROUND AHEAD, not level. A camera six tiles up looking flat sees
 			# horizon and sky; tying the look-down to the drone's own height tilts it further as
 			# it climbs, the way an operator would.
 			var look := _drone + fwd * DRONECAM_AHEAD - Vector3(0, _drone.y, 0)
 			return [_drone - fwd * (zoom - 1.0), look]
-		CamMode.DRONE_CONTROL:
-			return drone_ctrl_eye_look(_player, _drone, yaw_off)
 		CamMode.KEYBOARD:
 			return [_free_eye, _free_eye + _aim_dir().rotated(Vector3.UP, yaw_off)]
 		CamMode.MOUSE:
