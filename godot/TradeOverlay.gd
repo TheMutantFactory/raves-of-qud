@@ -185,7 +185,7 @@ var _centre: Label
 var _offer: Button               # the TRADE [n] cell — pressing it offers
 var _money: RichTextLabel
 var _purse: RichTextLabel        # the trader's own drams, left of the band
-var _legend: Label
+var _legend: HBoxContainer       # Qud's KeyMenuOptionBar: each option its own control
 var _strip: Control              # the category filter cells, drawn through QudFilterBar
 var _bar: RefCounted = load("res://QudFilterBar.gd").new()
 var _filt_rects: Array = []      # [[Rect2, category], …] for hit-testing, rebuilt with the strip
@@ -332,7 +332,22 @@ func _ensure_built() -> void:
 	_design.add_child(tr); _totals.append(tr)
 	_money = _rich(GOLD); _place(_money, Rect2(MONEY_X, TOTALS_Y, MONEY_W, 22.0))
 	_design.add_child(_money)
-	_legend = _text(DIM); _place(_legend, Rect2(CONTENT_X + SEARCH_W + 16.0, LEGEND_Y, 1400.0, 22.0))
+	# THE HOTKEY LINE IS A ROW OF CONTROLS, not a sentence. Qud's own bottom bar is a
+	# KeyMenuOptionBar of KeyMenuOptions — the probe has each as its own node with a Prefix and a
+	# Title — so the ones that name an action are things you can press. Daniel: "Let's make '[Esc]
+	# Close Menu' clickable to close the menu."
+	_legend = HBoxContainer.new()
+	_legend.add_theme_constant_override("separation", 24)
+	_place(_legend, Rect2(CONTENT_X + SEARCH_W + 16.0, LEGEND_Y, 1400.0, 22.0))
+	_design.add_child(_legend)
+	# ONLY WHAT WORKS, in Qud's own key names. An earlier line advertised "[=] add one" and "[-]
+	# remove one" -- real Qud bindings this board does not implement, since they act on the
+	# keyboard-highlighted row and there is no keyboard selection here -- and "[Space] offer", which
+	# was not a binding at all.
+	_legend.add_child(_legend_option("[O] Offer", {"do": "offer"}))
+	_legend.add_child(_legend_option("[Esc] Close Menu", {"do": "cancel"}))
+	_legend.add_child(_legend_option("[Q]/[E] category", {}))
+	_legend.add_child(_legend_option("click add \u00b7 right-click remove \u00b7 shift whole stack", {}))
 	# the search box's outline, drawn empty: the bridge does not carry its text, and an empty box in
 	# the right place is honest where a faked one is not
 	_rect(Rect2(CONTENT_X + 31.0, SEARCH_Y + 2.0, 146.0, 18.0), FRAME * Color(1, 1, 1, 0.4))
@@ -535,13 +550,6 @@ func _paint_totals() -> void:
 	_centre.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_purse.text = QudText.to_bbcode(String(_data.get("traderPurse", "")), _palette)
 	_money.text = "[right]%s[/right]" % QudText.to_bbcode(String(_data.get("playerPurse", "")), _palette)
-	# Qud's own hotkey line, in Qud's order. The mouse verbs are ours and are named after them.
-	# ONLY WHAT WORKS, and in Qud's own key names. The previous line advertised "[=] add one" and
-	# "[-] remove one", which are real Qud bindings that this board does not implement -- they act
-	# on the keyboard-highlighted row, and Raves has no keyboard selection here -- and "[Space]
-	# offer", which was not the binding at all.
-	_legend.text = "[O] Offer    [Q]/[E] category    [Esc] Close Menu" \
-		+ "        click add \u00b7 right-click remove \u00b7 shift whole stack"
 
 func _fill(content: VBoxContainer, rows: Array, side: int) -> void:
 	for c in content.get_children():
@@ -716,3 +724,28 @@ static func want_for(button: int, shift: bool, sel: int, count: int) -> int:
 	if button == MOUSE_BUTTON_RIGHT:
 		return 0 if shift else maxi(sel - 1, 0)
 	return -1
+
+
+## One entry of the hotkey line. With an action it is a button — flat, so it reads as the same text
+## until the pointer is on it — and without one it is plain text, because a hint you cannot press
+## should not light up as though you could.
+func _legend_option(text: String, action: Dictionary) -> Control:
+	if action.is_empty():
+		var lab := Label.new()
+		lab.text = text
+		lab.add_theme_font_override("font", load("res://fonts/SourceCodePro-Regular.ttf"))
+		lab.add_theme_font_size_override("font_size", FONT_PX)
+		lab.add_theme_color_override("font_color", DIM)
+		lab.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		return lab
+	var btn := Button.new()
+	btn.text = text
+	btn.flat = true
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.add_theme_font_override("font", load("res://fonts/SourceCodePro-Regular.ttf"))
+	btn.add_theme_font_size_override("font_size", FONT_PX)
+	btn.add_theme_color_override("font_color", DIM)
+	btn.add_theme_color_override("font_hover_color", GOLD)
+	btn.add_theme_color_override("font_pressed_color", GOLD)
+	btn.pressed.connect(func() -> void: act.emit(action))
+	return btn
