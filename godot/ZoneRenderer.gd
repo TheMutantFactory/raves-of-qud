@@ -4364,12 +4364,23 @@ var _dust_terrain := ""          ## the last terrain string the wind was chosen 
 ## surface"), so the terrain string is the honest source — a marsh is wet and gets none. Keyword
 ## list rather than an enum because Qud's names are prose and this is a one-line edit when a zone
 ## turns out to belong on it.
-const DUST_TERRAIN := ["desert", "dune", "canyon", "waste", "flats", "sand", "scrub"]
+const DUST_TERRAIN := ["desert", "dune", "waste", "flats", "sand", "scrub"]
+
+## ...and the places that are named like the desert but are not it. THESE WIN, which is the whole
+## reason they are a separate list rather than an absence from the one above: Qud calls the place a
+## "desert canyon", so dropping "canyon" from DUST_TERRAIN changes nothing — the name still matches
+## on "desert" and the wind still blows.
+##
+## Daniel: "The canyons are oasis of life. No dust." The wet three are here for the older version of
+## the same rule (a marsh is not dry because it is flat), and a canyon joins them for a different
+## reason but with identical mechanics — it is sheltered and green, not exposed and bare.
+const DUST_NEVER := ["marsh", "river", "water", "canyon"]
 
 static func _dusty(terrain: String) -> bool:
 	var t := terrain.to_lower()
-	if t.contains("marsh") or t.contains("river") or t.contains("water"):
-		return false
+	for k in DUST_NEVER:
+		if t.contains(k):
+			return false
 	for k in DUST_TERRAIN:
 		if t.contains(k):
 			return true

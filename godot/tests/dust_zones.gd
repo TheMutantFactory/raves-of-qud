@@ -15,21 +15,32 @@ const Z = preload("res://ZoneRenderer.gd")
 
 
 func _ready() -> void:
-	# The name still decides, on the surface.
-	for t in ["desert canyon", "salt dunes", "sandy wastes", "scrubland", "salt flats"]:
+	# THE DESERT PROPER — open, bare, exposed. The name still decides.
+	for t in ["salt dunes", "sandy wastes", "scrubland", "salt flats", "the desert"]:
 		_check("surface: %s blows" % t, Z.dust_wanted(t, false, false, false, false))
-	# ...and wet places never did.
+
+	# ...and the places that are not it. Wet ones, as before —
 	for t in ["salt marsh, surface", "river ford", "watery cave"]:
 		_check("surface: %s stays still" % t, not Z.dust_wanted(t, false, false, false, false))
 
-	# THE FIX. Same names, underground — every one of them dry.
-	for t in ["desert canyon", "salt dunes", "sandy wastes", "scrubland", "salt flats"]:
+	# — and now the canyons. Daniel: "The canyons are oasis of life. No dust."
+	#
+	# THE CHECK THAT MATTERS IS THE FIRST ONE, and it is why DUST_NEVER exists as its own list
+	# instead of "canyon" simply being absent from DUST_TERRAIN. Qud calls the place a "desert
+	# canyon": the name still contains "desert", so an absence changes nothing and the wind keeps
+	# blowing. The exclusion has to WIN, not merely abstain.
+	for t in ["desert canyon", "canyon", "desert canyon, surface"]:
+		_check("surface: %s stays still" % t, not Z.dust_wanted(t, false, false, false, false))
+
+	# Depth, tested on terrain that genuinely blows — using a canyon here would pass for the
+	# canyon rule and prove nothing about the stratum.
+	for t in ["salt dunes", "sandy wastes", "scrubland", "salt flats"]:
 		_check("underground: %s does not blow" % t, not Z.dust_wanted(t, true, false, false, false))
 
-	# The other three suppressors still hold, so the new one did not replace them.
-	_check("1:1 blows nothing", not Z.dust_wanted("desert canyon", false, true, false, false))
-	_check("flat 2D blows nothing", not Z.dust_wanted("desert canyon", false, false, true, false))
-	_check("world map blows nothing", not Z.dust_wanted("desert canyon", false, false, false, true))
+	# The other three suppressors still hold, so neither new rule replaced them.
+	_check("1:1 blows nothing", not Z.dust_wanted("salt dunes", false, true, false, false))
+	_check("flat 2D blows nothing", not Z.dust_wanted("salt dunes", false, false, true, false))
+	_check("world map blows nothing", not Z.dust_wanted("salt dunes", false, false, false, true))
 
 	# An unnamed zone is not dusty by default — a missing terrain string must not become weather.
 	_check("no terrain, no wind", not Z.dust_wanted("", false, false, false, false))
