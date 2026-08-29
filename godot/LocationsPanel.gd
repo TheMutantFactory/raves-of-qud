@@ -494,12 +494,17 @@ func _rebuild() -> void:
 	# says, and a category appears here exactly when Qud has something in it.
 	# FLAT MEANS FLAT: _entries is already nearest-first out of _sort_entries, so the sorted view is
 	# simply that list with no headers over it. Nothing re-sorts here — one ordering, one place.
+	#
+	# IT FALLS THROUGH TO THE COMMON TAIL rather than returning. The first version returned here and
+	# skipped all three closing steps: _paint_metrics (so the sorted view showed no distances — the
+	# one column a list sorted BY distance most needs), the empty-state label, and _emit (so the
+	# beacons were not re-announced after a view switch).
 	if not _grouped:
 		_row_count = 0
 		for e in _entries:
 			_rows.add_child(_make_row(e))
 			_row_count += 1
-		_apply_height()
+		_finish_rebuild()
 		return
 	var by_cat := {}
 	var order: Array = []
@@ -527,6 +532,11 @@ func _rebuild() -> void:
 		for e in rows:
 			_rows.add_child(_make_row(e))
 			_row_count += 1
+	_finish_rebuild()
+
+## The three things every rebuild owes whatever it just drew, in one place so a second view cannot
+## quietly skip them.
+func _finish_rebuild() -> void:
 	if _empty != null:
 		_empty.visible = _entries.is_empty()
 	_apply_height()
