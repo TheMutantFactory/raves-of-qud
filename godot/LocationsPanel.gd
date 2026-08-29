@@ -45,6 +45,12 @@ const VISITED_CAT := "Visited"
 const SEL_GOLD := Color8(0xcf, 0xc0, 0x41)
 const ARMED_KEY := "locations_beacons_on"
 const PLATES_KEY := "locations_plates_on"
+## WHICH VIEW: Qud's categories, or a flat list nearest-first. Daniel: "a Sort icon that sorts the
+## locations by distance to the player (closest first) ... a treeview icon that uses the current
+## category view. The sort icon toggles off the treeview and vice versa." So they are one setting
+## with two faces, not two toggles that can both be off — a list has to be arranged somehow.
+const VIEW_KEY := "locations_grouped"
+const HEAD_BTN := 22.0                    # every header control the same square
 
 ## The beacon colours, cycled in tick order. Qud's own palette codes — a beacon is a light in Qud's
 ## world and has no business being a colour the world cannot contain.
@@ -64,7 +70,11 @@ var _expanded := false        # the panel's own ▾/▸ toggle; the column keeps
 ## untick four rows and remember to tick them back.
 var _armed := true
 var _plates_on := true
+var _grouped := true
 var _signpost: Button
+var _eye: Button
+var _sort_btn: Button
+var _tree_btn: Button
 ## LOST is QUD'S state, not a mode of this panel: XRL.World.Effects.Lost, shipped in the snapshot.
 ## Daniel: "When you're lost, the map button should be turned off and disabled. The locations tab
 ## stays collapsed with a lock symbol. When the player becomes unlost, the locations reverts to the
@@ -121,14 +131,17 @@ func _ready() -> void:
 	_title.add_theme_font_size_override("font_size", UiFont.px(get_viewport(), "title"))
 	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(_title)
-	# The signpost sits between the heading and the expander — "to the right of Locations" — because
-	# it belongs to the LIST, not to the panel's own open/shut state.
-	_signpost = Button.new()
-	_signpost.flat = true
-	_signpost.focus_mode = Control.FOCUS_NONE
-	_signpost.tooltip_text = "Show location names on the horizon"
-	_signpost.pressed.connect(_toggle_plates)
+	# THE FOUR CONTROLS, in the order they act on what you see: the landmark itself, then its name,
+	# then how the list beneath is arranged. They sit between the heading and the expander because
+	# they belong to the LIST, not to the panel's own open/shut state.
+	_eye = _head_btn(_toggle_beacons_btn)
+	head.add_child(_eye)
+	_signpost = _head_btn(_toggle_plates)
 	head.add_child(_signpost)
+	_sort_btn = _head_btn(func() -> void: _set_grouped(false))
+	head.add_child(_sort_btn)
+	_tree_btn = _head_btn(func() -> void: _set_grouped(true))
+	head.add_child(_tree_btn)
 	_toggle = Button.new()
 	_toggle.focus_mode = Control.FOCUS_NONE
 	_toggle.pressed.connect(func() -> void: set_expanded(not _expanded))
@@ -155,7 +168,8 @@ func _ready() -> void:
 	_expanded = bool(Settings.get_value(OPEN_KEY, false))
 	_armed = bool(Settings.get_value(ARMED_KEY, true))
 	_plates_on = bool(Settings.get_value(PLATES_KEY, true))
-	_refresh_signpost()
+	_grouped = bool(Settings.get_value(VIEW_KEY, true))
+	_refresh_head_btns()
 	_refresh_toggle()
 	_refresh_title()
 	_apply_height()
@@ -278,6 +292,10 @@ func parity_hidden() -> bool:
 func _refresh_title() -> void:
 	if _title == null:
 		return
+	# THE CONTROLS FOLLOW THE HEADING, lost or not — the eye dims with the beacons it can no longer
+	# arm, and dressing them only on the not-lost path left it lit over a panel that had stopped
+	# working.
+	_refresh_head_btns()
 	if _lost:
 		# THE HEADING SAYS WHY. A panel that just went empty and stopped opening reads as broken;
 		# one that says "lost" is the game speaking, and the player already knows what it means.
@@ -474,6 +492,15 @@ func _rebuild() -> void:
 	# Oddities. Daniel: "add category trees. Use the same categories as Quest-locations." So the
 	# headers are not ours to invent: they are whatever the journal says, in the order the journal
 	# says, and a category appears here exactly when Qud has something in it.
+	# FLAT MEANS FLAT: _entries is already nearest-first out of _sort_entries, so the sorted view is
+	# simply that list with no headers over it. Nothing re-sorts here — one ordering, one place.
+	if not _grouped:
+		_row_count = 0
+		for e in _entries:
+			_rows.add_child(_make_row(e))
+			_row_count += 1
+		_apply_height()
+		return
 	var by_cat := {}
 	var order: Array = []
 	for e in _entries:
@@ -541,29 +568,45 @@ func _make_cat_row(cat: String, n: int) -> Control:
 func _sort_entries() -> void:
 	if not metrics_cb.is_valid() or _player.x < 0:
 		return
+	_entries = order_by_distance(_entries, func(e: Dictionary) -> float:
+		return float(metrics_cb.call(int(e["mx"]), int(e["my"])).get("para", 0.0)))
+
+## NEAREST FIRST, THEN ONE ROW PER VISITED NAME — the whole ordering of this panel, pulled out as a
+## pure function of the entries and a distance so it can be asked directly. It is the arrangement
+## BOTH views are built on: the tree groups this order into categories, the sorted view shows it
+## as-is, and neither re-sorts.
+##
+## The dedupe waits for the sort because it keeps the NEAREST of a repeated name: a walk across a
+## marsh visits five parasangs all called "salt marsh", five rows for it are five ways to say the
+## same thing, and the useful one is the near one. Journal entries are never collapsed — Qud wrote
+## those, and two notes sharing a name are still two notes.
+##
+## The category is what says which list a row came from, NOT the presence of art. This used to test
+## has("art"), which meant "is a travel-log row" only for as long as journal notes had no sprite of
+## their own; they carry one now, and that test would have started collapsing Qud's own notes.
+static func order_by_distance(entries: Array, dist: Callable) -> Array:
 	var keyed: Array = []
-	for e in _entries:
-		keyed.append([float(metrics_cb.call(int(e["mx"]), int(e["my"])).get("para", 0.0)), e])
-	keyed.sort_custom(func(a, b): return a[0] < b[0])
-	# ONE ROW PER NAME, once the distances are known — and the NEAREST one, which is why this waits
-	# for the sort. A walk across a marsh visits five parasangs all called "salt marsh"; five rows
-	# for it is five ways to say the same thing, and the useful one is the nearest. Journal entries
-	# are never collapsed: Qud wrote those, and two notes sharing a name are still two notes.
+	for e in entries:
+		keyed.append([float(dist.call(e)), e])
+	# STABLE against equal distances: sort_custom is not, and two places the same distance off
+	# would swap rows every repaint. Comparing the index when the distances tie pins the order.
+	var i := 0
+	for k in keyed:
+		k.append(i)
+		i += 1
+	keyed.sort_custom(func(a, b):
+		return a[0] < b[0] if a[0] != b[0] else a[2] < b[2])
 	var out: Array = []
 	var named := {}
 	for k in keyed:
 		var e: Dictionary = k[1]
-		var nm := String(e["name"])
-		# THE CATEGORY SAYS WHICH LIST IT CAME FROM, not the presence of art. This used to test
-		# has("art"), which meant "is a travel-log row" only for as long as journal notes had no
-		# sprite of their own — they carry one now, and the test would have started collapsing Qud's
-		# own notes by name.
+		var nm := String(e.get("name", ""))
 		if String(e.get("category", "")) == VISITED_CAT:
 			if named.has(nm):
 				continue
 			named[nm] = true
 		out.append(e)
-	_entries = out
+	return out
 
 func _make_row(e: Dictionary) -> Control:
 	var row := HBoxContainer.new()
@@ -724,7 +767,7 @@ func _toggle_plates() -> void:
 	# the category folds remembered themselves, which reads as the signpost not working rather than
 	# as a missing flush.
 	Settings.save()
-	_refresh_signpost()
+	_refresh_head_btns()
 	plates_changed.emit(_plates_on)
 
 ## The panel's own answer, for a listener that connects after the first emit — the same late-bind
@@ -732,27 +775,70 @@ func _toggle_plates() -> void:
 func plates_on() -> bool:
 	return _plates_on
 
-func _refresh_signpost() -> void:
-	if _signpost == null:
+## THE HEADER CONTROLS, dressed from state. All four take the heading's own two tones — the art is
+## white, so modulate carries it to the panel's text colour when on and to the same 0.45 dim
+## _refresh_title applies when off — so the row reads as part of the heading rather than as four
+## bright glyphs parked beside it.
+func _refresh_head_btns() -> void:
+	_dress(_eye, "res://art/look.svg", "E", _armed and not _lost,
+		"Hide the landmarks" if _armed else "Show the landmarks")
+	_dress(_signpost, "res://art/signpost.svg", "N", _plates_on,
+		"Hide location names" if _plates_on else "Show location names")
+	# THE VIEW PAIR IS RADIO, NOT TOGGLE: exactly one is lit, because a list has to be arranged
+	# somehow and "neither" is not a state this panel can draw.
+	_dress(_sort_btn, "res://art/sort.svg", "S", not _grouped, "Sort by distance, nearest first")
+	_dress(_tree_btn, "res://art/treeview.svg", "T", true if _grouped else false,
+		"Group by category")
+
+func _dress(b: Button, art: String, fallback: String, on: bool, tip: String) -> void:
+	if b == null:
 		return
-	var tex := _signpost_tex()
+	var tex := _art(art)
 	if tex != null:
-		_signpost.icon = tex
-		_signpost.text = ""
+		b.icon = tex
+		b.text = ""
 	else:
 		# NO ART, STILL A CONTROL. A toggle that renders as nothing is one nobody can find.
-		_signpost.text = "N" if _plates_on else "n"
-	# THE SAME TWO TONES THE HEADING USES. The art is white, so modulate carries it straight to the
-	# panel's text colour when on and to the same 0.45 dim _refresh_title applies when off — the
-	# signpost then reads as part of the heading rather than as a stray bright glyph beside it.
-	_signpost.modulate = QudPalette.TEXT if _plates_on else Color(1, 1, 1, 0.45)
-	_signpost.tooltip_text = ("Hide location names" if _plates_on else "Show location names")
+		b.text = fallback if on else fallback.to_lower()
+	b.modulate = QudPalette.TEXT if on else Color(1, 1, 1, 0.45)
+	b.tooltip_text = tip
 
-var _signpost_icon: Texture2D
-func _signpost_tex() -> Texture2D:
-	if _signpost_icon != null:
-		return _signpost_icon
-	if not ResourceLoader.exists("res://art/signpost.svg"):
-		return null
-	_signpost_icon = load("res://art/signpost.svg") as Texture2D
-	return _signpost_icon
+## A header button: uniform size with the icon scaled into it, so a 26px glyph and the 85px eye
+## (which is the world cursor's art at the size the playfield needs) sit the same in the row.
+func _head_btn(cb: Callable) -> Button:
+	var b := Button.new()
+	b.flat = true
+	b.focus_mode = Control.FOCUS_NONE
+	b.expand_icon = true
+	b.custom_minimum_size = Vector2(HEAD_BTN, HEAD_BTN)
+	b.pressed.connect(cb)
+	return b
+
+## The eye: arm or disarm the landmarks themselves. Routed through the SAME toggle_beacons the nav
+## pin calls, so the two controls cannot disagree about a single piece of state.
+func _toggle_beacons_btn() -> void:
+	toggle_beacons()
+	_refresh_head_btns()
+
+func _set_grouped(on: bool) -> void:
+	if _grouped == on:
+		return               # radio, not toggle: pressing the lit one is a no-op, not a flip
+	_grouped = on
+	Settings.set_value(VIEW_KEY, _grouped)
+	Settings.save()
+	_refresh_head_btns()
+	_rebuild()
+
+func grouped() -> bool:
+	return _grouped
+
+var _art_cache := {}
+func _art(path: String) -> Texture2D:
+	if _art_cache.has(path):
+		return _art_cache[path]
+	var tex: Texture2D = null
+	if ResourceLoader.exists(path):
+		tex = load(path) as Texture2D
+	_art_cache[path] = tex
+	return tex
+
