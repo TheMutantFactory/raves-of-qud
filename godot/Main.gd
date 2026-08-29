@@ -662,6 +662,18 @@ func _on_snapshot(data: Dictionary) -> void:
 		# between them slides the player the width of a zone through whatever is in the way.
 		_walk_at = _walk_to
 		_walk_seeded = true
+	# ...AND PULL THE SPRITE BACK IN THIS SAME FRAME. Daniel, reading a video frame by frame: "the
+	# player is moved to the new tile. Then the player is moved back to the original tile. Then the
+	# camera and the player move to the new tile."
+	#
+	# All three phases are one missing line. render_snapshot ran ABOVE this and re-seated the
+	# player's sprite on the new cell; _walk_to only becomes the new cell HERE; and the offset that
+	# carries the sprite back to where it is being drawn was not applied until the next _process.
+	# So the frame ended with the player standing on the destination (phase one), the next frame
+	# applied an offset of a whole cell backwards (phase two), and only then did the ease run
+	# (phase three). The walk was correct throughout — it was drawn a frame ahead of itself.
+	if renderer != null:
+		renderer.set_walk_offset(_walk_at - _walk_to)
 	_cam_rig.set_player(Vector3(_walk_at.x, 0, _walk_at.y), step_dir, stepped)
 
 ## Remembered zones to draw around the live one: every OTHER stored zone on the

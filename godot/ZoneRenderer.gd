@@ -376,6 +376,13 @@ func _tag_player_cell() -> void:
 			# each frame — the same reason _begin_bump captures rather than looks up.
 			_walk_node = n3
 			_walk_home = n3.position
+			# SEAT IT WHERE IT IS BEING DRAWN, not where its cell is. The per-turn rebuild puts
+			# the sprite on the new cell; if the offset is not re-applied here, the sprite is on
+			# the destination for however long it takes the caller to say otherwise — one frame,
+			# which is exactly long enough to see. Main sets the offset in the same snapshot now,
+			# and this makes the invariant hold inside the renderer either way: the player is
+			# drawn at home + offset, always.
+			n3.position = _walk_home + Vector3(_walk_off.x, 0.0, _walk_off.y)
 
 ## cameras that do not cull it).
 func _tag_layer(n: Node, bit: int) -> void:
