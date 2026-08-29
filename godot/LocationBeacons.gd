@@ -105,6 +105,10 @@ var _regime := "surface"
 var _zw := 80.0                 # the live zone's size, for the plate's boundary (see _edge_row)
 var _zh := 25.0
 var _flat := false              # cards laid flat for a straight-down camera (see _face_camera)
+## THE NAME PLATES, on or off — the Locations panel's signpost. It hides the LABELS only: the cards
+## keep standing, because which places are shown is the row checkboxes' business and this is only
+## whether they are named.
+var plates_on := true
 var _tiles: RefCounted          # QudTiles — recolours a place's own sprite
 var tiles_dir := ""             # pushed from Main with the snapshot
 var palette := {}
@@ -259,7 +263,9 @@ func _track_plates() -> void:
 	var cam := get_viewport().get_camera_3d()
 	if cam == null:
 		return
-	if blocked_cb.is_valid() and bool(blocked_cb.call()):
+	# TURNED OFF, OR SOMETHING OWNS THE SCREEN — the same answer either way, and taken before any
+	# projection work: there is nothing to place when nothing is drawn.
+	if not plates_on or (blocked_cb.is_valid() and bool(blocked_cb.call())):
 		for lab in _plates.values():
 			lab.visible = false
 		return

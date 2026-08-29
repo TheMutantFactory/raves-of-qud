@@ -1131,6 +1131,11 @@ func set_beacons(targets: Array) -> void:
 	if _beacons != null:
 		_beacons.set_targets(targets)
 
+## The Locations panel's signpost: label the beacons, or leave them unnamed.
+func set_beacon_plates(on: bool) -> void:
+	if _beacons != null:
+		_beacons.plates_on = on
+
 ## Distance (parasangs) and bearing to a world-map cell, ASKED OF THE BEACON NODE so the number the
 ## panel prints and the column the player sees are the same measurement.
 func beacon_metrics(mx: int, my: int) -> Dictionary:

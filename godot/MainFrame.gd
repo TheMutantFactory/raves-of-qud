@@ -1904,6 +1904,9 @@ func _row_main() -> Control:
 	_locations.beacons_changed.connect(func(t: Array) -> void:
 		if _holo != null:
 			_holo.set_beacons(t))
+	_locations.plates_changed.connect(func(on: bool) -> void:
+		if _holo != null:
+			_holo.set_beacon_plates(on))
 	_locations.refresh_requested.connect(func() -> void:
 		if _holo != null:
 			_holo.request_journal()
@@ -2049,6 +2052,10 @@ func _connect_holodeck() -> void:
 	# somewhere for them to go.
 	if _locations != null:
 		_locations.refresh_beacons()
+		# ...and the signpost's state with them: plates_changed only fires on a CLICK, so a
+		# holodeck built after the panel loaded its setting would start with plates on regardless.
+		# Same late-bind gap refresh_beacons exists to close for the cards.
+		_holo.set_beacon_plates(_locations.plates_on())
 	_render_btn.disabled = false
 	UiState.set_scene("in_game")                # highvisor state report: the gameplay frame is up
 	# Apply the saved 1:1 / user mode now that the Holodeck (camera owner) exists. When 1:1, this

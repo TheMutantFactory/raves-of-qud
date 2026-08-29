@@ -23,6 +23,12 @@ extends PanelContainer
 ## else happened to open a status screen would sit there missing the place you just walked into.
 
 signal beacons_changed(targets: Array)   # -> Main's LocationBeacons: what to stand on the horizon
+## NAME PLATES ON OR OFF — the signpost in this panel's heading. Separate from the beacons
+## themselves on purpose: which places stand on the horizon is the row checkboxes' business, and
+## this only decides whether they are LABELLED. Daniel: "it toggles the visibility of name of
+## locations. The sprites for the locations still show. That's controlled by the location list item
+## checkbox."
+signal plates_changed(on: bool)
 signal refresh_requested                 # -> the bridge's `journal` command
 signal lost_changed(lost: bool)          # -> MainFrame: dress (and disable) the nav pin
 
@@ -38,6 +44,7 @@ const VISITED_CAT := "Visited"
 ## them are the things you can act on.
 const SEL_GOLD := Color8(0xcf, 0xc0, 0x41)
 const ARMED_KEY := "locations_beacons_on"
+const PLATES_KEY := "locations_plates_on"
 
 ## The beacon colours, cycled in tick order. Qud's own palette codes — a beacon is a light in Qud's
 ## world and has no business being a colour the world cannot contain.
@@ -56,6 +63,8 @@ var _expanded := false        # the panel's own ▾/▸ toggle; the column keeps
 ## the pin answers the second, so a player who wants a clear view for one fight does not have to
 ## untick four rows and remember to tick them back.
 var _armed := true
+var _plates_on := true
+var _signpost: Button
 ## LOST is QUD'S state, not a mode of this panel: XRL.World.Effects.Lost, shipped in the snapshot.
 ## Daniel: "When you're lost, the map button should be turned off and disabled. The locations tab
 ## stays collapsed with a lock symbol. When the player becomes unlost, the locations reverts to the
@@ -112,6 +121,14 @@ func _ready() -> void:
 	_title.add_theme_font_size_override("font_size", UiFont.px(get_viewport(), "title"))
 	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(_title)
+	# The signpost sits between the heading and the expander — "to the right of Locations" — because
+	# it belongs to the LIST, not to the panel's own open/shut state.
+	_signpost = Button.new()
+	_signpost.flat = true
+	_signpost.focus_mode = Control.FOCUS_NONE
+	_signpost.tooltip_text = "Show location names on the horizon"
+	_signpost.pressed.connect(_toggle_plates)
+	head.add_child(_signpost)
 	_toggle = Button.new()
 	_toggle.focus_mode = Control.FOCUS_NONE
 	_toggle.pressed.connect(func() -> void: set_expanded(not _expanded))
@@ -137,6 +154,8 @@ func _ready() -> void:
 
 	_expanded = bool(Settings.get_value(OPEN_KEY, false))
 	_armed = bool(Settings.get_value(ARMED_KEY, true))
+	_plates_on = bool(Settings.get_value(PLATES_KEY, true))
+	_refresh_signpost()
 	_refresh_toggle()
 	_refresh_title()
 	_apply_height()
@@ -694,3 +713,45 @@ func _apply_panel_box() -> void:
 ## The column's reorder handle (MainFrame._make_reorderable) — the heading, as every other panel.
 func drag_handle() -> Control:
 	return _title
+
+## The signpost: are the beacons LABELLED? Persisted like the pin, and announced on its own signal
+## so the beacons can hide their plates without anything being rebuilt — the cards are unaffected.
+func _toggle_plates() -> void:
+	_plates_on = not _plates_on
+	Settings.set_value(PLATES_KEY, _plates_on)
+	# set_value only writes MEMORY — save() is what reaches disk, and every other toggle in this
+	# panel pairs the two. Without it the signpost came back on at every launch while the pin and
+	# the category folds remembered themselves, which reads as the signpost not working rather than
+	# as a missing flush.
+	Settings.save()
+	_refresh_signpost()
+	plates_changed.emit(_plates_on)
+
+## The panel's own answer, for a listener that connects after the first emit — the same late-bind
+## problem refresh_beacons already solves for the cards.
+func plates_on() -> bool:
+	return _plates_on
+
+func _refresh_signpost() -> void:
+	if _signpost == null:
+		return
+	var tex := _signpost_tex()
+	if tex != null:
+		_signpost.icon = tex
+		_signpost.text = ""
+	else:
+		# NO ART, STILL A CONTROL. A toggle that renders as nothing is one nobody can find.
+		_signpost.text = "N" if _plates_on else "n"
+	# ON is the panel's own text colour; OFF is the same dimming a unticked row gets, so the
+	# signpost reads the way every other off thing in this panel does.
+	_signpost.modulate = Color(1, 1, 1, 1) if _plates_on else Color(1, 1, 1, 0.4)
+	_signpost.tooltip_text = ("Hide location names" if _plates_on else "Show location names")
+
+var _signpost_icon: Texture2D
+func _signpost_tex() -> Texture2D:
+	if _signpost_icon != null:
+		return _signpost_icon
+	if not ResourceLoader.exists("res://art/signpost.svg"):
+		return null
+	_signpost_icon = load("res://art/signpost.svg") as Texture2D
+	return _signpost_icon
