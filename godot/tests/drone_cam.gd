@@ -201,6 +201,31 @@ func _ready() -> void:
 	_check("drone-1st looks where the drone points, wherever the player is",
 		d0.distance_to(d1) < 0.001, "%s vs %s" % [d0, d1])
 
+	# ── the drone is not in your own shot ─────────────────────────────────────
+	# Daniel: "hide the drone after you select the camera. I keep seeing it while I'm moving."
+	# TWO HALVES, and the second is the invariant: the marker hides outside the selector, AND the
+	# live camera drops its layer while DRONECAM is the mode — because when it is, that camera is
+	# standing inside the marker.
+	var rig4 = R.new()
+	add_child(rig4)
+	# setup() is what builds the camera, not _ready — a bare .new() has no _cam at all, and
+	# cull_drone_body's null guard would make every check below pass without touching anything.
+	rig4.setup(rig4, null, null)
+	_check("the rig actually has a camera to test", rig4._cam != null)
+	var full: int = rig4._cam.cull_mask
+	var bit: int = load("res://DroneMarker.gd").BODY_LAYER
+	_check("the live camera sees the marker by default", (full & bit) != 0, str(full))
+	rig4.cull_drone_body(true)
+	_check("...and drops it once you are flying the drone", (rig4._cam.cull_mask & bit) == 0,
+		str(rig4._cam.cull_mask))
+	# RESTORED, not left off — switch to another camera and the marker has to come back, or the
+	# selector shows an empty sky where the drone is.
+	rig4.cull_drone_body(false)
+	_check("...and gets it back on any other camera", (rig4._cam.cull_mask & bit) != 0,
+		str(rig4._cam.cull_mask))
+	_check("...exactly as it was", rig4._cam.cull_mask == full,
+		"%d vs %d" % [rig4._cam.cull_mask, full])
+
 	# ── the panes are in the picker ───────────────────────────────────────────
 	var mv = load("res://Multiview.gd")
 	_check("the dronecam is in the selector", mv.MODES.has(mv.DRONECAM), str(mv.MODES))

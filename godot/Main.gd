@@ -963,10 +963,20 @@ func _process(dt: float) -> void:
 	# does not consult focus at all, so the camera keys went on firing under a form's caret.
 	_cam_rig.process(dt, _multiview.is_on(), TypingGuard.typing(get_viewport()))
 	if _drone_marker != null:
-		# Up while you are working the rig — the selector, or a drone camera live. An amber
-		# diamond hanging over the world during ordinary play is scenery, not a tool.
-		_drone_marker.set_shown(_multiview.is_on() or _cam_rig._mode == CamMode.DRONECAM)
+		# ONLY WHILE THE SELECTOR IS OPEN. Daniel: "hide the drone after you select the camera. I
+		# keep seeing it while I'm moving." The marker is a PLACEMENT AID — it exists so you can
+		# see where the drone is while you are putting it somewhere, and once you are flying it
+		# you are looking THROUGH it, so there is nothing left for it to tell you.
+		#
+		# It used to stay up whenever DRONECAM was the live mode, which is precisely when the main
+		# camera sits inside it.
+		_drone_marker.set_shown(_multiview.is_on())
 		_drone_marker.place(_cam_rig.drone_pos())
+	# ...AND THE CAMERA DROPS IT REGARDLESS. Hiding the node is the fix for what Daniel saw; this
+	# is the invariant behind it — the drone never sees its own body, however the marker's
+	# visibility is decided. The grid's own DRONECAM pane already did this; the MAIN camera never
+	# did, which is why selecting the mode put an amber blob in the middle of the screen.
+	_cam_rig.cull_drone_body(_cam_rig._mode == CamMode.DRONECAM)
 	if _multiview.is_on():
 		_multiview.update()
 
@@ -1951,6 +1961,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			if event.keycode == KEY_6: _set_mode(CamMode.KEYBOARD); return
 			if event.keycode == KEY_7: _set_mode(CamMode.TOP_FOLLOW); return
 			if event.keycode == KEY_8: _set_mode(CamMode.ADVENTURE); return
+			if event.keycode == KEY_9: _set_mode(CamMode.DRONECAM); return
 			if event.keycode == KEY_0 and not _cam_locked(): _multiview.toggle(); return   # all-views grid (a camera feature)
 		if event.keycode == KEY_QUOTELEFT:      # ` toggles the debug menu
 			_dbg_menu.toggle(); return

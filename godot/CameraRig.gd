@@ -397,6 +397,15 @@ func drone_pos() -> Vector3:
 		clampf(_player.z + _drone_off.z, 0.0, maxf(_zone_cells.y - 1.0, 0.0)))
 
 
+## Drop (or restore) the drone's own marker on the LIVE camera. The pane cameras do this once at
+## build time because their mode never changes; the main camera's does, so it is re-applied.
+func cull_drone_body(on: bool) -> void:
+	if _cam == null:
+		return
+	var bit: int = preload("res://DroneMarker.gd").BODY_LAYER
+	_cam.cull_mask = (_cam.cull_mask & ~bit) if on else (_cam.cull_mask | bit)
+
+
 func drone_offset() -> Vector3:
 	return _drone_off
 
