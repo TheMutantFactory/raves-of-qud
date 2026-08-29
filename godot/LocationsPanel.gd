@@ -742,9 +742,10 @@ func _refresh_signpost() -> void:
 	else:
 		# NO ART, STILL A CONTROL. A toggle that renders as nothing is one nobody can find.
 		_signpost.text = "N" if _plates_on else "n"
-	# ON is the panel's own text colour; OFF is the same dimming a unticked row gets, so the
-	# signpost reads the way every other off thing in this panel does.
-	_signpost.modulate = Color(1, 1, 1, 1) if _plates_on else Color(1, 1, 1, 0.4)
+	# THE SAME TWO TONES THE HEADING USES. The art is white, so modulate carries it straight to the
+	# panel's text colour when on and to the same 0.45 dim _refresh_title applies when off — the
+	# signpost then reads as part of the heading rather than as a stray bright glyph beside it.
+	_signpost.modulate = QudPalette.TEXT if _plates_on else Color(1, 1, 1, 0.45)
 	_signpost.tooltip_text = ("Hide location names" if _plates_on else "Show location names")
 
 var _signpost_icon: Texture2D
