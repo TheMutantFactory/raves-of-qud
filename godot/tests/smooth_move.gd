@@ -43,6 +43,17 @@ func _ready() -> void:
 	var far: float = S.step(Vector2.ZERO, Vector2(2, 0), 0.05, 6.0).x
 	_check("further behind moves faster", far > near * 1.5, "near %.3f far %.3f" % [near, far])
 
+	# THE CATCH-UP HAS A CEILING. Far behind, the walk must not keep accelerating with the gap —
+	# past MAX_FACTOR cells of lag it moves at the cap and no faster, so a long burst cannot draw
+	# the player rocketing across the zone to land on their own feet.
+	var at_cap: float = S.step(Vector2.ZERO, Vector2(5, 0), 1.0 / 60.0, 6.0).x
+	var past_cap: float = S.step(Vector2.ZERO, Vector2(7.5, 0), 1.0 / 60.0, 6.0).x
+	_check("the catch-up is capped", is_equal_approx(snappedf(at_cap, 0.0001), snappedf(past_cap, 0.0001)),
+		"5 cells behind moved %.4f, 7.5 behind moved %.4f" % [at_cap, past_cap])
+	# ...and the cap is where it says it is: 6/sec at 4x over a sixtieth is 0.4 of a cell.
+	_check("the cap is MAX_FACTOR x the pace", is_equal_approx(snappedf(past_cap, 0.001), 0.4),
+		"got %.3f" % past_cap)
+
 	# A DIAGONAL STEP IS STILL A STEP. 1.41 cells must glide, or every diagonal move snaps and the
 	# walk only looks smooth on the cardinals.
 	p = S.step(Vector2.ZERO, Vector2(1, 1), 0.01, 6.0)

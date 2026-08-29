@@ -29,9 +29,16 @@ extends RefCounted
 
 ## Cells per second at a one-cell lag — the walk itself. Read from auto_walk_rate by the caller.
 const DEFAULT_SPEED := 6.0
-## How much faster it may go per extra cell of lag. At 2 cells behind it moves at 2x, at 3 at 3x:
-## enough to clear a burst quickly without the sprite visibly rocketing.
+## How much faster it may go per extra cell of lag. At 2 cells behind it moves at 2x, at 3 at 3x.
 const CATCHUP := 1.0
+## ...AND THE CEILING ON THAT. Daniel: "reduce the top speed to 0.5 the current top walk speed."
+##
+## The catch-up had no ceiling: at the snap boundary it reached eight times the walking pace, and
+## the fastest the walk was ever observed doing real work was about four (a click-to-travel peaked
+## at 3.96 cells of lag). So the top was set by the snap distance rather than by any decision about
+## how fast a person may be drawn moving. Four is half of that eight, and still above everything a
+## measured travel asked for — the cap trims the theoretical peak, not the ordinary case.
+const MAX_FACTOR := 4.0
 ## Beyond this the move was not a walk.
 ##
 ## MEASURED, NOT CHOSEN. At 2.6 — enough for a diagonal step (1.41) and a step taken while already a
@@ -67,7 +74,7 @@ static func step(from: Vector2, to: Vector2, dt: float, speed := DEFAULT_SPEED,
 		return to
 	if dt <= 0.0:
 		return from
-	var v: float = maxf(speed, 0.001) * (1.0 + CATCHUP * maxf(0.0, dist - 1.0))
+	var v: float = maxf(speed, 0.001) * minf(1.0 + CATCHUP * maxf(0.0, dist - 1.0), MAX_FACTOR)
 	var move: float = v * minf(dt, MAX_DT)
 	# NEVER OVERSHOOT. Landing past the cell and easing back is a visible wobble at every step, and
 	# at low frame rates the overshoot can exceed a whole cell.
