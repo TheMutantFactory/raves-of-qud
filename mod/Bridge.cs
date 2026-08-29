@@ -313,7 +313,7 @@ namespace RavesOfQud
             // Same-zone turns still throttle, and TickRender flushes their tail when Qud is focused.
             _dirty = true;
             bool zoneChanged = zid != null && zid != _lastPublishedZone;
-            if (zoneChanged || System.Environment.TickCount - _lastPublishMs >= PublishThrottleMs)
+            if (zoneChanged || PopupBridge.Since(System.Environment.TickCount, _lastPublishMs) >= PublishThrottleMs)
                 PublishNow(player);
         }
 
@@ -477,13 +477,13 @@ namespace RavesOfQud
             // level, effects, messages, temperature, zone — see BuildSignature). Checked ~10x/sec so it's
             // cheap; the throttle below coalesces the actual publish. This is what makes targeting (and
             // other no-turn changes) appear in Raves without waiting for a move.
-            if (System.Environment.TickCount - _lastSigCheckMs >= SigCheckMs)
+            if (PopupBridge.Since(System.Environment.TickCount, _lastSigCheckMs) >= SigCheckMs)
             {
                 _lastSigCheckMs = System.Environment.TickCount;
                 if (BuildSignature(player) != _lastSignature)
                     _dirty = true;
             }
-            if (_dirty && System.Environment.TickCount - _lastPublishMs >= PublishThrottleMs)
+            if (_dirty && PopupBridge.Since(System.Environment.TickCount, _lastPublishMs) >= PublishThrottleMs)
                 PublishNow(player);                 // flush the last state coalesced during a burst
         }
 

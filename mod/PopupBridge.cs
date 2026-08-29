@@ -33,6 +33,12 @@ namespace RavesOfQud
         private static bool _active;
         private static string _sig = "";
         private static int _lastPollMs;
+        // HOW FAR EACH POLL GETS. The predicates can all pass on an instance that the watcher never
+        // looks at, and those two failures are indistinguishable from outside: both publish nothing.
+        private static int _pollsEntered;    // Poll() past its 30Hz gate
+        private static int _pollsPastGate;   // ...past the "is a client attached" return
+        private static int _pollsSawPopup;   // ...reached FindVisiblePopup and it returned one
+        private static int _publishes;       // ...and actually put a popup frame on the wire
         private static PopupMessage _pm;        // cached visible popup — checked cheaply each poll (Visible)
         private static int _lastScanMs;         // throttles the scene scan that finds a fresh popup
         // The exact instance whose content was last ANNOUNCED to Raves. Answers target
@@ -60,6 +66,19 @@ namespace RavesOfQud
         // A popup is LIVE only while it still has a pending callback — OnActivateCommand/OnSelect null it out
         // on dismiss. NewPopupMessageAsync leaves dismissed copies momentarily visible, so "visible" alone
         // picks up ghosts (seen as a stale inputBox + empty buttons); require a live callback too.
+        /// MS SINCE `then`, WRAP-SAFE. Environment.TickCount is a SIGNED int that goes NEGATIVE
+        /// after 24.9 days of uptime, and every rate gate here was a plain `now - then < N`. With a
+        /// negative `now` and a timestamp still at its 0 default that difference is about minus two
+        /// billion, which is less than every interval any of them use — so the gate returns on its
+        /// first line, never reaches the assignment that would seed the timestamp, and stays shut
+        /// for as long as the machine stays up. This is not theoretical: on a Mac at 26 days uptime
+        /// PopupBridge.Poll had run 0 times, so nothing rode that watcher — no mirrored popups, no
+        /// system menu, no target picker, no trade screen — while every other channel looked fine.
+        ///
+        /// Casting the difference to uint is the standard fix: it reads the gap as the unsigned
+        /// distance, which is correct both across the wrap and against an unseeded 0.
+        internal static uint Since(int now, int then) { return unchecked((uint)(now - then)); }
+
         private static bool IsLive(PopupMessage w)
         {
             try { return w != null && w.Visible && (w.commandCallback != null || w.selectCallback != null); }
@@ -125,6 +144,17 @@ namespace RavesOfQud
                       .Append("  msg=").Append(msg.Replace("\n", " "));
                 }
                 if (all.Length == 0) sb.Append("  (no PopupMessage in the scene at all)");
+                sb.Append("\n  watcher: pumping=").Append(_pumping)
+                  .Append(" aliveAge=").Append(unchecked(Environment.TickCount - _aliveMs)).Append("ms")
+                  .Append(" alive=").Append(WatcherAlive)
+                  .Append("\n  polls:   entered=").Append(_pollsEntered)
+                  .Append(" pastClientGate=").Append(_pollsPastGate)
+                  .Append(" sawPopup=").Append(_pollsSawPopup)
+                  .Append(" published=").Append(_publishes)
+                  .Append("\n  state:   active=").Append(_active)
+                  .Append(" id=").Append(_id)
+                  .Append(" clients=").Append(Bridge.Server != null ? Bridge.Server.ClientCount : -1)
+                  .Append(" sig=").Append(_sig.Length > 40 ? _sig.Substring(0, 40) : _sig);
             }
             catch (Exception e) { sb.Append(" FAILED: ").Append(e.Message); }
             string outp = sb.ToString();
@@ -150,7 +180,7 @@ namespace RavesOfQud
             }
             catch { }
             int now = Environment.TickCount;
-            if (!force && now - _lastScanMs < 120) return null;   // dynamic-copy scan: ~8 Hz when idle
+            if (!force && Since(now, _lastScanMs) < 120) return null;   // dynamic-copy scan: ~8 Hz when idle
             _lastScanMs = now;
             try
             {
@@ -204,7 +234,7 @@ namespace RavesOfQud
         /// <summary>Is the mirror's watcher actually RUNNING (not merely flagged as started)?</summary>
         public static bool WatcherAlive
         {
-            get { return _pumping && unchecked(Environment.TickCount - _aliveMs) < PumpStaleMs; }
+            get { return _pumping && Since(Environment.TickCount, _aliveMs) < PumpStaleMs; }
         }
 
         /// <summary>Idempotent — starts (or re-starts) the UI-thread watcher unless one is
@@ -457,8 +487,9 @@ namespace RavesOfQud
         private static void Poll()
         {
             int now = Environment.TickCount;
-            if (now - _lastPollMs < 33) return;   // ~30 Hz is plenty; the check is cheap but not free
+            if (Since(now, _lastPollMs) < 33) return;   // ~30 Hz is plenty; the check is cheap but not free
             _lastPollMs = now;
+            _pollsEntered++;
 
             // BEFORE the client gate: the tab report goes to a FILE that highvisor reads, so it has
             // to keep working when no Raves is attached.
@@ -475,6 +506,7 @@ namespace RavesOfQud
             BridgeServer server = Bridge.Server;
             if (server == null || server.ClientCount == 0) return;
 
+            _pollsPastGate++;
             bool resend = _resend;   // one-shot: a client just connected — re-broadcast the live popup
             _resend = false;
 
@@ -500,6 +532,7 @@ namespace RavesOfQud
             // typing in Raves ("kept resetting as I tried to type QUIT").
             if (pm == null && _active) pm = FindVisiblePopup(true);
             bool active = pm != null;
+            if (active) _pollsSawPopup++;
 
             if (!active)
             {
@@ -586,6 +619,7 @@ namespace RavesOfQud
             WriteItems(j, "options", options);
             WriteContext(j, pm, sig);
             j.EndObject();
+            _publishes++;
             Publish(server, j.ToString());
         }
 
