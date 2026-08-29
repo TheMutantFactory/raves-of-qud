@@ -78,6 +78,13 @@ const DEVICE_H := 16.0
 const FILTER_Y := 41.0
 const FILTER_H := 41.0
 const FILT_X := 502.0
+## The paging badges either side of the strip, measured off the probe's own "Category Left/Right
+## Hotkey Label" nodes: 19.6x26.1 at y48.4, x466.4 and x1434. That is QudFilterBar's 20x27 badge at
+## this screen's corners rather than the inventory's, so the positions are taken here and the
+## drawing is still the shared one.
+const BADGE_L_X := 466.4
+const BADGE_R_X := 1434.0
+const BADGE_Y := 48.4
 ## Cell states, Qud's law verbatim — but only as the FALLBACK. The live colour rides on each cell in
 ## the frame (see the mod), because LateUpdate paints the four states only ON CHANGE: a cell nobody
 ## has toggled keeps its prefab colour, and which one it shows depends on the save's whole
@@ -460,6 +467,15 @@ func _draw_strip() -> void:
 						r.position + Vector2((r.size.x - isz.x) * 0.5, (r.size.y - isz.y) * 0.5),
 						isz), false)
 		i += 1
+	# ...and the paging hotkeys that bound the strip. Q steps the carousel left and E right — Qud's
+	# "Category Left"/"Category Right" in the CategoryNav layer, which replace the enabled set with
+	# exactly one category and wrap at both ends.
+	var green: Color = _tiles.color_of("g", Color(0.1, 0.5, 0.2))
+	for spec in [[BADGE_L_X, "Q", "catleft"], [BADGE_R_X, "E", "catright"]]:
+		var bx: float = spec[0]
+		_bar.badge(_strip, _strip_font, bx, String(spec[1]), C_HOVER, green, BADGE_Y - FILTER_Y)
+		var bsz: Vector2 = _bar.BADGE
+		_filt_rects.append([Rect2(Vector2(bx, BADGE_Y - FILTER_Y), bsz), String(spec[2])])
 
 ## Qud's live colour for a cell, or the four-state law when the frame carries none.
 func _filt_state(cell: Dictionary, cat: String) -> Color:
@@ -487,7 +503,13 @@ func _strip_input(e: InputEvent) -> void:
 		return
 	for row in _filt_rects:
 		if (row[0] as Rect2).has_point(mb.position):
-			act.emit({"do": "filter", "cat": row[1]})
+			var what := String(row[1])
+			# The badges ride in the same list as the cells, so one hit-test serves both; they are
+			# told apart by carrying a verb where a cell carries a category name.
+			if what == "catleft" or what == "catright":
+				act.emit({"do": what})
+			else:
+				act.emit({"do": "filter", "cat": what})
 			return
 
 func _side(i: int) -> Dictionary:
@@ -518,7 +540,7 @@ func _paint_totals() -> void:
 	# "[-] remove one", which are real Qud bindings that this board does not implement -- they act
 	# on the keyboard-highlighted row, and Raves has no keyboard selection here -- and "[Space]
 	# offer", which was not the binding at all.
-	_legend.text = "[O] Offer    [Esc] Close Menu" \
+	_legend.text = "[O] Offer    [Q]/[E] category    [Esc] Close Menu" \
 		+ "        click add \u00b7 right-click remove \u00b7 shift whole stack"
 
 func _fill(content: VBoxContainer, rows: Array, side: int) -> void:
@@ -661,6 +683,14 @@ func _input(event: InputEvent) -> void:
 		return
 	var k := event as InputEventKey
 	if k == null or not k.pressed or k.echo:
+		return
+	if k.keycode == KEY_Q:
+		act.emit({"do": "catleft"})
+		get_viewport().set_input_as_handled()
+		return
+	if k.keycode == KEY_E:
+		act.emit({"do": "catright"})
+		get_viewport().set_input_as_handled()
 		return
 	if k.keycode == KEY_ESCAPE:
 		act.emit({"do": "cancel"})

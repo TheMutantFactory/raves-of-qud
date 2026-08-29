@@ -325,6 +325,17 @@ namespace RavesOfQud
                         sc.Cancel();
                         return;
                     }
+                    if (what == "catleft" || what == "catright")
+                    {
+                        // Qud's own carousel paging: CategoryLeft/Right replace the enabled set
+                        // with exactly ONE category, stepping through the strip and wrapping. Bound
+                        // to Q and E in the CategoryNav layer, which is what the badges either side
+                        // of the strip are labelled with.
+                        if (sc.filterBar == null) return;
+                        if (what == "catleft") sc.filterBar.CategoryLeft();
+                        else sc.filterBar.CategoryRight();
+                        return;
+                    }
                     if (what == "filter")
                     {
                         // Qud's own toggle, with Qud's own rules: selecting a category adds it and
