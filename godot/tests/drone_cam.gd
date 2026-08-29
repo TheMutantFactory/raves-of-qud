@@ -22,8 +22,13 @@ func _ready() -> void:
 	# ── the control view ──────────────────────────────────────────────────────
 	var drone := Vector3(46, 6, 12)
 	var el: Array = R.drone_ctrl_eye_look(player, drone)
-	_check("it looks at the midpoint of the pair", el[1].is_equal_approx((player + drone) * 0.5),
-		str(el[1]))
+	# THE PLAYER IS NAILED DOWN. Framing the midpoint slid BOTH subjects on every press, so
+	# nothing held still to judge the drone's offset against — which is what the pane is for.
+	_check("it looks at the player, on the player's own column",
+		is_equal_approx(el[1].x, player.x) and is_equal_approx(el[1].z, player.z), str(el[1]))
+	var far: Array = R.drone_ctrl_eye_look(player, Vector3(70, 9, 40))
+	_check("...wherever the drone is",
+		is_equal_approx(far[1].x, player.x) and is_equal_approx(far[1].z, player.z), str(far[1]))
 	# THE CAMERA MUST NOT MOVE WHEN THE DRONE DOES. Daniel: "I press the north button until I get
 	# close, then the north button starts moving me away from the player." The view used to stand
 	# PERPENDICULAR to the player-drone line, so the drone's own position set the camera's heading:
@@ -55,7 +60,7 @@ func _ready() -> void:
 	var turned: Array = R.drone_ctrl_eye_look(player, drone, PI * 0.5)
 	_check("the rotate buttons still turn it", not turned[0].is_equal_approx(el[0]))
 	# LEVEL: tilt it and height stops reading as height, and height is what the ▲▼ buttons change.
-	_check("it is level with the pair", is_equal_approx(el[0].y, el[1].y),
+	_check("it is level with what it frames", is_equal_approx(el[0].y, el[1].y),
 		"%f vs %f" % [el[0].y, el[1].y])
 	var over: Array = R.drone_ctrl_eye_look(player, Vector3(40, 8, 12))
 	_check("a drone straight overhead still gets a camera off its own subject",
@@ -118,6 +123,51 @@ func _ready() -> void:
 	# AND IT CAN COME BACK. A clamp that pinned it to the wall would leave it just as stranded.
 	rig.step_drone("W")
 	_check("...and it can be walked back in", rig.drone_pos().x < 79.0, str(rig.drone_pos()))
+
+	# ── the dronecam does not spin either ─────────────────────────────────────
+	# Daniel: "I try moving into the zone and then the controls reverse." Fixing the CONTROL pane
+	# was not enough: the dronecam aimed AT the player, so its heading flipped from (0,0,-1) to
+	# (0,0,+1) the instant the drone crossed them — and the dronecam is the shot you are
+	# composing, so that is the pane you steer by. Same feedback loop, other pane.
+	#
+	# Sweep the drone right around the player and assert the heading is identical everywhere.
+	var rig2 = R.new()
+	add_child(rig2)
+	rig2._player = player
+	var heads: Array = []
+	for deg in range(0, 360, 15):
+		var a2 := deg_to_rad(float(deg))
+		rig2._drone = player + Vector3(6.0 * cos(a2), 5.0, 6.0 * sin(a2))
+		var e2: Array = rig2.eye_look_for(R.CamMode.DRONECAM)
+		var f2: Vector3 = e2[1] - e2[0]
+		f2.y = 0.0
+		heads.append(f2.normalized())
+	var turned2 := 0
+	for v in heads:
+		if v.distance_to(heads[0]) > 0.001:
+			turned2 += 1
+	_check("the dronecam holds its heading wherever the drone is", turned2 == 0,
+		"%d of %d positions turned it" % [turned2, heads.size()])
+	# ...INCLUDING straight over the player, which is where it used to invert.
+	rig2._drone = player + Vector3(0, 5, 0)
+	var onTop: Vector3 = rig2.eye_look_for(R.CamMode.DRONECAM)[1] - rig2.eye_look_for(R.CamMode.DRONECAM)[0]
+	onTop.y = 0.0
+	_check("...and directly above them", onTop.normalized().distance_to(heads[0]) < 0.001,
+		str(onTop.normalized()))
+	# It looks DOWN at the ground: level from six tiles up is horizon and sky.
+	rig2._drone = Vector3(40, 6, 12)
+	var el2: Array = rig2.eye_look_for(R.CamMode.DRONECAM)
+	_check("it looks down at the ground, not at the horizon", el2[1].y < el2[0].y - 0.5,
+		"eye.y=%f look.y=%f" % [el2[0].y, el2[1].y])
+	# The pane's rotate buttons are the only thing that turns it.
+	var spun2: Array = rig2.eye_look_for(R.CamMode.DRONECAM, {"yaw": PI * 0.5})
+	var fs: Vector3 = spun2[1] - spun2[0]
+	fs.y = 0.0
+	_check("the rotate buttons aim it", fs.normalized().distance_to(heads[0]) > 0.1,
+		str(fs.normalized()))
+	# Zoom pulls the eye back along the aim rather than bending the lens.
+	var z1: Array = rig2.eye_look_for(R.CamMode.DRONECAM, {"zoom": 2.0})
+	_check("zoom pulls the eye back along the aim", not z1[0].is_equal_approx(el2[0]), str(z1[0]))
 
 	# ── the panes are in the picker ───────────────────────────────────────────
 	var mv = load("res://Multiview.gd")

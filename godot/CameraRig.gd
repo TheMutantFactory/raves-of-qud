@@ -101,6 +101,8 @@ const DRONE_MAX_H := 40.0
 ## room to read the gap, and the gap is what that view is for.
 const CTRL_STANDOFF := 1.6
 const CTRL_MIN := 9.0
+## How far ahead on the ground the dronecam looks. Sets the pitch: bigger is flatter.
+const DRONECAM_AHEAD := 8.0
 var _facing := Vector2(0, 1)     # +z is south; Qud y grows southward
 var _eye := Vector3.ZERO         # smoothed camera position
 var _look := Vector3.ZERO        # smoothed look-at target
@@ -363,10 +365,19 @@ func adopt_pane_yaw(mode: int, deg: float) -> void:
 ## screen and you turn the pane 45° to separate them — a thing you do, not a thing that happens to
 ## you.
 static func drone_ctrl_eye_look(player: Vector3, drone: Vector3, yaw_off := 0.0) -> Array:
-	var mid := (player + drone) * 0.5
+	# LOOK AT THE PLAYER, NOT THE MIDPOINT. Daniel: "I'm still not clear how the drone control
+	# works." Framing the midpoint meant BOTH subjects slid whenever the drone moved — press a
+	# button and the player drifts one way while the drone drifts the other, so nothing on screen
+	# holds still to judge the offset against. The player is the reference you are placing the
+	# drone RELATIVE to ("a reference image a tile or two away from the player"), so the player is
+	# what stays nailed to the centre and the drone is the only thing that moves.
+	#
+	# The eye is lifted to the drone's height so the pair sit level in frame rather than the
+	# camera staring up at a high drone from the floor.
+	var anchor := Vector3(player.x, maxf(drone.y, 1.0) * 0.5, player.z)
 	var side := Vector3(1, 0, 0).rotated(Vector3.UP, yaw_off)
 	var dist: float = maxf(player.distance_to(drone) * CTRL_STANDOFF, CTRL_MIN)
-	return [mid + side * dist, mid]
+	return [anchor + side * dist, anchor]
 
 
 ## Step the drone one press, in a COMPASS direction. Goes through this file's own compass_delta
@@ -399,13 +410,21 @@ func eye_look_for(mode: int, st: Dictionary = {}) -> Array:
 	var zoom: float = maxf(0.05, float(st.get("zoom", 1.0)))
 	match mode:
 		CamMode.DRONECAM:
-			# The camera ON the drone, aimed at the player. Zoom pulls the eye BACK along the aim
-			# rather than changing fov, so the control pane's picture of the rig stays honest
-			# about where the drone is.
-			var aim := _player - _drone
-			if aim.length() < 0.001:
-				aim = Vector3(0, -1, 0)
-			return [_drone - aim.normalized() * (zoom - 1.0), _player]
+			# A CAMERA ON A TRIPOD: a fixed world heading, turned only by the pane's own rotate
+			# buttons. It used to aim AT the player, and that was the same feedback loop the
+			# control pane had — Daniel: "I try moving into the zone and then the controls
+			# reverse." Measured, the aim flipped from (0,0,-1) to (0,0,+1) the moment the drone
+			# crossed the player, so steering by the shot you were composing reversed exactly
+			# where you were trying to work.
+			#
+			# The cost, stated plainly: the player is no longer framed for you. You place the
+			# drone so they are in shot, which is what the control pane is for.
+			var fwd := Vector3(-1, 0, 0).rotated(Vector3.UP, yaw_off)
+			# AIMED AT THE GROUND AHEAD, not level. A camera six tiles up looking flat sees
+			# horizon and sky; tying the look-down to the drone's own height tilts it further as
+			# it climbs, the way an operator would.
+			var look := _drone + fwd * DRONECAM_AHEAD - Vector3(0, _drone.y, 0)
+			return [_drone - fwd * (zoom - 1.0), look]
 		CamMode.DRONE_CONTROL:
 			return drone_ctrl_eye_look(_player, _drone, yaw_off)
 		CamMode.KEYBOARD:
