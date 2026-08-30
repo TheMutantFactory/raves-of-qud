@@ -516,6 +516,21 @@ func _on_cyber(data: Dictionary) -> void:
 ## Re-render what is already on screen, for a setting whose effect is decided during the relight.
 ## The 2D/3D toggle and the deep-water depth both do this for the same reason: a control whose
 ## result does not appear until you take a step reads as a control that does not work.
+## What the darkness double-buffer is actually showing, for `control.py firedump`.
+func _dark_buffer_report() -> Array:
+	var out: Array = []
+	var root = renderer.get("_dark_root")
+	if root == null:
+		return [["no _dark_root", 0]]
+	for ch in root.get_children():
+		var meshes := 0
+		for m in ch.get_children():
+			if m.has_meta("is_darkness"):
+				meshes += 1
+		out.append([(ch as Node3D).visible, meshes])
+	return out
+
+
 func _relight_now() -> void:
 	var live: Dictionary = store.live_snapshot()
 	if not live.is_empty():
@@ -818,7 +833,38 @@ func _exec_godot_cmd(cmd: String) -> void:
 						n_mark += 1
 					if ZoneRenderer.cell_is_seen(c):
 						n_seen += 1
+				# PER-CELL, around the player. Whole-zone counts said the switch was working while
+				# the floor in front of him stayed orange; the disagreement is per cell, so the
+				# report has to be per cell — light, both marks, the verdict, and the ground tone
+				# the darkness pass actually computes.
+				var rows: Array = []
+				var pcx := int(live.get("player", {}).get("x", -1))
+				var pcy := int(live.get("player", {}).get("y", -1))
+				for c in cs:
+					var dx: int = absi(int(c.get("x", 0)) - pcx)
+					var dy: int = absi(int(c.get("y", 0)) - pcy)
+					if dx <= 2 and dy <= 2:
+						rows.append({
+							"xy": [int(c.get("x", 0)), int(c.get("y", 0))],
+							"light": int(c.get("light", -1)),
+							"vis": bool(c.get("visible", true)),
+							"expl": bool(c.get("explored", true)),
+							"firelit": bool(c.get("firelit", false)),
+							"torchlit": bool(c.get("torchlit", false)),
+							"off": ZoneRenderer.switched_off(c),
+							"tone": renderer._live_cell_tone(c, false),
+							"objs": c.get("objs", []).size(),
+							"floor_y": renderer.floor_top.get(
+								Vector2i(int(c.get("x", 0)), int(c.get("y", 0))), -99.0),
+						})
 				fd.store_string(JSON.stringify({
+					"near_player": rows,
+					"dark_floor_y": ZoneRenderer.DARK_FLOOR_Y,
+					# THE LAST LINK. The film is double-buffered — a new one is built hidden and
+					# swapped in when the player arrives — so "is it computed" and "is it on
+					# screen" are different questions, and every number above answers only the
+					# first. Each entry: [visible, how many darkness meshes it holds].
+					"dark_buffers": _dark_buffer_report(),
 					"setting_firecells": Settings.qol_on("firecells"),
 					"fire_dark": ZoneRenderer.fire_dark,
 					"cells": cs.size(), "lit_raw": n_lit, "marked": n_mark, "seen": n_seen,

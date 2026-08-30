@@ -12602,7 +12602,17 @@ func _take_floor() -> MeshInstance3D:
 	return mi
 
 ## Queue a floor quad (its full transform) under its material for this build's batch.
+## The highest floor quad laid in each cell, for `control.py firedump`. The darkness film is a
+## quad at a FIXED height (DARK_FLOOR_Y), and floors stack upward by render layer — so "is the
+## film under the floor it is meant to cover" is a question about two numbers, and until now
+## neither of them was written down anywhere.
+var floor_top := {}
+
 func _floor_batch_add(mat: Material, xform: Transform3D) -> void:
+	var o := xform.origin
+	var fk := Vector2i(int(round(o.x)), int(round(o.z)))
+	if o.y > float(floor_top.get(fk, -99.0)):
+		floor_top[fk] = o.y
 	if not _floor_batch.has(mat):
 		_floor_batch[mat] = []
 	_floor_batch[mat].append(xform)
