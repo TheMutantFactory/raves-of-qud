@@ -88,7 +88,7 @@ func _ready() -> void:
 		str(m._rect.texture.get_size()))
 	# NOT BLANK. An all-background image passes every check above this one, and drawing nothing at
 	# all is exactly how the camera failed.
-	var im: Image = m._rect.texture.get_image()
+	var im: Image = m.last_image
 	# ASKED OF A CELL THAT IS NOT THE PLAYER'S. "Not empty" over the whole image is satisfied by the
 	# player's own marker, so it would pass on a map where no tile art was placed at all — the
 	# precise failure this file exists to catch.
@@ -278,6 +278,81 @@ func _ready() -> void:
 			or is_equal_approx(m._rect.position.y, m._view.size.y - m._rect.size.y),
 		"player %.0fpx off centre with the map at %s" % [after_d, m._rect.position])
 
+	# ── line of sight on the map ──────────────────────────────────────────────
+	# Daniel: "add an icon to the minimap-tiles to toggle the Qud line-of-sight lighting/fog of war
+	# on the minimap. An eye icon?"
+	_check("the titlebar has an eye", m._fog_btn != null)
+
+	# The fixture: one cell seen, one remembered (explored, out of sight), one never explored.
+	# THE PLAYER SITS IN A CELL OF ITS OWN, out at x=3. Parked on the seen cell it painted the
+	# marker into the very square this compares, and the seen-vs-remembered brightness check passed
+	# with the veil deleted outright — a check measuring the wrong ink.
+	var fog_cells := {
+		"player": {"x": 3, "y": 0},
+		"zone": {"width": 4, "height": 1},
+		"cells": [
+			{"x": 0, "y": 0, "objs": [{"tile": "t", "color": "&y"}]},
+			{"x": 1, "y": 0, "visible": false, "light": 200, "objs": [{"tile": "t", "color": "&y"}]},
+			{"x": 2, "y": 0, "explored": false, "objs": [{"tile": "t", "color": "&y"}]},
+			{"x": 3, "y": 0, "objs": [{"tile": "t", "color": "&y"}]},
+		],
+	}
+	# THE PREDICATES ARE QUD'S, shared with the 3D view — a map that disagreed with the world about
+	# which cells are known would be worse than either answer alone.
+	var Z = load("res://ZoneRenderer.gd")
+	_check("a plain cell reads as seen", Z.cell_is_seen(fog_cells["cells"][0]))
+	_check("visible:false reads as remembered, not unknown",
+		not Z.cell_is_seen(fog_cells["cells"][1]) and Z.cell_is_explored(fog_cells["cells"][1]))
+	_check("explored:false reads as unknown", not Z.cell_is_explored(fog_cells["cells"][2]))
+
+	m._set_fog(false)
+	m._last_data = fog_cells
+	m._rerender()
+	var lit_off := _non_bg_in(m.last_image, m.BG, 2 * m.TILE_W, 0, m.TILE_W, m.TILE_H)
+	_check("with the eye off, an unexplored cell is still drawn", lit_off > 0,
+		"the whole-zone map is hiding cells")
+
+	m._set_fog(true)
+	m._last_data = fog_cells
+	m._rerender()
+	var im2: Image = m.last_image
+	var seen_px := _non_bg_in(im2, m.BG, 0, 0, m.TILE_W, m.TILE_H)
+	var mem_px := _non_bg_in(im2, m.BG, m.TILE_W, 0, m.TILE_W, m.TILE_H)
+	var unknown_px := _non_bg_in(im2, m.BG, 2 * m.TILE_W, 0, m.TILE_W, m.TILE_H)
+	_check("with the eye on, an unexplored cell is not drawn at all", unknown_px == 0,
+		"%d px" % unknown_px)
+	_check("...a seen cell is drawn", seen_px > 0, "%d px" % seen_px)
+	# VEILED, NOT HIDDEN: Qud ghosts what you remember rather than erasing it, and so does the 3D
+	# view. A remembered cell that vanished would make the map lie about a room you have walked.
+	_check("...and a remembered cell is drawn, but dimmer", mem_px > 0 and mem_px <= seen_px,
+		"seen=%d remembered=%d" % [seen_px, mem_px])
+	var seen_lum := _mean_lum_in(im2, 0, 0, m.TILE_W, m.TILE_H)
+	var mem_lum := _mean_lum_in(im2, m.TILE_W, 0, m.TILE_W, m.TILE_H)
+	# A MARGIN, NOT AN INEQUALITY. `mem_lum < seen_lum` is satisfied by a veil at alpha 0.02 —
+	# arithmetically dimmer, indistinguishable on screen, and exactly the "fog that does nothing"
+	# this is here to rule out.
+	_check("...visibly dimmer, not merely different", mem_lum < seen_lum * 0.8,
+		"seen=%.3f remembered=%.3f" % [seen_lum, mem_lum])
+
+	# THE BUTTON IS THE STATE, not a second copy of it — a pressed eye over a full-bright map is
+	# the kind of lie a screenshot cannot catch.
+	_check("the eye reads pressed when the fog is on", m._fog_btn.button_pressed)
+	_check("...and the setting is written", bool(Settings.get_value(m.FOG_KEY, false)))
+	var m5 = load("res://MinimapView.gd").new()
+	m5.persist = false
+	add_child(m5)
+	_check("...so a fresh map comes up with the fog on", m5._fog)
+
+	# 1:1 IS QUD'S MINIMAP, which already carries Qud's fog. A second switch over it would be ours
+	# arguing with the game's.
+	m.set_one_to_one(true)
+	_check("the eye is hidden in 1:1", not m._fog_btn.visible)
+	m.set_one_to_one(false)
+	_check("...and back in user mode", m._fog_btn.visible)
+
+	m._set_fog(false)
+	_check("the eye reads unpressed when the fog is off", not m._fog_btn.button_pressed)
+
 	# ── the zoom is remembered ────────────────────────────────────────────────
 	# Daniel: "Can we make the minimap tiles zoom be a user setting? I'd like it to stay from
 	# session to session."
@@ -440,6 +515,17 @@ static func _non_bg_in(im: Image, bg: Color, x0: int, y0: int, w: int, h: int) -
 			if absf(c.r - bg.r) > NEAR or absf(c.g - bg.g) > NEAR or absf(c.b - bg.b) > NEAR:
 				n += 1
 	return n
+
+
+static func _mean_lum_in(im: Image, x0: int, y0: int, w: int, h: int) -> float:
+	var t := 0.0
+	var n := 0
+	for y in range(y0, mini(y0 + h, im.get_height())):
+		for x in range(x0, mini(x0 + w, im.get_width())):
+			var c := im.get_pixel(x, y)
+			t += c.r * 0.3 + c.g * 0.6 + c.b * 0.1
+			n += 1
+	return (t / float(n)) if n > 0 else 0.0
 
 
 static func _has_in(im: Image, c: Color, x0: int, y0: int, w: int, h: int) -> bool:

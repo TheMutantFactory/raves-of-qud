@@ -25,6 +25,7 @@ var _rect: TextureRect
 var _map_margin: MarginContainer   # 1:1 left inset for the map image
 var _vbox: VBoxContainer
 var _tex: ImageTexture   # reused across snapshots; only reallocated when the zone size changes
+var last_image: Image    # the composite as built, for tests and `minimapdump` (see below)
 var _toggle: Button
 var _title: Label      # header — "Minimap" (user) or the zone name (1:1, Qud-style)
 var _mode := MODE_FULL
@@ -44,6 +45,11 @@ const SRC_KEY := "minimap_source"
 const PAN_KEY := "minimap_pan_tool"
 const FOLLOW_KEY := "minimap_follow"
 const ZOOM_KEY := "minimap_zoom"
+const FOG_KEY := "minimap_fog"
+## How much of a REMEMBERED cell survives — one you have explored but cannot currently see. Qud
+## ghosts these rather than hiding them, and so does the 3D view; the map says the same thing with
+## a veil of its own background over the tile.
+const FOG_MEMORY := 0.62
 ## THE TILE MAP'S CELL SIZE, in map pixels — Qud's own art size, so sprites keep their shape and
 ## the TextureRect scales the whole thing nearest-neighbour like every other source here.
 const TILE_W := 16
@@ -67,6 +73,9 @@ var _pan_btn: Button
 var _center_btn: Button
 var _pan_tool := false
 var _follow := false
+var _fog := false
+var _fog_btn: Button
+var _veil: Image      # one cell of background at FOG_MEMORY alpha, built once
 var _press_at := Vector2.ZERO   # where a click started, so a drag is not mistaken for a click
 var _sizing := false
 var _size_from := 0.0
@@ -81,6 +90,7 @@ func _ready() -> void:
 	# in a later build and an old settings file would otherwise restore a zoom the map can no
 	# longer reach, with no gesture that gets back to a legal one.
 	_zoom = clampf(float(Settings.get_value(ZOOM_KEY, ZOOM_MIN)), ZOOM_MIN, ZOOM_MAX)
+	_fog = bool(Settings.get_value(FOG_KEY, false))
 	_tiles = load("res://QudTiles.gd").new()
 	_apply_panel_box()
 
@@ -101,6 +111,16 @@ func _ready() -> void:
 	# disabled" — which is the whole point of making it a MODE rather than a modifier key: a drag
 	# and a click are the same gesture at different speeds, so one of them has to be claimed
 	# explicitly or the map would guess, and guess wrong on every hurried click.
+	# THE EYE: Qud's own line of sight, applied to the map. Off by default, because a map that
+	# hides what you have not seen is a different tool from one that shows the zone — and the
+	# reason this panel draws Qud's tiles at all was to see the layout.
+	_fog_btn = Button.new()
+	_fog_btn.toggle_mode = true
+	_fog_btn.focus_mode = Control.FOCUS_NONE
+	_fog_btn.button_pressed = _fog
+	_dress_icon(_fog_btn, "res://art/look.svg", "👁")
+	_fog_btn.toggled.connect(_set_fog)
+	head.add_child(_fog_btn)
 	_pan_btn = Button.new()
 	_pan_btn.text = "✥"
 	_pan_btn.toggle_mode = true
@@ -227,6 +247,10 @@ func set_one_to_one(on: bool) -> void:
 	if _center_btn != null:
 		_center_btn.visible = not on
 		_refresh_center_btn()
+	if _fog_btn != null:
+		# 1:1 draws QUD's minimap, which already carries Qud's own fog — there is nothing here to
+		# switch.
+		_fog_btn.visible = not on
 	if on:
 		# ...and a magnified, panned map is not Qud's either: parity starts from fit, every time.
 		_zoom = 1.0
@@ -298,6 +322,11 @@ func _render_qud_minimap(mm: Dictionary) -> bool:
 			var ty := y * 2
 			img.set_pixel(x, ty, c)
 			img.set_pixel(x, ty + 1, c)
+	# THE PICTURE WE ACTUALLY BUILT. ImageTexture.update() writes straight to the GPU, and under
+	# the headless renderer get_image() keeps handing back the texture's *creation* contents —
+	# so a test that read the texture after a same-size re-render was grading the previous
+	# frame. Everything that wants to inspect the composite reads this instead.
+	last_image = img
 	if _tex != null and _tex.get_width() == w and _tex.get_height() == h * 2:
 		_tex.update(img)
 	else:
@@ -474,6 +503,11 @@ func _rerender() -> void:
 	# Reuse one texture: update its pixels in place, only reallocating if the zone size changed. This
 	# avoids a per-turn GPU texture alloc/free that would otherwise churn during the risky viewport
 	# enable window.
+	# THE PICTURE WE ACTUALLY BUILT. ImageTexture.update() writes straight to the GPU, and under
+	# the headless renderer get_image() keeps handing back the texture's *creation* contents —
+	# so a test that read the texture after a same-size re-render was grading the previous
+	# frame. Everything that wants to inspect the composite reads this instead.
+	last_image = img
 	if _tex != null and _tex.get_width() == w and _tex.get_height() == h:
 		_tex.update(img)
 	else:
@@ -512,6 +546,13 @@ func _render_tiles(data: Dictionary, w: int, h: int) -> bool:
 		var objs: Array = cell.get("objs", [])
 		if objs.is_empty():
 			continue
+		# QUD'S OWN PREDICATES, not a second opinion: unexplored cells are not drawn at all and
+		# remembered ones are veiled, which is what the 3D view does with the same two answers.
+		var veil := false
+		if _fog:
+			if not ZoneRenderer.cell_is_explored(cell):
+				continue
+			veil = not ZoneRenderer.cell_is_seen(cell)
 		probe["with_objs"] += 1
 		# THE IMAGE, NOT THE TEXTURE. get_image() on an ImageTexture can force a GPU readback, and
 		# doing it once per cell is what made this panel cost 545ms a turn — five times the whole
@@ -529,6 +570,13 @@ func _render_tiles(data: Dictionary, w: int, h: int) -> bool:
 		# background out around every sprite, leaving each tile in its own black box.
 		img.blend_rect(ti, Rect2i(Vector2i.ZERO, ti.get_size()),
 			Vector2i(x * TILE_W, y * TILE_H))
+		if veil:
+			# A VEIL, NOT A RECOLOUR. Dimming the tile would mean touching every pixel of it in
+			# GDScript, per cell, per turn — the cost that made this panel unusable once already.
+			# One blend of a pre-built translucent square is the same picture for a hundredth of
+			# the work.
+			img.blend_rect(_fog_veil(), Rect2i(0, 0, TILE_W, TILE_H),
+				Vector2i(x * TILE_W, y * TILE_H))
 	var p: Dictionary = data.get("player", {})
 	var px := int(p.get("x", -1))
 	var py := int(p.get("y", -1))
@@ -563,6 +611,11 @@ func _render_tiles(data: Dictionary, w: int, h: int) -> bool:
 	# the same reason (WALL_LIFT); this does it with modulate so the composite stays honest.
 	_rect.modulate = TILE_LIFT
 	var want := Vector2i(w * TILE_W, h * TILE_H)
+	# THE PICTURE WE ACTUALLY BUILT. ImageTexture.update() writes straight to the GPU, and under
+	# the headless renderer get_image() keeps handing back the texture's *creation* contents —
+	# so a test that read the texture after a same-size re-render was grading the previous
+	# frame. Everything that wants to inspect the composite reads this instead.
+	last_image = img
 	if _tex != null and _tex.get_size() == Vector2(want):
 		_tex.update(img)
 	else:
@@ -617,6 +670,37 @@ func _layout_map() -> void:
 
 
 ## The wheel zooms about the pointer; a held left button pans.
+## The same eye the Locations panel wears, from the same file — one glyph for "what can be seen"
+## across the whole frame. Falls back to a character if the art is missing, so a lost asset costs
+## a nice icon and not a working button.
+func _dress_icon(b: Button, art: String, fallback: String) -> void:
+	var tex: Texture2D = load(art) if ResourceLoader.exists(art) else null
+	if tex != null:
+		b.icon = tex
+		b.expand_icon = true
+		b.custom_minimum_size = Vector2(22, 18)
+	else:
+		b.text = fallback
+
+
+## LINE OF SIGHT ON THE MAP.
+func _set_fog(on: bool) -> void:
+	_fog = on
+	Settings.set_value(FOG_KEY, on)
+	if persist:
+		Settings.save()
+	_refresh_fog_btn()
+	_rerender()
+
+
+func _refresh_fog_btn() -> void:
+	if _fog_btn == null:
+		return
+	_fog_btn.button_pressed = _fog
+	_fog_btn.tooltip_text = ("Line of sight ON — the map shows only what you have seen"
+		if _fog else "Line of sight off — the map shows the whole zone")
+
+
 ## THE PAN TOOL. Persisted, because it is a working mode rather than a momentary state: a player
 ## who reads the map by dragging wants it to still be dragging tomorrow.
 func _set_pan_tool(on: bool) -> void:
@@ -783,6 +867,14 @@ func _on_grab_input(e: InputEvent) -> void:
 			_view.custom_minimum_size = Vector2(0, _map_h)
 		_layout_map()
 		accept_event()
+
+
+## One cell of background at the memory alpha, built once and reused for every veiled cell.
+func _fog_veil() -> Image:
+	if _veil == null:
+		_veil = Image.create(TILE_W, TILE_H, false, Image.FORMAT_RGBA8)
+		_veil.fill(Color(BG.r, BG.g, BG.b, FOG_MEMORY))
+	return _veil
 
 
 ## A hollow box around the player's cell — hollow so his own tile still reads inside it.

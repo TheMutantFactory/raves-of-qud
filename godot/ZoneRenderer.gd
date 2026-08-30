@@ -2091,7 +2091,20 @@ const MEMORY_TINT := Color(0.32, 0.58, 0.55)
 ## bands Qud shows as memory, which is over-hiding rather than parity. Kept because the field is
 ## real and the discrepancy is worth chasing; the fog currently rests on `visible` alone.
 func _cell_explored(cell: Dictionary) -> bool:
+	return cell_is_explored(cell)
+
+
+## THE TWO FOG PREDICATES, STATIC, so anything drawing this zone can ask them without a renderer.
+## The minimap needs exactly these when its fog toggle is on, and a second copy over there would
+## be a second opinion about what you can see — the map and the world disagreeing about which
+## cells are known is worse than either answer alone.
+static func cell_is_explored(cell: Dictionary) -> bool:
 	return bool(cell.get("explored", true))
+
+
+static func cell_is_seen(cell: Dictionary) -> bool:
+	# the mod omits `visible` when it is TRUE, so an absent key means seen — never read it as false
+	return bool(cell.get("visible", true)) and int(cell.get("light", 200)) > LIGHT_NONE
 
 ## Currently in the player's sight AND lit. Mirrors 1:1's `full_1to1` exactly.
 ## Public form of _cell_seen, for the inspector's fog verdict — one source, so the report cannot
@@ -2100,8 +2113,7 @@ func cell_seen(cell: Dictionary) -> bool:
 	return _cell_seen(cell)
 
 func _cell_seen(cell: Dictionary) -> bool:
-	# the mod omits `visible` when it is TRUE, so an absent key means seen — never read it as false
-	return bool(cell.get("visible", true)) and int(cell.get("light", 200)) > LIGHT_NONE
+	return cell_is_seen(cell)
 
 ## The same decision as a COLOUR, for anything that takes a modulate: out of sight leans teal.
 func _view_tint(cell: Dictionary) -> Color:
