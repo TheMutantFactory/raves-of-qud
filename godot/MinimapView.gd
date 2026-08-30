@@ -45,9 +45,19 @@ const TILE_H := 24
 var persist := true
 var world_ref: Node3D   # unused; kept so MainFrame's late-bind does not need unpicking
 var probe := {}         # last tile-map pass, for control.py minimapdump
+var _view: Control      # the clipping box the map is panned inside
+var _grab: Control      # the draggable bottom border
+var _zoom := 1.0        # 1.0 = the whole zone fits
+var _pan := Vector2.ZERO
+var _panning := false
+var _drag_from := Vector2.ZERO
+var _sizing := false
+var _size_from := 0.0
+var _map_h := MAP_H_USER
 var _last_data := {}   # last snapshot, so a mode toggle re-renders without waiting for a new one
 
 func _ready() -> void:
+	_map_h = clampf(float(Settings.get_value(MAP_H_KEY, MAP_H_USER)), MAP_H_MIN, MAP_H_MAX)
 	_tiles = load("res://QudTiles.gd").new()
 	_apply_panel_box()
 
@@ -81,11 +91,32 @@ func _ready() -> void:
 	_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_rect.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_rect.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# A CLIPPING BOX, and the map inside it. Zoom and pan are the map's size and offset within
+	# this, so the panel never grows to fit a magnified texture — it shows a window onto it.
+	_view = Control.new()
+	_view.clip_contents = true
+	_view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	# AT BUILD TIME, not only on a mode change. set_one_to_one returns early when the mode has not
 	# changed, and user mode is the DEFAULT — so on a normal launch nothing ever gave the map a
 	# height at all.
-	_rect.custom_minimum_size = Vector2(0, MAP_H_USER)
-	_map_margin.add_child(_rect)
+	_view.custom_minimum_size = Vector2(0, _map_h)
+	_view.gui_input.connect(_on_map_input)
+	_view.resized.connect(_layout_map)
+	_map_margin.add_child(_view)
+	_rect.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	_rect.stretch_mode = TextureRect.STRETCH_SCALE   # we size it; it fills what we give it
+	_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE  # the box takes the wheel and the drag
+	_view.add_child(_rect)
+
+	# THE BOTTOM BORDER, draggable. Same shape as the message log's ||| bar: a thin hit strip that
+	# owns the resize cursor, so the rest of the panel keeps its own.
+	_grab = Control.new()
+	_grab.custom_minimum_size = Vector2(0, GRAB_H)
+	_grab.mouse_default_cursor_shape = Control.CURSOR_VSIZE
+	_grab.tooltip_text = "Drag to resize the minimap"
+	_grab.gui_input.connect(_on_grab_input)
+	v.add_child(_grab)
 
 
 ## MainFrame calls this each snapshot with the full data (needs cells + player + zone dims + palette).
@@ -130,16 +161,26 @@ func set_one_to_one(on: bool) -> void:
 	# 1:1 is Qud's MEASURED rect: 240x104 (confirmed against the live RectTransform), which is aspect
 	# 2.31 while the texture is 80x50 = 1.60 — Qud STRETCHES the map, it does not fit it. Raves was
 	# aspect-fitting into 190x119, so every feature sat at the wrong scale.
-	if _rect != null:
-		# USER MODE NEEDS A HEIGHT TOO. This was (0, 0), which was harmless only because user mode
-		# never reached this panel: with no QoL feature the minimap was Qud's shape in BOTH modes,
-		# so the 1:1 branch always won and always set a size. Giving the panel a feature made user
-		# mode reachable for the first time and the map area collapsed to nothing — a composite
-		# with 43,080 lit pixels in it, drawn into zero height.
-		_rect.custom_minimum_size = Vector2(MAP_W_1TO1, MAP_H_1TO1) if on else Vector2(0, MAP_H_USER)
-		_rect.stretch_mode = TextureRect.STRETCH_SCALE if on else TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		_rect.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN if on else Control.SIZE_EXPAND_FILL
-		_rect.size_flags_vertical = Control.SIZE_SHRINK_BEGIN if on else Control.SIZE_EXPAND_FILL
+	# THE BOX IS SIZED, NOT THE MAP. The map inside it is placed by _layout_map in both modes now,
+	# so setting the TextureRect's own flags here would fight that every frame.
+	#
+	# USER MODE NEEDS A HEIGHT TOO. This was (0, 0), which was harmless only because user mode never
+	# reached this panel: with no QoL feature the minimap was Qud's shape in BOTH modes, so the 1:1
+	# branch always won and always set a size. Giving the panel a feature made user mode reachable
+	# for the first time and the map area collapsed to nothing — a composite with 43,080 lit pixels
+	# in it, drawn into zero height.
+	if _view != null:
+		_view.custom_minimum_size = Vector2(MAP_W_1TO1, MAP_H_1TO1) if on else Vector2(0, _map_h)
+		_view.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN if on else Control.SIZE_EXPAND_FILL
+		_view.size_flags_vertical = Control.SIZE_SHRINK_BEGIN if on else Control.SIZE_EXPAND_FILL
+	if _grab != null:
+		# Qud has no resize handle on its sidebar map, so parity mode does not grow one.
+		_grab.visible = not on
+	if on:
+		# ...and a magnified, panned map is not Qud's either: parity starts from fit, every time.
+		_zoom = 1.0
+		_pan = Vector2.ZERO
+	_layout_map()
 	if _map_margin != null:
 		_map_margin.add_theme_constant_override("margin_left", MAP_X_1TO1 if on else 0)
 	# Qud's header glyphs and ours land on the same rows, but its map starts 4px higher — the gap
@@ -211,12 +252,66 @@ func _render_qud_minimap(mm: Dictionary) -> bool:
 	else:
 		_tex = ImageTexture.create_from_image(img)
 		_rect.texture = _tex
+	_layout_map()
 	return true
 
 ## Qud's minimap rect, measured off its live RectTransform + the rendered frame at 1080:
 ## 240x104 at x1658 (content origin 1641 -> 17 in), map top y114.
 ## The map's height in user mode. Qud's own is 104 against its fixed sidebar; the Raves column is
 ## wider and resizable, so this only sets a floor and the rect grows with the panel.
+## ── ZOOM, PAN AND THE RESIZE STRIP ──────────────────────────────────────────────────────────────
+##
+## Daniel: "Let's make the minimap bottom border draggable, to make more room. Let's add scroll-zoom
+## to the minimap, as well as a pan/drag."
+##
+## The map is a texture in a CLIPPING box now, sized and positioned by hand, rather than a
+## TextureRect told to fit itself. Zoom is the texture's size, pan is its offset, and both are
+## nothing but arithmetic — which is why the three functions below are static and tested, and why
+## the widgets underneath them are three lines each.
+const ZOOM_MIN := 1.0        # 1.0 is FIT: the whole zone in the panel. Below that is empty margin.
+const ZOOM_MAX := 8.0
+const ZOOM_STEP := 1.15      # per wheel notch, multiplicative — a fixed step crawls when zoomed in
+const MAP_H_MIN := 60.0
+const MAP_H_MAX := 600.0
+const GRAB_H := 6.0          # the bottom strip's hit height
+const MAP_H_KEY := "minimap_height"
+
+## One wheel notch. Multiplicative so a notch means the same PROPORTION at every zoom — an additive
+## step is a crawl when zoomed in and a leap when zoomed out.
+static func zoom_step(zoom: float, notches: float) -> float:
+	return clampf(zoom * pow(ZOOM_STEP, notches), ZOOM_MIN, ZOOM_MAX)
+
+
+## Keep the map covering the view. WITHOUT THIS you can throw the map off the edge and be left
+## looking at an empty panel with no way back except a mode toggle — the failure that makes a
+## pannable view feel broken rather than free.
+##
+## When the content is SMALLER than the view (fit zoom, or a wide map in a tall box) it is centred
+## on that axis instead: there is nothing to pan to, so pinning it to a corner would just look
+## broken in a different way.
+static func clamp_pan(pan: Vector2, content: Vector2, view: Vector2) -> Vector2:
+	var out := pan
+	if content.x <= view.x:
+		out.x = (view.x - content.x) * 0.5
+	else:
+		out.x = clampf(out.x, view.x - content.x, 0.0)
+	if content.y <= view.y:
+		out.y = (view.y - content.y) * 0.5
+	else:
+		out.y = clampf(out.y, view.y - content.y, 0.0)
+	return out
+
+
+## Zoom about a point, so the cell under the cursor stays under the cursor. Zooming about the
+## CENTRE instead is the version everyone writes first, and it walks whatever you were looking at
+## off the screen as you close in on it.
+static func zoom_about(pan: Vector2, focus: Vector2, old_z: float, new_z: float) -> Vector2:
+	if old_z <= 0.0:
+		return pan
+	var k := new_z / old_z
+	return focus - (focus - pan) * k
+
+
 ## How far the tile map is lifted. Enough to read a cave at panel size without blowing out the
 ## lit cells — the player's own white mark is already at full.
 const TILE_LIFT := Color(2.2, 2.2, 2.2)
@@ -325,6 +420,7 @@ func _rerender() -> void:
 	else:
 		_tex = ImageTexture.create_from_image(img)
 		_rect.texture = _tex
+	_layout_map()
 
 ## Colour of one cell, per mode.
 ## THE ZONE IN QUD'S OWN TILES. Daniel: "is it possible to just load the zone tilesets from Qud?
@@ -407,8 +503,16 @@ func _render_tiles(data: Dictionary, w: int, h: int) -> bool:
 	else:
 		_tex = ImageTexture.create_from_image(img)
 		_rect.texture = _tex
+	_layout_map()
 	# THE LAST GAP: a picture with ink in it, a visible rect, and still nothing on screen. These
 	# say whether the texture reached the control and whether the control has any room to draw it.
+	probe["zoom"] = _zoom
+	probe["pan"] = [_pan.x, _pan.y]
+	probe["panning"] = _panning
+	probe["btn_events"] = _dbg_btn
+	probe["motion_events"] = _dbg_motion
+	probe["pan_motion"] = _dbg_pan_motion
+	probe["view_size"] = [_view.size.x, _view.size.y] if _view != null else []
 	probe["rect_size"] = [_rect.size.x, _rect.size.y]
 	probe["rect_min"] = [_rect.custom_minimum_size.x, _rect.custom_minimum_size.y]
 	probe["margin_size"] = [_map_margin.size.x, _map_margin.size.y] if _map_margin != null else []
@@ -416,6 +520,92 @@ func _render_tiles(data: Dictionary, w: int, h: int) -> bool:
 	probe["tex_size"] = [_tex.get_width(), _tex.get_height()]
 	probe["panel_size"] = [size.x, size.y]
 	return true
+
+
+## Place the map inside its box: fit first, then zoom, then pan. Called whenever any of the three
+## change, and on resize — the fit depends on the box.
+func _layout_map() -> void:
+	if _view == null or _rect == null or _rect.texture == null:
+		return
+	var t: Vector2 = _rect.texture.get_size()
+	var vw: Vector2 = _view.size
+	if t.x <= 0.0 or t.y <= 0.0 or vw.x <= 0.0 or vw.y <= 0.0:
+		return
+	# FIT IS ZOOM 1. Contain, not cover: at rest the whole zone is in the panel, which is what a
+	# minimap is for, and zooming in is the deliberate act.
+	var fit: float = minf(vw.x / t.x, vw.y / t.y)
+	var content: Vector2 = t * fit * _zoom
+	_pan = clamp_pan(_pan, content, vw)
+	_rect.size = content
+	_rect.position = _pan
+
+
+## The wheel zooms about the pointer; a held left button pans.
+## Counted, not inferred: "the drag does nothing" has two very different causes — the events never
+## arrive, or they arrive and the arithmetic discards them — and no screenshot can tell them apart.
+var _dbg_btn := 0
+var _dbg_motion := 0
+var _dbg_pan_motion := 0
+
+func _on_map_input(e: InputEvent) -> void:
+	if e is InputEventMouseButton:
+		_dbg_btn += 1
+	elif e is InputEventMouseMotion:
+		_dbg_motion += 1
+		if _panning:
+			_dbg_pan_motion += 1
+	if _one_to_one:
+		return   # 1:1 is Qud's sidebar; it has no zoomable map
+	if e is InputEventMouseButton:
+		if e.button_index == MOUSE_BUTTON_WHEEL_UP or e.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			if not e.pressed:
+				return
+			var dir := 1.0 if e.button_index == MOUSE_BUTTON_WHEEL_UP else -1.0
+			var old := _zoom
+			_zoom = zoom_step(_zoom, dir)
+			if not is_equal_approx(_zoom, old):
+				_pan = zoom_about(_pan, e.position, old, _zoom)
+				_layout_map()
+			accept_event()
+		elif e.button_index == MOUSE_BUTTON_LEFT:
+			_panning = e.pressed
+			_drag_from = e.position
+			accept_event()
+	elif e is InputEventMouseMotion and _panning:
+		# FROM POSITIONS, NOT `relative`. Godot fills `relative` from real pointer deltas, so any
+		# input that WARPS the cursor — which is what the test harness does — delivers motion
+		# events with a relative of zero: the handler ran twelve times and moved the map nowhere,
+		# and nothing on screen or in the counters said why until the pan value was read across a
+		# drag. Positions are what the event always carries honestly.
+		_pan += e.position - _drag_from
+		_drag_from = e.position
+		_layout_map()
+		accept_event()
+
+
+## The bottom border. Dragging it changes the map's height and nothing else.
+func _on_grab_input(e: InputEvent) -> void:
+	if e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT:
+		_sizing = e.pressed
+		_size_from = e.global_position.y
+		if not e.pressed:
+			# SAVED ON RELEASE, not per motion event: a drag is dozens of events and each one
+			# would rewrite the settings file.
+			Settings.set_value(MAP_H_KEY, _map_h)
+			if persist:
+				Settings.save()
+		accept_event()
+	elif e is InputEventMouseMotion and _sizing:
+		# FROM POSITIONS, for the same reason the pan is — `relative` is zero for any input that
+		# warps the pointer, and the strip would swallow a whole drag without moving. GLOBAL
+		# position here, because the strip itself moves as the panel resizes: a local y would be
+		# measured against a ruler that is being stretched by the thing it is measuring.
+		_map_h = clampf(_map_h + (e.global_position.y - _size_from), MAP_H_MIN, MAP_H_MAX)
+		_size_from = e.global_position.y
+		if _view != null:
+			_view.custom_minimum_size = Vector2(0, _map_h)
+		_layout_map()
+		accept_event()
 
 
 ## A hollow box around the player's cell — hollow so his own tile still reads inside it.

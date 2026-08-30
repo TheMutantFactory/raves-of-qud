@@ -30,6 +30,10 @@ class FakeTiles:
 	## TRANSPARENT AROUND THE EDGES, like every real tile. A solid stub makes blit and blend
 	## indistinguishable, so the check that the background survives around a sprite would pass on
 	## code that punches a black box out of the map for every cell.
+	## The painted and 1:1 paths ask for COLOURS, not art. Without this the stub throws the moment
+	## a check touches any source but "tiles".
+	func main_color(_obj: Dictionary, fallback := Color.WHITE) -> Color:
+		return fallback
 	func texture_for(_obj: Dictionary, _full: bool) -> Texture2D:
 		var im := Image.create(16, 24, false, Image.FORMAT_RGBA8)
 		im.fill(Color(0, 0, 0, 0))
@@ -117,6 +121,80 @@ func _ready() -> void:
 	# tile composite, which is a Raves surface.
 	_check("1:1 overrides the setting", m._rect.texture.get_width() != 4 * m.TILE_W,
 		str(m._rect.texture.get_size()))
+
+	# ── zoom, pan, and the resize strip ───────────────────────────────────────
+	# Daniel: "make the minimap bottom border draggable, to make more room ... add scroll-zoom to
+	# the minimap, as well as a pan/drag." The widgets are three lines each; all of the ways this
+	# goes wrong are in the arithmetic, so that is what is tested.
+	var M = load("res://MinimapView.gd")
+
+	# ZOOM IS MULTIPLICATIVE, so a notch means the same PROPORTION at every zoom. An additive step
+	# crawls when you are close in and leaps when you are far out.
+	_check("a notch zooms in", M.zoom_step(1.0, 1.0) > 1.0)
+	_check("...and the step is proportional, not fixed",
+		absf((M.zoom_step(2.0, 1.0) - 2.0) - 2.0 * (M.zoom_step(1.0, 1.0) - 1.0)) < 0.001,
+		"%f vs %f" % [M.zoom_step(2.0, 1.0) - 2.0, M.zoom_step(1.0, 1.0) - 1.0])
+	_check("it cannot zoom out past fit", is_equal_approx(M.zoom_step(1.0, -20.0), M.ZOOM_MIN))
+	_check("...nor in past the ceiling", is_equal_approx(M.zoom_step(1.0, 99.0), M.ZOOM_MAX))
+	# A round trip returns exactly, so wheeling back and forth does not drift the view.
+	_check("in then out returns to where it was",
+		is_equal_approx(M.zoom_step(M.zoom_step(2.0, 1.0), -1.0), 2.0))
+
+	# PAN IS CLAMPED so the map always covers the view. Without this you can throw it off the edge
+	# and be left looking at an empty panel with no way back.
+	var view := Vector2(300, 120)
+	var big := Vector2(900, 360)
+	_check("the map cannot be dragged off to the right",
+		M.clamp_pan(Vector2(500, 0), big, view).x <= 0.0,
+		str(M.clamp_pan(Vector2(500, 0), big, view)))
+	_check("...nor off to the left",
+		M.clamp_pan(Vector2(-5000, 0), big, view).x >= view.x - big.x,
+		str(M.clamp_pan(Vector2(-5000, 0), big, view)))
+	# ...and a map SMALLER than the view is centred, because there is nothing to pan to.
+	var small := Vector2(100, 40)
+	var c: Vector2 = M.clamp_pan(Vector2(999, -999), small, view)
+	_check("a map smaller than its box is centred, not pinned to a corner",
+		is_equal_approx(c.x, (view.x - small.x) * 0.5) and is_equal_approx(c.y, (view.y - small.y) * 0.5),
+		str(c))
+
+	# ZOOM HOLDS THE POINT UNDER THE CURSOR. Zooming about the CENTRE is what everyone writes
+	# first, and it walks the thing you are closing in on off the screen.
+	var focus := Vector2(200, 50)
+	var pan0 := Vector2(-40, -10)
+	var pan1: Vector2 = M.zoom_about(pan0, focus, 1.0, 2.0)
+	# The texture point under `focus` before must still be under `focus` after.
+	var before := (focus - pan0) / 1.0
+	var after := (focus - pan1) / 2.0
+	_check("the cell under the cursor stays under the cursor",
+		before.is_equal_approx(after), "%s vs %s" % [before, after])
+	_check("...and zooming by nothing moves nothing",
+		M.zoom_about(pan0, focus, 2.0, 2.0).is_equal_approx(pan0))
+
+	# THE RESIZE STRIP is bounded at both ends: dragged to nothing it would vanish with no way to
+	# get it back, and unbounded it would push the whole side column off the screen.
+	_check("the panel has a draggable bottom border", m._grab != null)
+	_check("...and it is the only thing wearing the resize cursor",
+		m._grab.mouse_default_cursor_shape == Control.CURSOR_VSIZE)
+	m._map_h = 10000.0
+	m._map_h = clampf(m._map_h, M.MAP_H_MIN, M.MAP_H_MAX)
+	_check("the map cannot be dragged taller than the ceiling", m._map_h <= M.MAP_H_MAX)
+	m._map_h = clampf(-500.0, M.MAP_H_MIN, M.MAP_H_MAX)
+	_check("...nor shrunk to nothing", m._map_h >= M.MAP_H_MIN)
+
+	# 1:1 has none of it: Qud's sidebar map does not zoom, pan or resize.
+	m._zoom = 3.0
+	m._pan = Vector2(50, 50)
+	# FROM USER MODE, deliberately: set_one_to_one returns early when the mode has not changed, and
+	# an earlier check above left this panel in 1:1 — so calling it again proved nothing.
+	m._one_to_one = false
+	m.set_one_to_one(true)
+	# ZOOM RETURNS TO FIT and the user's offset is dropped. The pan does NOT come back as zero:
+	# _layout_map runs on the way out and CENTRES content narrower than its box, which is the
+	# correct resting place — asserting ZERO here was asserting my first guess at the arithmetic
+	# rather than the behaviour.
+	_check("parity resets the zoom to fit", is_equal_approx(m._zoom, 1.0), str(m._zoom))
+	_check("...and drops the pan the user had set", m._pan != Vector2(50, 50), str(m._pan))
+	_check("...and takes the resize handle away", not m._grab.visible)
 
 	_report()
 
