@@ -43,6 +43,7 @@ signal tile_interact(cell: Vector2i)
 const SRC_KEY := "minimap_source"
 const PAN_KEY := "minimap_pan_tool"
 const FOLLOW_KEY := "minimap_follow"
+const ZOOM_KEY := "minimap_zoom"
 ## THE TILE MAP'S CELL SIZE, in map pixels — Qud's own art size, so sprites keep their shape and
 ## the TextureRect scales the whole thing nearest-neighbour like every other source here.
 const TILE_W := 16
@@ -76,6 +77,10 @@ func _ready() -> void:
 	_map_h = clampf(float(Settings.get_value(MAP_H_KEY, MAP_H_USER)), MAP_H_MIN, MAP_H_MAX)
 	_pan_tool = bool(Settings.get_value(PAN_KEY, false))
 	_follow = bool(Settings.get_value(FOLLOW_KEY, false))
+	# CLAMPED ON LOAD, not trusted. A saved zoom outlives the code that wrote it: shrink ZOOM_MAX
+	# in a later build and an old settings file would otherwise restore a zoom the map can no
+	# longer reach, with no gesture that gets back to a legal one.
+	_zoom = clampf(float(Settings.get_value(ZOOM_KEY, ZOOM_MIN)), ZOOM_MIN, ZOOM_MAX)
 	_tiles = load("res://QudTiles.gd").new()
 	_apply_panel_box()
 
@@ -712,6 +717,12 @@ func _on_map_input(e: InputEvent) -> void:
 			if not is_equal_approx(_zoom, old):
 				_pan = zoom_about(_pan, e.position, old, _zoom)
 				_layout_map()
+				# SAVED PER NOTCH. A notch is a discrete act, unlike the resize drag next door —
+				# which is dozens of motion events and so saves on release instead. A fast scroll
+				# is a handful of writes, not a stream.
+				Settings.set_value(ZOOM_KEY, _zoom)
+				if persist:
+					Settings.save()
 			accept_event()
 		elif e.button_index == MOUSE_BUTTON_LEFT or e.button_index == MOUSE_BUTTON_RIGHT:
 			if e.pressed:

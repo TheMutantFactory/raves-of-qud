@@ -278,6 +278,40 @@ func _ready() -> void:
 			or is_equal_approx(m._rect.position.y, m._view.size.y - m._rect.size.y),
 		"player %.0fpx off centre with the map at %s" % [after_d, m._rect.position])
 
+	# ── the zoom is remembered ────────────────────────────────────────────────
+	# Daniel: "Can we make the minimap tiles zoom be a user setting? I'd like it to stay from
+	# session to session."
+	Settings.set_value(m.ZOOM_KEY, 1.0)
+	m._zoom = 1.0
+	var wheel := InputEventMouseButton.new()
+	wheel.button_index = MOUSE_BUTTON_WHEEL_UP
+	wheel.pressed = true
+	wheel.position = Vector2(10, 10)
+	m._on_map_input(wheel)
+	_check("a wheel notch writes the zoom setting",
+		float(Settings.get_value(m.ZOOM_KEY, 0.0)) > 1.0,
+		str(Settings.get_value(m.ZOOM_KEY, 0.0)))
+	_check("...and it is the zoom the map is at",
+		is_equal_approx(float(Settings.get_value(m.ZOOM_KEY, 0.0)), m._zoom))
+
+	# CLAMPED ON LOAD. A saved zoom outlives the code that wrote it, and an out-of-range value
+	# would otherwise restore a map you cannot get back from.
+	Settings.set_value(m.ZOOM_KEY, 999.0)
+	var m2 = load("res://MinimapView.gd").new()
+	m2.persist = false
+	add_child(m2)
+	_check("a saved zoom past the ceiling loads clamped", m2._zoom <= m2.ZOOM_MAX, str(m2._zoom))
+	Settings.set_value(m.ZOOM_KEY, -5.0)
+	var m3 = load("res://MinimapView.gd").new()
+	m3.persist = false
+	add_child(m3)
+	_check("...and one below the floor too", m3._zoom >= m3.ZOOM_MIN, str(m3._zoom))
+	Settings.set_value(m.ZOOM_KEY, 2.5)
+	var m4 = load("res://MinimapView.gd").new()
+	m4.persist = false
+	add_child(m4)
+	_check("a legal saved zoom is restored as-is", is_equal_approx(m4._zoom, 2.5), str(m4._zoom))
+
 	# ── follow mode ───────────────────────────────────────────────────────────
 	# Daniel: "When the user clicks on the 'center on character' button, this should be a toggle
 	# that then makes the minimap update to center on character whenever the character moves."
