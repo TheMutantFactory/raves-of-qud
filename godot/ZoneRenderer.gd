@@ -4137,6 +4137,10 @@ func _place_light(cx: int, cy: int, radius: float, smokes := true, on_fire := fa
 	# subtree (the bank). Only the LIVE zone's register in _lights for the _process flicker.
 	var lp: Node = _bank if _bank != null else _light_root
 	var glow := MeshInstance3D.new()
+	# The last pool built, for callers that need a handle on it. _lights is NOT that handle: it is
+	# appended to only under _live_build, so reading its tail after a dynamic-pass placement hands
+	# you SOME OTHER torch's pool — which the held light would then drag around behind the player.
+	_last_glow = glow
 	var gm := PlaneMesh.new()
 	# A fire's ground-pool is kept TIGHT (a halo at the flame's foot) so it reads as one campfire, not a
 	# separate flat disc under a standing flame; a torch/sconce pools wider. Both fade out by day anyway.
@@ -7974,6 +7978,10 @@ const HELD_FIRE_AMOUNT := 20
 ## grows the fire upward off the right spot rather than floating it.
 const HELD_FIRE_HEIGHT_MUL := 3.0
 func _place_held_light(cx: int, cy: int, hflip: bool) -> void:
+	# CLEARED FIRST, so a pool from a previous turn cannot be adopted as this one's. _place_light
+	# returns early in 1:1 and on the world map without building anything, and a stale handle there
+	# would have the walk dragging a freed node — or worse, a live one belonging to somebody else.
+	_last_glow = null
 	if _held_dbg:
 		print("[held] cell=(%d,%d) held=%s flat=%s 1to1=%s" % [cx, cy, str(_held_light), _flat_2d, _one_to_one])
 	if _held_light.is_empty() or _flat_2d or _one_to_one:
@@ -8110,6 +8118,8 @@ func _place_held_light(cx: int, cy: int, hflip: bool) -> void:
 	# _aim_held resolves them against the live camera each frame.
 	_held_rig = {"sprite": s, "fire": pf, "cell": Vector2i(cx, cy),
 		"sprite_off": side + grip_dx * ps, "fire_off": side + (grip_dx + flame_dx) * ps}
+	# ...and the POOL this torch casts, so the walk can carry it.
+	_held_pool = {"glow": _last_glow, "cell": Vector2i(cx, cy)} if _last_glow != null else {}
 	_aim_held()
 
 ## Put the held torch to the RIGHT OF THE PLAYER AS DRAWN, whatever the camera is doing.
@@ -8145,6 +8155,8 @@ func _aim_held() -> void:
 	# offset costs nothing extra here.
 	s.position = Vector3(float(k.x) + _walk_off.x + r.x * so, s.position.y,
 		float(k.y) + _walk_off.y + r.z * so / zs)
+	# ...and the pool it casts, which every held torch has even when its art shows no flame.
+	_carry_held_pool()
 	var f = _held_rig.get("fire")
 	if is_instance_valid(f):
 		var fo: float = _held_rig["fire_off"]
@@ -8156,7 +8168,11 @@ func _aim_held() -> void:
 		var up := Vector3(0, 1, 0)
 		# the emission BOX is local, so the node's basis makes its wide axis the camera's right...
 		(f as Node3D).transform.basis = Basis(rl, up, rl.cross(up).normalized())
-		f.position = Vector3(float(k.x) + r.x * fo, f.position.y, float(k.y) + r.z * fo / zs)
+		# ...PLUS THE WALK, exactly as the sprite above does. This line did not have it, so the
+		# flame stayed pinned to the destination cell while the torch it belongs to eased across —
+		# and the flame is the bright half. "The torch leads the player" was mostly this.
+		f.position = Vector3(float(k.x) + _walk_off.x + r.x * fo, f.position.y,
+			float(k.y) + _walk_off.y + r.z * fo / zs)
 		# ...while `direction` is WORLD, so it is aimed here, in world terms, at the same target:
 		# up and to the right AS DRAWN. `r` (not `rl`) because this one is not a local offset.
 		var pm = (f as GPUParticles3D).process_material
@@ -8164,8 +8180,34 @@ func _aim_held() -> void:
 			var lean := deg_to_rad(HELD_FIRE_LEAN_DEG)
 			(pm as ParticleProcessMaterial).direction = (r * sin(lean) + up * cos(lean)).normalized()
 
+## CARRY THE GLOW POOL, IN WHOLE CELLS. Daniel: "The light zone and the player are not in sync."
+##
+## The pool cannot simply slide with the sprite. It is drawn as integer-tiled quads and MASKED
+## against Qud's per-cell light map by _shape_pools — slide it by a fraction of a cell and the lit
+## area and the glow stop lining up along every edge. So it is carried by the ROUNDED offset: it
+## stays exactly on the grid it is tiled to, and it steps across when the walk is more than half
+## way rather than the instant Qud resolves the turn.
+##
+## That is the whole difference the eye sees. Before, the pool arrived a fifth of a second before
+## its owner; now it changes cells under him.
+func _carry_held_pool() -> void:
+	if _held_pool.is_empty():
+		return
+	var g = _held_pool.get("glow")
+	if not is_instance_valid(g):
+		_held_pool = {}
+		return
+	var k: Vector2i = _held_pool["cell"]
+	(g as Node3D).position = Vector3(float(k.x) + roundf(_walk_off.x), (g as Node3D).position.y,
+		float(k.y) + roundf(_walk_off.y))
+
+
 ## The held torch's nodes + their SPRITE-SPACE offsets, resolved per frame by _aim_held.
 var _held_rig := {}
+## ...and its glow pool, so _aim_held can carry it along too. Held as the NODE plus the cell it was
+## built for, not as an _lights entry — see _place_light.
+var _held_pool := {}
+var _last_glow: MeshInstance3D = null
 
 ## The lit thing in the player's hand this turn: {} when there is none. See render_snapshot.
 var _held_light := {}
@@ -13437,6 +13479,14 @@ func walk_probe() -> Dictionary:
 		out["torch"] = [t.position.x, t.position.z]
 		var k: Vector2i = _held_rig["cell"]
 		out["torch_cell"] = [k.x, k.y]
+	# THE FLAME AND THE POOL TOO — the sprite was the one part that was already right, so a probe
+	# that only watched it reported everything fine while the bright half led by a whole cell.
+	var f = _held_rig.get("fire")
+	if is_instance_valid(f):
+		out["flame"] = [f.position.x, f.position.z]
+	var g = _held_pool.get("glow")
+	if is_instance_valid(g):
+		out["pool"] = [g.position.x, g.position.z]
 	return out
 
 
