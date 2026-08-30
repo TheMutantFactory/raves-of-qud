@@ -621,8 +621,10 @@ func _refresh_fx_flags() -> bool:
 	# cell's light READS AS, so there is nothing to walk — it lands on the next relight, which is
 	# the next turn. Kept here so all four are read in one place, once a frame.
 	var d := not _fx_on("firecells")
-	if d != fire_dark:
+	var td := not _fx_on("carriedlight")
+	if d != fire_dark or td != torch_dark:
 		fire_dark = d
+		torch_dark = td
 		# INSTANT, NOT NEXT TURN. What this gate changes is read during the RELIGHT, and the
 		# relight runs per snapshot — so throwing the switch and looking at an unchanged world was
 		# the whole experience of using it, exactly the "silent success" this project keeps
@@ -2185,14 +2187,35 @@ signal lighting_changed
 ## minimap as well as the world and a static function cannot reach an autoload. The renderer
 ## refreshes it every frame with the other fx gates.
 static var fire_dark := false
+## ...and the same for the light you are CARRYING. Kept apart from the fires deliberately: with
+## one switch there was no way to tell the two apart on screen, and the honest answer to "is that
+## the campfire or your torch?" turned out to be "your torch" often enough that Daniel and I
+## disagreed about it three times running. Two switches settle it by experiment in five seconds.
+static var torch_dark := false
 
 ## The cell's light AFTER the switch. One answer, asked by the world and the map alike — the
 ## alternative is a map that disagrees with the room in front of you about whether you can see it.
 static func cell_light(cell: Dictionary) -> int:
 	var lv := int(cell.get("light", LIGHT_LIT))
-	if fire_dark and bool(cell.get("firelit", false)):
-		return LIGHT_NONE
-	return lv
+	if lv <= LIGHT_NONE:
+		return lv
+	var by_fire := bool(cell.get("firelit", false))
+	var by_torch := bool(cell.get("torchlit", false))
+	if not by_fire and not by_torch:
+		return lv              # something else lit it; not ours to switch off
+	# A CELL CAN HAVE TWO REASONS TO BE LIT, and one surviving reason is enough. Standing beside a
+	# campfire with a torch in hand, every cell around you has both — which is why switching the
+	# fires off changed nothing there, correctly.
+	if by_fire and not fire_dark:
+		return lv
+	if by_torch and not torch_dark:
+		return lv
+	return LIGHT_NONE
+
+## Was this cell lit, and has every reason for it been switched off? The ONE question the ground
+## tone and the light byte both ask, so a floor cannot go dark under a cell still counted as lit.
+static func switched_off(cell: Dictionary) -> bool:
+	return int(cell.get("light", LIGHT_LIT)) >= LIGHT_LIT and cell_light(cell) <= LIGHT_NONE
 
 ## Work out which lit cells a fire or sconce is responsible for, and mark them. Called once per
 ## snapshot, before anything reads the cells.
@@ -2223,14 +2246,20 @@ static func mark_fire_lit(data: Dictionary) -> int:
 	var pr: float = float(hl.get("radius", 0.0)) if not hl.is_empty() else 0.0
 	var n := 0
 	for c in cells:
+		# recomputed every turn: fires are lit, carried and put out, and so are torches
 		if c.has("firelit"):
-			c.erase("firelit")     # recomputed every turn: fires are lit, carried and put out
+			c.erase("firelit")
+		if c.has("torchlit"):
+			c.erase("torchlit")
 		if int(c.get("light", LIGHT_LIT)) < LIGHT_LIT:
 			continue
 		var x := int(c.get("x", 0))
 		var y := int(c.get("y", 0))
+		# BOTH MARKS, not one or the other: a cell beside a campfire while you hold a torch has two
+		# reasons to be lit, and recording only the first made the fire switch look broken exactly
+		# where you were standing.
 		if pr > 0.0 and Vector2(x - px, y - py).length() <= pr:
-			continue               # your own light, which this feature never takes away
+			c["torchlit"] = true
 		for sc in srcs:
 			if Vector2(x - sc[0], y - sc[1]).length() <= sc[2]:
 				c["firelit"] = true
@@ -2793,6 +2822,21 @@ func _frozen_tone(k: Vector2i, off: Vector2i) -> float:
 func _live_cell_tone(cell: Dictionary, lit_floor: bool) -> float:
 	if not _cell_explored(cell):
 		return 1.0 - FOG_GROUND
+	# THE GROUND HAS TO GO DARK TOO, and MEMORY_GROUND will not take it there.
+	#
+	# Daniel, three times: "There's still floor lighting from the arc sconces and campfires." The
+	# switch was reaching these cells the whole time — it moved them from `seen` to `not seen`,
+	# which is the most the tone table had to offer, and that is a film of 0.16. An unlit floor in
+	# Raves sits at 84% of a lit one.
+	#
+	# That 0.84 is not arbitrary and must not be touched: it was MEASURED off Qud, whose lit ground
+	# is rgb(17,53,52) against remembered rgb(15,45,44), a ratio of 0.85. The ratio is right and the
+	# SURFACE it was measured on is not the one it is applied to — Qud's ground is ~99.7% empty
+	# background, so 85% of near-black is near-black, while 85% of the painted tan floor tile Raves
+	# draws in the same cell is still a painted tan floor tile. The parity constant stays; a cell
+	# this feature has switched off gets its own tone, the deepest the live zone allows.
+	if switched_off(cell):
+		return 1.0
 	if not _cell_seen(cell):
 		return 0.0 if lit_floor else 1.0 - MEMORY_GROUND
 	return 1.0 - _light_frac(cell)

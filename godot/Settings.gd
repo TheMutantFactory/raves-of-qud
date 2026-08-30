@@ -135,6 +135,13 @@ const QOL_FEATURES := {
 	# you can see where you are going. See ZoneRenderer.mark_fire_lit for how a cell is attributed
 	# to a fire when Qud sends only one light byte and no account of what lit it.
 	"firecells": ["Campfires & sconces light the cells around them", true],
+	# THE OTHER HALF OF THE ANSWER. Standing beside a campfire with a lit torch, every cell around
+	# you is lit twice over, and switching the fires off changes nothing you can see there — which
+	# read as a broken switch three times before the two were told apart. Off, the ground you are
+	# carrying light over goes dark too; together they answer "is that the campfire or my torch?"
+	# by experiment instead of by argument. Turning BOTH off in an unlit room leaves you seeing
+	# nothing, which is what having no light means.
+	"carriedlight": ["Your carried light (torch, lantern) lights the cells around you", true],
 	"depthcue": ["Depth cue (farther is slightly darker)", false],
 	"cutaway": ["Wall cutaway (fade rock between camera and you)", false],
 	# ON by default, unlike its neighbours: Qud draws a tree in one cell because it has
