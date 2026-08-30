@@ -476,6 +476,12 @@ var _lit_sprites: Array = []
 ## explored to the signature instead would rebuild the zone on most steps, which is the crossing
 ## cost the renderer already spent a session bounding.
 var _known_meshes: Array = []
+## The sight area, double-buffered. `_dark_new` is this turn's fog, hidden until the walk is more
+## than half way across; `_dark_old` is the one still on screen until then. Both live under
+## _dark_root so a turn's rebuild cannot take the outgoing one with it.
+var _dark_root: Node3D
+var _dark_new: Node3D
+var _dark_old: Node3D
 # Same idea for connector panels (fences, pipes, axles): they are MeshInstance3D, not
 # Sprite3D, so they dim via a per-instance material's albedo_color, not modulate.
 var _lit_meshes: Array = []       # [{mi: MeshInstance3D, cell: Vector2i}]
@@ -717,6 +723,13 @@ func _ready() -> void:
 	add_child(_remembered_root)
 	_dynamic_root = Node3D.new()
 	add_child(_dynamic_root)
+	# THE SIGHT AREA GETS ITS OWN ROOT, outside the per-turn subtree. Daniel: "The player and the
+	# area of sight are not in sync." The fog is built from the snapshot's cells, so it snapped to
+	# the new field of view the instant Qud resolved the turn while its owner was still a fifth of
+	# a second behind. Holding the old shape for half a step means the old meshes have to outlive
+	# _dynamic_root, which is freed and rebuilt every turn — hence a root of their own.
+	_dark_root = Node3D.new()
+	add_child(_dark_root)
 	# TRANSIENT EFFECTS LIVE OUTSIDE THE PER-TURN CLEAR. _dynamic_root is emptied at the top of
 	# every rebuild, and a shot's flames outlive the turn that fired them by most of a second — put
 	# them there and they are freed mid-flight, which reads as the effect not having fired at all.
@@ -1751,7 +1764,7 @@ func _rebuild_dynamics(cells: Array) -> void:
 	_tally_edge_tone(cells, bool(Settings.get_value("lit_floor", false)))
 	_build_unexplored(_dynamic_root)
 	if any_dark:
-		_build_darkness(cells, _dynamic_root)          # fall off to black around light sources
+		_build_darkness(cells, _swap_dark())           # fall off to black around light sources
 		if not _one_to_one:
 			_relight_static_sprites(cells)             # dim trees/brinestalks/fences by cell light
 	elif _was_dark:
@@ -8180,6 +8193,45 @@ func _aim_held() -> void:
 			var lean := deg_to_rad(HELD_FIRE_LEAN_DEG)
 			(pm as ParticleProcessMaterial).direction = (r * sin(lean) + up * cos(lean)).normalized()
 
+## Start this turn's sight area in a fresh node, and keep the last one on screen until the walk
+## catches up. Returns the node _build_darkness should fill.
+##
+## NOT A CROSSFADE. The fog is opaque geometry masked to cells; two overlapping copies at partial
+## alpha read as a smear, so exactly one is visible at a time and the swap is a cut — the same cut
+## Qud makes, just made when the player arrives rather than when the turn resolves.
+func _swap_dark() -> Node3D:
+	# EXACTLY ONE VISIBLE, ALWAYS. Step again before the last swap completed — which is what
+	# holding a direction does — and the naive version promotes a fog that was never shown into
+	# the "still on screen" slot, leaving BOTH hidden and the zone flashing fully lit until the
+	# walk catches up. So the incoming node is discarded if it never made it to the screen, and
+	# whatever the viewer is actually looking at stays put.
+	if is_instance_valid(_dark_new) and not _dark_new.visible:
+		_dark_new.queue_free()
+	else:
+		if is_instance_valid(_dark_old):
+			_dark_old.queue_free()
+		_dark_old = _dark_new
+	_dark_new = Node3D.new()
+	_dark_root.add_child(_dark_new)
+	# HIDDEN ONLY IF THERE IS SOMETHING TO WAIT BEHIND. With no outgoing fog there is nothing to
+	# look at meanwhile, and the zone would flash fully lit for half a step — which is how entering
+	# a zone would have been broken by this.
+	_dark_new.visible = not is_instance_valid(_dark_old)
+	return _dark_new
+
+
+## Swap the sight area at the half way point, the same place the torch's pool changes cells.
+func _show_dark_when_arrived() -> void:
+	if not is_instance_valid(_dark_new) or _dark_new.visible:
+		return
+	if absf(_walk_off.x) >= 0.5 or absf(_walk_off.y) >= 0.5:
+		return
+	_dark_new.visible = true
+	if is_instance_valid(_dark_old):
+		_dark_old.queue_free()
+		_dark_old = null
+
+
 ## CARRY THE GLOW POOL, IN WHOLE CELLS. Daniel: "The light zone and the player are not in sync."
 ##
 ## The pool cannot simply slide with the sprite. It is drawn as integer-tiled quads and MASKED
@@ -13492,6 +13544,10 @@ func walk_probe() -> Dictionary:
 
 func set_walk_offset(off: Vector2) -> void:
 	_walk_off = off
+	# THE ONLY PLACE THAT KNOWS THE WALK HAS MOVED. It was briefly hooked into the torch's
+	# per-frame aim instead, which meant a player carrying nothing never swapped the fog at all —
+	# it would have stayed on the old shape until the next thing that happened to redraw.
+	_show_dark_when_arrived()
 	if _walk_node != null and is_instance_valid(_walk_node):
 		_walk_node.position = _walk_home + Vector3(off.x, 0.0, off.y)
 	# The held torch is placed against the camera every frame anyway; re-aiming it here carries it
