@@ -516,6 +516,98 @@ func _on_cyber(data: Dictionary) -> void:
 ## Re-render what is already on screen, for a setting whose effect is decided during the relight.
 ## The 2D/3D toggle and the deep-water depth both do this for the same reason: a control whose
 ## result does not appear until you take a step reads as a control that does not work.
+## EVERY NODE THAT DRAWS ANYTHING OVER ONE CELL, for `control.py cellnodes`.
+##
+## Five rounds of this bug were spent inferring a mechanism from cell data and whole-frame
+## metrics, and every inference was wrong while every number was right. The question was always
+## "which node drew that orange pixel", and nothing could answer it. This does.
+##
+## MULTIMESH IS THE REASON IT HAS TO BE THIS THOROUGH: the floors are MultiMeshInstance3D, one
+## node holding thousands of instance transforms, so the NODE sits at the origin and only its
+## instances are over the cell. A walker that reads node positions sees nothing there at all.
+func _nodes_over_cell(root: Node, cell: Vector2i, out: Array) -> void:
+	if root is MultiMeshInstance3D:
+		var mmi := root as MultiMeshInstance3D
+		var mm := mmi.multimesh
+		if mm != null:
+			var base: Transform3D = mmi.global_transform
+			var best_d := 1e9
+			var best := {}
+			for i in mm.instance_count:
+				var o: Vector3 = (base * mm.get_instance_transform(i)).origin
+				var dd: float = Vector2(o.x - float(cell.x), o.z - float(cell.y)).length()
+				if dd < best_d:
+					best_d = dd
+					best = {"cls": "MultiMesh inst", "name": mmi.name, "y": o.y, "d": dd,
+						"vis": mmi.is_visible_in_tree(), "layers": mmi.layers,
+						"where": _short_path(mmi), "mat": _mat_note(mmi.material_override)}
+			if best_d < 1.5:
+				out.append(best)
+	elif root is MeshInstance3D and root.has_meta("is_darkness"):
+		# THE FILM IS ONE MESH WITH WORLD-SPACE VERTICES, so its NODE sits at the origin and a
+		# walker that reads node positions decides it is nowhere near the cell — the third zero in
+		# this hunt that meant "wrong question", not "nothing there". Ask the vertices instead.
+		var dmi := root as MeshInstance3D
+		var dm: Mesh = dmi.mesh
+		if dm != null and dm.get_surface_count() > 0:
+			var hits := 0
+			var ylo := 1e9
+			# THE HEIGHTS, not just the lowest. A single minimum cannot tell a film laid under the
+			# floor from a wall's side face that happens to reach the ground beside it.
+			var yhist := {}
+			for si in dm.get_surface_count():
+				var arr: Array = dm.surface_get_arrays(si)
+				var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+				for v in verts:
+					if Vector2(v.x - float(cell.x), v.z - float(cell.y)).length() < 0.75:
+						hits += 1
+						ylo = minf(ylo, v.y)
+						var key := "%.3f" % v.y
+						yhist[key] = int(yhist.get(key, 0)) + 1
+			out.append({"cls": "DARKNESS mesh", "name": dmi.name, "y": (ylo if hits > 0 else -1.0),
+				"vis": dmi.is_visible_in_tree(), "layers": dmi.layers,
+				"where": _short_path(dmi), "yhist": yhist,
+				"mat": "%d vertices over this cell" % hits})
+	elif root is VisualInstance3D:
+		var vi := root as VisualInstance3D
+		var o2: Vector3 = vi.global_transform.origin
+		if Vector2(o2.x - float(cell.x), o2.z - float(cell.y)).length() < 1.5:
+			var mat: Material = null
+			if root is GeometryInstance3D:
+				mat = (root as GeometryInstance3D).material_override
+			# GROUP MEMBERSHIP IS THE QUESTION. The pool gate walks fx_pool and sets `visible`;
+			# a pool that never joined the group is one the switch can never reach, and from the
+			# outside that is indistinguishable from a switch that does not work.
+			out.append({"cls": root.get_class(), "name": vi.name, "y": o2.y,
+				"vis": vi.is_visible_in_tree(), "layers": vi.layers,
+				"pool_grp": vi.is_in_group(ZoneRenderer.FX_POOL_GROUP),
+				"flame_grp": vi.is_in_group(ZoneRenderer.FX_FLAME_GROUP),
+				"where": _short_path(vi), "mat": _mat_note(mat)})
+	for ch in root.get_children():
+		_nodes_over_cell(ch, cell, out)
+
+
+## The last few names of a node's path — enough to say WHERE a thing lives without a wall of text.
+func _short_path(n: Node) -> String:
+	var parts: Array = []
+	var cur: Node = n
+	while cur != null and parts.size() < 4:
+		parts.push_front(String(cur.name))
+		cur = cur.get_parent()
+	return "/".join(parts)
+
+
+## Enough of a material to recognise it by: what it is, and the colour it paints.
+func _mat_note(m: Material) -> String:
+	if m == null:
+		return "-"
+	if m is StandardMaterial3D:
+		var sm := m as StandardMaterial3D
+		return "Std albedo=%s blend=%d unshaded=%s" % [str(sm.albedo_color).left(28),
+			sm.blend_mode, sm.shading_mode == BaseMaterial3D.SHADING_MODE_UNSHADED]
+	return m.get_class()
+
+
 ## What the darkness double-buffer is actually showing, for `control.py firedump`.
 func _dark_buffer_report() -> Array:
 	var out: Array = []
@@ -871,6 +963,28 @@ func _exec_godot_cmd(cmd: String) -> void:
 					"player": live.get("player", {}).get("x", -1),
 				}))
 				fd.close()
+		"cellnodes":
+			# Everything drawing over the player's cell, deepest first. See _nodes_over_cell.
+			var cn := FileAccess.open(_support_dir().path_join("cellnodes.json"), FileAccess.WRITE)
+			if cn != null:
+				var lv2: Dictionary = store.live_snapshot()
+				var p2: Dictionary = lv2.get("player", {})
+				var target := Vector2i(int(p2.get("x", -1)), int(p2.get("y", -1)))
+				# FROM THE TREE ROOT, not from `renderer`. Walking the renderer found NOTHING
+				# over the cell — not even the player — which is a zero that means "the walk
+				# never reached the geometry", not "nothing is drawn there". The world does not
+				# all hang off the renderer node.
+				var found: Array = []
+				_nodes_over_cell(get_tree().root, target, found)
+				found.sort_custom(func(a2, b2): return float(a2["y"]) < float(b2["y"]))
+				var cmask := 0
+				if _cam_rig != null and _cam_rig._cam != null:
+					cmask = _cam_rig._cam.cull_mask
+				cn.store_string(JSON.stringify({"cell": [target.x, target.y], "nodes": found,
+					"cam_cull_mask": cmask,
+					"dark_layer": ZoneRenderer.DARK_LAYER,
+					"cam_sees_dark_layer": (cmask & ZoneRenderer.DARK_LAYER) != 0}))
+				cn.close()
 		"walkdump":
 			# The last WALK_LOG_N frames of player/torch placement, for a stutter too fast to
 			# screenshot.

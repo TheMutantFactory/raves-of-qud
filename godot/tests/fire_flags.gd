@@ -76,6 +76,50 @@ func _ready() -> void:
 	_check("...and the switched-off flame is not still simulating", _flame_emitting(r) == 0,
 		"%d emitting" % _flame_emitting(r))
 
+	# ── SOMETHING ELSE TURNS THEM BACK ON ────────────────────────────────────
+	# The bug that survived five rounds of looking. The pool over an arc sconce was visible with
+	# `floorglow` off while sitting IN the fx_pool group — so it had been gated at birth, and
+	# something re-showed it afterwards (the floor pool recycles MeshInstance3Ds and writes
+	# visible=true on them, which is the shape of it). Gating at birth and on change is not enough
+	# against a writer that runs every frame; the driver has to re-assert it every frame too.
+	_set_flags(false, false, true)
+	r._refresh_fx_flags()
+	r._apply_fx_flags()
+	_check("the pool starts hidden", _vis(r, r.FX_POOL_GROUP) == 0, _tally(r))
+	for n in r.get_tree().get_nodes_in_group(r.FX_POOL_GROUP):
+		(n as Node3D).visible = true        # an outside writer, exactly as the recycler does
+	for n in r.get_tree().get_nodes_in_group(r.FX_FLAME_GROUP):
+		(n as Node3D).visible = true
+	_check("...and an outside writer can turn it back on", _vis(r, r.FX_POOL_GROUP) > 0, _tally(r))
+	r.set_daylight(0.0)
+	r._process(0.016)
+	_check("one frame of the driver takes it back off", _vis(r, r.FX_POOL_GROUP) == 0, _tally(r))
+	_check("...and the flame with it", _vis(r, r.FX_FLAME_GROUP) == 0, _tally(r))
+	# THE OTHER FLAME IN THE LIVE ZONE. A live fixture gets a particle fire only when it smokes or
+	# is on fire; a glow-critter gets the DRAWN sprite instead, and that branch of the driver is
+	# the one no fixture in this file was building — its re-assertion could be deleted with every
+	# check still green.
+	var critter_before := _vis(r, r.FX_FLAME_GROUP)
+	r._place_light(40, 40, 3.0, false, false)      # smokes=false, on_fire=false: a glow critter
+	_check("a glow-critter builds the drawn flame", _vis(r, r.FX_FLAME_GROUP) == critter_before,
+		"born hidden with the flag off: %s" % _tally(r))
+	for n in r.get_tree().get_nodes_in_group(r.FX_FLAME_GROUP):
+		(n as Node3D).visible = true
+	r._process(0.016)
+	_check("...and the driver takes the drawn flame back off too",
+		_vis(r, r.FX_FLAME_GROUP) == 0, _tally(r))
+
+	# ...and it does not fight a flag that is ON: a re-assertion that always hid them would pass
+	# every check above and delete the fires outright.
+	_set_flags(true, true, true)
+	r._refresh_fx_flags()
+	r._process(0.016)
+	_check("with the flags on, the driver leaves them lit",
+		_vis(r, r.FX_POOL_GROUP) > 0 and _vis(r, r.FX_FLAME_GROUP) > 0, _tally(r))
+	_set_flags(false, false, false)
+	r._refresh_fx_flags()
+	r._apply_fx_flags()
+
 	# ── born with the flags already on them ──────────────────────────────────
 	# A fixture built while a flag is off must come out switched off, not switched off a frame
 	# later: a zone build hitch holds that first frame on screen, which is how the pools came to

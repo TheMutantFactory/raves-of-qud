@@ -228,6 +228,9 @@ def main(argv):
     elif cmd == "profile":
         godot("profile " + (argv[1] if len(argv) > 1 else ""))
         print("godot: profile -> profile.txt")
+    elif cmd == "cellnodes":
+        godot("cellnodes")
+        print("godot: cellnodes -> cellnodes.json")
     elif cmd == "firedump":
         godot("firedump")
         print("godot: firedump -> firedump.json")

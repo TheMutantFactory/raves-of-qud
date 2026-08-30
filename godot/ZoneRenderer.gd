@@ -5673,19 +5673,35 @@ func _process(_dt: float) -> void:
 		var a: float = L["energy"]
 		# a fire's pool is darkness-gated (off by day); a torch's follows the general daylight fade
 		var g: float = _fire_glow_mul() if L.get("on_fire", false) else gmul
-		(L["glow"] as MeshInstance3D).transparency = clampf(1.0 - a * g * 0.6, 0.0, 1.0)
+		# THE GATE, RE-ASSERTED EVERY FRAME, exactly as pf.emitting is below.
+		#
+		# Setting `visible` once at birth and once more when the switch moves is not enough: the
+		# pool over the arc sconce came back visible with `floorglow` off, while being IN the
+		# fx_pool group — so something else re-shows these nodes after they are made (the floor
+		# pool recycles MeshInstance3Ds and sets visible=true on them, which is the shape of it).
+		# Daniel spent five rounds looking at that quad while every cell-level number said the
+		# light was off. A per-frame write costs one bool per fixture and cannot be undone by a
+		# writer that runs earlier in the same frame.
+		var gm := L["glow"] as MeshInstance3D
+		if gm.visible != _fx_pool:
+			gm.visible = _fx_pool
+		gm.transparency = clampf(1.0 - a * g * 0.6, 0.0, 1.0)
 		var fs: float = 0.9 + a * 0.25
 		if L.get("particle_fire", false):
 			# particle fire flickers through emission: speed jitters with the
 			# energy, and daylight thins the tongue count (a campfire burns
 			# full day + night — it's the daytime fire cue).
 			var pf := L["flame"] as GPUParticles3D
+			if pf.visible != _fx_flame:
+				pf.visible = _fx_flame
 			pf.speed_scale = 0.85 + a * 0.35
 			var ratio: float = 1.0 if L.get("on_fire", false) else clampf(a * fmul, 0.0, 1.0)
 			pf.amount_ratio = ratio
 			pf.emitting = _fx_flame and ratio > 0.03
 		else:
 			var flame := L["flame"] as Sprite3D
+			if flame.visible != _fx_flame:
+				flame.visible = _fx_flame      # same re-assertion, for the drawn flame
 			flame.scale = Vector3(fs, fs * (0.95 + randf() * 0.2), fs)
 			# transparency, NOT modulate: modulate is ignored under material_override (which the
 			# flame has, for additive blend), so the flicker/daylight fade never reached the ball.
