@@ -965,6 +965,31 @@ func _walk_log_frame() -> void:
 	if renderer == null:
 		return
 	var e: Dictionary = renderer.walk_probe()
+	# THE FIVE MODAL FLAGS. _playfield_cell refuses a click while any of them is up, so a single
+	# one stuck true silently kills every click on the world while keys and the wheel carry on
+	# working — which is exactly how this presented.
+	e["modal"] = {
+		"trade": _trade != null and _trade.active(),
+		"popup": _popup != null and _popup.visible,
+		"item_picker": _item_picker != null and _item_picker.visible,
+		"cyber": _cyber != null and _cyber.visible,
+		"overlay": overlay_check.is_valid() and bool(overlay_check.call()),
+		"owns": _modal_owns_input(),
+	}
+	# ...AND THE THREE GATES BEFORE THEM. _playfield_cell returns null for four different reasons
+	# and says which to nobody; a click that does nothing looks identical whichever it was.
+	e["pick"] = {
+		"inspector": inspector != null,
+		"cam": _cam_rig != null and _cam_rig._cam != null,
+		# THE GUARD THE MINIMAP DOES NOT GO THROUGH. _travel_click hands the click to the target
+		# cursor before it considers travelling, so an active cursor eats every click on the world
+		# while the minimap, which calls travel_to_cell directly, keeps working. That asymmetry is
+		# the whole shape of "I cannot click to move but the arrow keys work", and it is the first
+		# thing to read when that is reported again.
+		"target_active": _target != null and _target.active,
+	}
+	# NOT the pick itself. Asking _playfield_cell here would raycast and walk the control tree
+	# EVERY FRAME to answer a question that only matters when someone is reading the dump.
 	e["at"] = [_walk_at.x, _walk_at.y]
 	e["to"] = [_walk_to.x, _walk_to.y]
 	_walk_log.append(e)
