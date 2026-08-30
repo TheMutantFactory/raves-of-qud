@@ -13424,6 +13424,22 @@ func _light_cell(cell: Vector2i, delay: float) -> void:
 ## Draw the player part-way between cells. `off` is in cells, from their real position — the sprite
 ## is MOVED rather than rebuilt, because a rebuild is a turn's worth of work and this runs every
 ## frame.
+## WHERE THE PLAYER AND HIS TORCH ACTUALLY ARE, this instant. Read back off the nodes rather than
+## recomputed from the offset — the whole class of bug here is a node that did not get the value it
+## was supposed to, so asking the value again would agree with itself and prove nothing.
+func walk_probe() -> Dictionary:
+	var out := {"off": [_walk_off.x, _walk_off.y]}
+	if _walk_node != null and is_instance_valid(_walk_node):
+		out["player"] = [_walk_node.position.x, _walk_node.position.z]
+		out["home"] = [_walk_home.x, _walk_home.z]
+	var t = _held_rig.get("sprite")
+	if is_instance_valid(t):
+		out["torch"] = [t.position.x, t.position.z]
+		var k: Vector2i = _held_rig["cell"]
+		out["torch_cell"] = [k.x, k.y]
+	return out
+
+
 func set_walk_offset(off: Vector2) -> void:
 	_walk_off = off
 	if _walk_node != null and is_instance_valid(_walk_node):

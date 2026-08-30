@@ -775,6 +775,13 @@ func _exec_godot_cmd(cmd: String) -> void:
 							d[k] = [r.position.x, r.position.y, r.size.x, r.size.y]
 					ud.store_string(JSON.stringify(d))
 					ud.close()
+		"walkdump":
+			# The last WALK_LOG_N frames of player/torch placement, for a stutter too fast to
+			# screenshot.
+			var wd := FileAccess.open(_support_dir().path_join("walkdump.json"), FileAccess.WRITE)
+			if wd != null:
+				wd.store_string(JSON.stringify(_walk_log))
+				wd.close()
 		"dustdump":
 			# Is the wind blowing, and does that match the stratum? Written as a file because the
 			# answer is needed while the turn thread is parked.
@@ -939,6 +946,24 @@ const BG_DRAW_INTERVAL := 0.05   # ~20fps forced draws while unfocused
 ## THE PACE IS auto_walk_rate, the same setting a held direction key repeats at, so a held key
 ## produces continuous motion instead of a sprite that lurches and waits. A different number here
 ## would be a second, silent speed setting that disagrees with the one in Options.
+## A RING OF THE LAST FEW FRAMES. Two bugs in a row here have been one-frame artefacts — the
+## player drawn a frame ahead of itself, and now a torch that leads him — and every instrument I
+## have samples slower than that: screenshots land 200ms apart and step straight over a 16ms pop.
+## A history costs nothing per frame and turns "watch for the glitch" into "read what happened".
+const WALK_LOG_N := 120
+var _walk_log: Array = []
+
+func _walk_log_frame() -> void:
+	if renderer == null:
+		return
+	var e: Dictionary = renderer.walk_probe()
+	e["at"] = [_walk_at.x, _walk_at.y]
+	e["to"] = [_walk_to.x, _walk_to.y]
+	_walk_log.append(e)
+	if _walk_log.size() > WALK_LOG_N:
+		_walk_log.remove_at(0)
+
+
 func _walk_step(dt: float) -> void:
 	if not _walk_seeded or _cam_rig == null:
 		return
@@ -974,6 +999,7 @@ func _process(dt: float) -> void:
 	# _unhandled_input has consulted TypingGuard for a while; Input.is_key_pressed never did, and
 	# does not consult focus at all, so the camera keys went on firing under a form's caret.
 	_cam_rig.process(dt, _multiview.is_on(), TypingGuard.typing(get_viewport()))
+	_walk_log_frame()   # LAST in the frame, so it records what will actually be drawn
 	if _drone_marker != null:
 		# ONLY WHILE THE SELECTOR IS OPEN. Daniel: "hide the drone after you select the camera. I
 		# keep seeing it while I'm moving." The marker is a PLACEMENT AID — it exists so you can

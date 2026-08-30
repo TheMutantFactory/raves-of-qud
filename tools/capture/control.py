@@ -222,6 +222,9 @@ def main(argv):
     elif cmd == "camrot":
         godot("camrot " + argv[1])
         print("godot: camrot", argv[1])
+    elif cmd == "walkdump":
+        godot("walkdump")
+        print("godot: walkdump -> walkdump.json")
     elif cmd == "dustdump":
         godot("dustdump")
         print("godot: dustdump -> dustdump.json")
