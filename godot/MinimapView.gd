@@ -28,6 +28,27 @@ var _tex: ImageTexture   # reused across snapshots; only reallocated when the zo
 var _toggle: Button
 var _title: Label      # header — "Minimap" (user) or the zone name (1:1, Qud-style)
 var _mode := MODE_FULL
+## WHICH MAP. Daniel: "Let's have a Raves setting for minimap 1:1, or top-down camera. That should
+## help navigate in the underworld." Two of these already existed behind the panel's own toggle and
+## one is new; the setting names all four in one place so the choice is somewhere you can find it.
+##   full / minimal  the painted and structural client-side maps (the old toggle)
+##   qud             Qud's OWN minimap, which until now only parity mode could reach
+##   topdown         a live camera looking straight down at the world, in the panel
+const SRC_KEY := "minimap_source"
+const TOPDOWN_SPAN := 26.0   # cells shown vertically; a corridor reads at about this
+const TOPDOWN_H := 60.0      # eye height — well above any wall, so nothing occludes the floor
+## WRITE-THROUGH TO Settings, off in tests. The toggle saves, and a headless run that presses it
+## puts a fixture's choice into the developer's own settings.json — which this test did, once,
+## before this existed. The drone panel has the same flag for the same reason.
+var persist := true
+var _svc: SubViewportContainer
+var _sv: SubViewport
+var _tcam: Camera3D
+## THE NODE THE ZONE IS DRAWN UNDER, set by MainFrame. The camera lives in the SubViewport, not in
+## that subtree, so a cell coordinate is NOT a world coordinate: the renderer carries a z-stretch
+## (see ZoneRenderer's `zs`), and placing the camera at a raw cell put it somewhere with nothing in
+## it. Everything the map aims at goes through this transform.
+var world_ref: Node3D
 var _last_data := {}   # last snapshot, so a mode toggle re-renders without waiting for a new one
 
 func _ready() -> void:
@@ -65,6 +86,69 @@ func _ready() -> void:
 	_rect.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_rect.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_map_margin.add_child(_rect)
+
+	# THE TOP-DOWN SOURCE, sharing the game's own World3D exactly as the camera selector's panes do
+	# — one world, many cameras. Built here rather than lazily so switching the setting is a
+	# visibility flip and not a first-use stall.
+	_svc = SubViewportContainer.new()
+	_svc.stretch = true
+	_svc.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_svc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_svc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_svc.visible = false
+	_map_margin.add_child(_svc)
+	_sv = SubViewport.new()
+	# THE WORLD IS BOUND LAZILY, not here. Panels are built before they are in the tree, so
+	# get_viewport() at this point can hand back something that is not the game's viewport — and a
+	# SubViewport with no world quietly renders its OWN empty one, which looks exactly like a
+	# camera pointed at nothing. Bound on first show, when being in the tree is certain.
+	_sv.transparent_bg = false
+	_svc.add_child(_sv)
+	_tcam = Camera3D.new()
+	_tcam.projection = Camera3D.PROJECTION_ORTHOGONAL
+	_tcam.size = TOPDOWN_SPAN
+	# NO FOG FROM ABOVE. The sight area is a lid when seen from overhead — underground it covers the
+	# whole zone, so the first version of this showed a dark sheet and nothing else. Dropping its
+	# layer leaves exactly what has been built: the geometry you have explored.
+	_tcam.cull_mask &= ~ZoneRenderer.DARK_LAYER
+	_sv.add_child(_tcam)
+	_tcam.current = true
+
+## Swap between the painted texture and the live camera. Both live in _map_margin; exactly one is
+## visible, and the viewport stops rendering entirely when it is not — a second camera on the game's
+## own world is not something to leave running behind a panel nobody is looking at.
+func _show_topdown(on: bool) -> void:
+	if _svc == null:
+		return
+	if on and _sv.world_3d == null:
+		var vp := get_viewport()
+		if vp != null:
+			_sv.world_3d = vp.find_world_3d()
+	_svc.visible = on
+	_rect.visible = not on
+	_sv.render_target_update_mode = SubViewport.UPDATE_ALWAYS if on else SubViewport.UPDATE_DISABLED
+
+
+## Point the top-down camera at the player. NORTH IS THE UP VECTOR, the same one CameraRig hands
+## its own top-down mode — a map whose north disagreed with the game's would be worse than no map.
+func _aim_topdown(data: Dictionary) -> void:
+	if _tcam == null:
+		return
+	var p: Dictionary = data.get("player", {})
+	var px := float(p.get("x", -1))
+	var py := float(p.get("y", -1))
+	if px < 0.0 or py < 0.0:
+		return
+	var ground := Vector3(px, 0.0, py)
+	var up := Vector3(0, 0, -1)
+	if is_instance_valid(world_ref):
+		ground = world_ref.global_transform * ground
+		# The stretch is on z, so "north" is stretched with it — take the direction through the
+		# same basis rather than assuming it survived.
+		up = (world_ref.global_transform.basis * Vector3(0, 0, -1)).normalized()
+	_tcam.position = ground + Vector3(0, TOPDOWN_H, 0)
+	_tcam.look_at(ground, up)
+
 
 ## MainFrame calls this each snapshot with the full data (needs cells + player + zone dims + palette).
 func set_snapshot(data: Dictionary) -> void:
@@ -228,11 +312,25 @@ func _rerender() -> void:
 	var data := _last_data
 	if data.is_empty():
 		return
+	# PARITY STILL WINS. In 1:1 the minimap is Qud's, whatever the user picked — the setting is a
+	# user-mode choice and 1:1 is the mode that has no choices.
+	var src := "qud" if _one_to_one else String(Settings.get_value(SRC_KEY, "full"))
+	_show_topdown(src == "topdown")
+	_refresh_toggle()   # Options can change this key too; the button must not disagree with it
+	if src == "topdown":
+		_aim_topdown(data)
+		return
 	# 1:1 renders QUD's map when the mod ships it; anything else falls back to the QoL map below.
-	if _one_to_one:
+	if src == "qud":
 		var mm: Variant = data.get("minimap", null)
 		if mm is Dictionary and _render_qud_minimap(mm):
 			return
+		# ...and if the mod shipped none, fall through to the client-side map rather than leaving
+		# the panel blank: a minimap that vanishes reads as broken, not as unavailable.
+	elif src == "minimal":
+		_mode = MODE_MINIMAL
+	elif src == "full":
+		_mode = MODE_FULL
 	var z: Dictionary = data.get("zone", {})
 	var w := int(z.get("width", 0))
 	var h := int(z.get("height", 0))
@@ -277,17 +375,30 @@ func _cell_color_minimal(objs: Array) -> Color:
 			return _tiles.main_color(objs[i], BG).lerp(Color.WHITE, WALL_LIFT)
 	return BG.lerp(_tiles.main_color(objs[objs.size() - 1], BG), NONWALL_DIM)
 
+## THE BUTTON AND THE SETTING ARE THE SAME THING. This used to flip a local _mode, which the
+## setting would then overwrite on the next snapshot — the button would appear to work and undo
+## itself a fraction of a second later. It cycles the SOURCE now, so the panel and Options are two
+## views of one value.
+const SOURCES := ["full", "minimal", "qud", "topdown"]
+const SOURCE_LABEL := {"full": "full", "minimal": "minimal", "qud": "qud", "topdown": "top-down"}
+
 func _toggle_mode() -> void:
-	_mode = MODE_FULL if _mode == MODE_MINIMAL else MODE_MINIMAL
+	var i: int = SOURCES.find(String(Settings.get_value(SRC_KEY, "full")))
+	var nxt: String = SOURCES[(maxi(i, 0) + 1) % SOURCES.size()]
+	Settings.set_value(SRC_KEY, nxt)
+	if persist:
+		Settings.save()
 	_refresh_toggle()
 	_rerender()
 
 func _refresh_toggle() -> void:
 	if _toggle == null:
 		return
-	_toggle.text = "minimal" if _mode == MODE_MINIMAL else "full"
-	var other := "full" if _mode == MODE_MINIMAL else "minimal"
-	_toggle.tooltip_text = "Switch to %s mode" % other
+	var src := String(Settings.get_value(SRC_KEY, "full"))
+	_toggle.text = String(SOURCE_LABEL.get(src, src))
+	var i: int = SOURCES.find(src)
+	var nxt: String = SOURCES[(maxi(i, 0) + 1) % SOURCES.size()]
+	_toggle.tooltip_text = "Switch to the %s minimap" % String(SOURCE_LABEL.get(nxt, nxt))
 
 ## The strip MainFrame grabs to reorder this panel in the side column. The HEADING, because it is
 ## the one part of the panel that is not already something clickable, scrollable or drawn on.

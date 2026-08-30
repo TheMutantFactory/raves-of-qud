@@ -29,6 +29,14 @@ const FRAME := Color8(0xB6, 0xA1, 0x63)
 const RAVES_ITEMS := [
 	{"key": "mode", "label": "Mode", "type": "choice",
 		"options": ["User", "1:1"], "values": ["user", "1to1"]},   # 1:1 overrides camera + panels
+	# WHAT THE MINIMAP DRAWS. Daniel: "Let's have a Raves setting for minimap 1:1, or top-down
+	# camera. That should help navigate in the underworld." The first two were already built and
+	# reachable only by the panel's own toggle; the third is new. Named "source" and not "mode"
+	# because the panel already has a mode (FULL/MINIMAL) and two words for one idea is how a
+	# setting ends up meaning neither.
+	{"key": "minimap_source", "label": "Minimap", "type": "choice",
+		"options": ["Painted", "Structural", "Qud (1:1)", "Top-down camera"],
+		"values": ["full", "minimal", "qud", "topdown"]},
 	{"key": "font_scale", "label": "Font scale", "type": "slider", "min": 0.7, "max": 1.5, "step": 0.05},
 	{"key": "fire_zone_radius", "label": "Lit fires: zone radius (0 = this zone only)",
 		"type": "slider", "min": 0, "max": 3, "step": 1},

@@ -1498,6 +1498,8 @@ func _panel_feature(p: Object) -> String:
 		return "nearby"
 	if p == _locations:
 		return "locations"
+	if p == _minimap:
+		return "minimap"
 	return ""
 
 ## Reshape the chrome to match Qud (1:1) or restore the QoL layout (user). Three moves: widen the side
@@ -1883,6 +1885,9 @@ func _row_main() -> Control:
 	side.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_side = side
 	_minimap = load("res://MinimapView.gd").new()    # the real Minimap view (its own file)
+	# The top-down map needs the node the zone is DRAWN under — cells are not world coordinates.
+	# Late-bound: _holo does not exist when this column is built.
+	_minimap.set_meta("needs_world", true)
 	_minimap.name = "Minimap"
 	_minimap.custom_minimum_size = Vector2(0, 220)
 	_nearby = load("res://NearbyObjects.gd").new()   # the real Nearby objects view (its own file)
@@ -2035,6 +2040,8 @@ func _connect_holodeck() -> void:
 	# stripped option text keeps its hotkey prefix ("[c] Control Mapping") — match the tail
 	# A modal just left the screen -- whatever is behind it may now be stale (an item
 	# action lands when the viewer ANSWERS, not when the menu opened).
+	if _minimap != null and _minimap.get("world_ref") == null and _holo != null:
+		_minimap.world_ref = _holo.renderer
 	_holo.connect("popup_closed", func():
 		if _status != null and _status.visible and _status.has_method("_refresh_after_popup"):
 			_status._refresh_after_popup())

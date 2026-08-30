@@ -353,6 +353,11 @@ var _placing_player := false                 # true while placing the player's o
 ## front of the camera on occasion. Like right now." Neither is a placement question -- it is a
 ## per-camera one, and Godot answers it with layers and cull_mask.
 const PLAYER_LAYER := 1 << 9
+## THE SIGHT AREA'S OWN LAYER, so a camera can be built that does not see it. The minimap's
+## top-down view is the reason: from above, the fog is a LID — underground it covers the whole
+## zone, and a camera looking down at it sees a dark sheet and nothing else. A map that shows only
+## fog is not a map. Every other camera keeps it, because cull_mask defaults to all layers.
+const DARK_LAYER := 1 << 11
 
 ## Put every VisualInstance3D in a subtree on a layer (bit OR'd in, so it keeps rendering to
 
@@ -1764,7 +1769,9 @@ func _rebuild_dynamics(cells: Array) -> void:
 	_tally_edge_tone(cells, bool(Settings.get_value("lit_floor", false)))
 	_build_unexplored(_dynamic_root)
 	if any_dark:
-		_build_darkness(cells, _swap_dark())           # fall off to black around light sources
+		var dnode := _swap_dark()
+		_build_darkness(cells, dnode)                  # fall off to black around light sources
+		_tag_layer(dnode, DARK_LAYER)                  # ...on its own layer — see DARK_LAYER
 		if not _one_to_one:
 			_relight_static_sprites(cells)             # dim trees/brinestalks/fences by cell light
 	elif _was_dark:

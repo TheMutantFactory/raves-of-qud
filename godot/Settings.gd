@@ -125,6 +125,12 @@ const QOL_FEATURES := {
 	# Locations list and its horizon beacons are a RAVES navigation aid built on a 3D world Qud does
 	# not have, so parity mode must not grow a fifth panel Qud never draws.
 	"locations": ["Locations panel + horizon beacons", true],
+	# ON by default. The minimap had NO feature, which means clone_of_qud() answered for it — a
+	# constant true — so the panel was Qud's minimap in both modes and its own painted/structural
+	# maps were unreachable from anywhere. Daniel: "I think we did this before, but I forget."
+	# They were built; the parity policy had switched them off. This is the lever Settings.gd's own
+	# note points at: "what you actually want is a QoL feature."
+	"minimap": ["Minimap: Raves sources (painted / structural / top-down camera)", true],
 	# ON by default. Qud's own menus carry a per-row IRenderable (QudMenuItem.icon) and simply do
 	# not draw it — the points-of-interest list ships a real tile for every creature and object in
 	# it. Showing them is a divergence, so it is a feature: 1:1 keeps Qud's text-only rows.
