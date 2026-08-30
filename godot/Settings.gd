@@ -107,7 +107,21 @@ const QOL_FEATURES := {
 	# ON by default, all three, because they are what a Raves fire already looks like; these
 	# exist to take pieces AWAY. 1:1 is untouched either way — qud_shape short-circuits there,
 	# and _place_light returns before any of it in parity mode regardless.
-	"floorglow": ["Firelight pools on the floor (torches, sconces & fires)", true],
+	#
+	# WHAT `floorglow` IS NOT, and the label has to say so. Daniel, with it switched off:
+	# "Campfires and arc sconces still have the floor/walls lit." They do, and the switch is
+	# working — measured from one spot, toggling it moves the warm pixel COUNT barely at all
+	# (14,474 -> 14,772) and only shifts their colour (199,124,60 -> 203,149,70). The orange
+	# underneath is QUD'S LIGHT MAP: a lit cell is drawn at full colour while everything else is
+	# multiplied down toward the memory ghost, and this zone's rock is Qud's `&y`, a tan. Qud's
+	# own screen shows the same cells bright, its shale the same orange.
+	#
+	# It reads as a much bigger effect here than in Qud for a reason that is not lighting at all:
+	# Raves draws a FLOOR TILE where Qud draws nothing, so Qud's lit patch is a few wall glyphs
+	# over black and Raves' is a whole glowing floor. Asked whether "off" should dim or
+	# extinguish those cells, Daniel chose neither — Qud's lighting stays as Qud sends it, and
+	# the switch says plainly that it only removes the pool Raves adds on top.
+	"floorglow": ["Extra glow pool under torches, sconces & fires (not Qud's cell lighting)", true],
 	"flames": ["3D flames on torches, sconces & fires", true],
 	# SEPARATE FROM `particles`, which covers the night plumes on sconces and standing torches and
 	# is off by default. An on-fire object's smoke was deliberately exempt from that gate — "a real
