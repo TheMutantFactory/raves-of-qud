@@ -81,6 +81,10 @@ func _ready() -> void:
 	_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_rect.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_rect.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# AT BUILD TIME, not only on a mode change. set_one_to_one returns early when the mode has not
+	# changed, and user mode is the DEFAULT — so on a normal launch nothing ever gave the map a
+	# height at all.
+	_rect.custom_minimum_size = Vector2(0, MAP_H_USER)
 	_map_margin.add_child(_rect)
 
 
@@ -127,7 +131,12 @@ func set_one_to_one(on: bool) -> void:
 	# 2.31 while the texture is 80x50 = 1.60 — Qud STRETCHES the map, it does not fit it. Raves was
 	# aspect-fitting into 190x119, so every feature sat at the wrong scale.
 	if _rect != null:
-		_rect.custom_minimum_size = Vector2(MAP_W_1TO1, MAP_H_1TO1) if on else Vector2(0, 0)
+		# USER MODE NEEDS A HEIGHT TOO. This was (0, 0), which was harmless only because user mode
+		# never reached this panel: with no QoL feature the minimap was Qud's shape in BOTH modes,
+		# so the 1:1 branch always won and always set a size. Giving the panel a feature made user
+		# mode reachable for the first time and the map area collapsed to nothing — a composite
+		# with 43,080 lit pixels in it, drawn into zero height.
+		_rect.custom_minimum_size = Vector2(MAP_W_1TO1, MAP_H_1TO1) if on else Vector2(0, MAP_H_USER)
 		_rect.stretch_mode = TextureRect.STRETCH_SCALE if on else TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		_rect.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN if on else Control.SIZE_EXPAND_FILL
 		_rect.size_flags_vertical = Control.SIZE_SHRINK_BEGIN if on else Control.SIZE_EXPAND_FILL
@@ -183,6 +192,8 @@ func _render_qud_minimap(mm: Dictionary) -> bool:
 			continue
 		cols.append(Color8(("0x" + s.substr(0, 2)).hex_to_int(), ("0x" + s.substr(2, 2)).hex_to_int(),
 			("0x" + s.substr(4, 2)).hex_to_int(), ("0x" + s.substr(6, 2)).hex_to_int()))
+	_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_rect.modulate = Color.WHITE
 	var img := Image.create(w, h * 2, false, Image.FORMAT_RGBA8)
 	for y in h:
 		for x in w:
@@ -204,6 +215,12 @@ func _render_qud_minimap(mm: Dictionary) -> bool:
 
 ## Qud's minimap rect, measured off its live RectTransform + the rendered frame at 1080:
 ## 240x104 at x1658 (content origin 1641 -> 17 in), map top y114.
+## The map's height in user mode. Qud's own is 104 against its fixed sidebar; the Raves column is
+## wider and resizable, so this only sets a floor and the rect grows with the panel.
+## How far the tile map is lifted. Enough to read a cave at panel size without blowing out the
+## lit cells — the player's own white mark is already at full.
+const TILE_LIFT := Color(2.2, 2.2, 2.2)
+const MAP_H_USER := 120.0
 const MAP_W_1TO1 := 240.0
 const MAP_H_1TO1 := 104.0
 const MAP_X_1TO1 := 17
@@ -254,6 +271,14 @@ func _rerender() -> void:
 	# PARITY STILL WINS. In 1:1 the minimap is Qud's, whatever the user picked — the setting is a
 	# user-mode choice and 1:1 is the mode that has no choices.
 	var src := "qud" if _one_to_one else String(Settings.get_value(SRC_KEY, "full"))
+	# RECORDED ON EVERY PASS, not just inside the tile branch. The first version only wrote the
+	# probe once the tile path ran, so "never ran" and "ran with a different source" both read as
+	# an empty dict — the one distinction worth having.
+	probe = {"renders": int(probe.get("renders", 0)) + 1, "src": src, "one_to_one": _one_to_one,
+		"has_data": not data.is_empty(), "tiles_dir": _tiles.tiles_dir,
+		"zone_w": int(data.get("zone", {}).get("width", 0)),
+		"zone_h": int(data.get("zone", {}).get("height", 0)),
+		"cells": (data.get("cells", []) as Array).size()}
 	_refresh_toggle()   # Options can change this key too; the button must not disagree with it
 	# 1:1 renders QUD's map when the mod ships it; anything else falls back to the QoL map below.
 	if src == "qud":
@@ -277,6 +302,8 @@ func _rerender() -> void:
 	var h := int(z.get("height", 0))
 	if w <= 0 or h <= 0:
 		return
+	_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST   # one pixel per cell: keep it crisp
+	_rect.modulate = Color.WHITE
 	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
 	img.fill(BG)
 	for cell in data.get("cells", []):
@@ -314,14 +341,16 @@ func _rerender() -> void:
 func _render_tiles(data: Dictionary, w: int, h: int) -> bool:
 	# WHAT THIS PASS ACTUALLY SAW, for `control.py minimapdump`. Two blind fixes in a row failed
 	# here; every one of them would have been a one-line read with this.
-	probe = {"w": w, "h": h, "tiles_dir": _tiles.tiles_dir, "cells": 0, "with_objs": 0,
-		"tex_ok": 0, "tex_null": 0, "rect_visible": _rect.visible}
+	probe["tile_pass"] = true
+	probe["rect_visible"] = _rect.visible
+	probe["with_objs"] = 0
+	probe["tex_ok"] = 0
+	probe["tex_null"] = 0
 	var img := Image.create(w * TILE_W, h * TILE_H, false, Image.FORMAT_RGBA8)
 	img.fill(BG)
 	for cell in data.get("cells", []):
 		var x := int(cell.get("x", -1))
 		var y := int(cell.get("y", -1))
-		probe["cells"] += 1
 		if x < 0 or y < 0 or x >= w or y >= h:
 			continue
 		var objs: Array = cell.get("objs", [])
@@ -335,6 +364,7 @@ func _render_tiles(data: Dictionary, w: int, h: int) -> bool:
 		probe["tex_ok"] += 1
 		var ti := tex.get_image()
 		if ti == null:
+			probe["img_null"] = int(probe.get("img_null", 0)) + 1
 			continue
 		if ti.get_format() != Image.FORMAT_RGBA8:
 			ti.convert(Image.FORMAT_RGBA8)
@@ -349,12 +379,42 @@ func _render_tiles(data: Dictionary, w: int, h: int) -> bool:
 		# The player as a box rather than his own sprite: at this size the map is about WHERE he is,
 		# and his tile is one more sprite among two thousand.
 		_mark_player(img, px, py)
+	# WHAT ENDED UP IN THE PICTURE. tex_ok counts textures that RESOLVED, which says nothing about
+	# whether their pixels reached the map — the difference between a compositing failure and a
+	# display one, and the only thing three rebuilds have not been able to tell apart.
+	var ink := 0
+	for yy in range(0, img.get_height(), 4):
+		for xx in range(0, img.get_width(), 4):
+			var c := img.get_pixel(xx, yy)
+			if absf(c.r - BG.r) > 0.03 or absf(c.g - BG.g) > 0.03 or absf(c.b - BG.b) > 0.03:
+				ink += 1
+	probe["ink"] = ink
+	probe["sampled"] = int(img.get_height() / 4) * int(img.get_width() / 4)
+	# LINEAR, FOR THIS SOURCE ONLY. Every other map here is one pixel per cell and wants crisp
+	# nearest-neighbour; this one is 1280x600 of sprite art squeezed into a panel a quarter that
+	# wide, and NEAREST samples a single pixel per tile — usually one of the transparent ones,
+	# since tile art is mostly empty. That is what made a composite of 2000 successfully resolved
+	# tiles read as a blank panel: the pixels were there and the filter threw them away.
+	_rect.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	# LIFTED, because the art is dark and the panel is darker. Measured on a subterranean canyon:
+	# the composite drew correctly all along — 145 distinct colours, luminance 16 to 255 — and read
+	# as an empty panel because its median pixel sat at 51. The painted map already brightens for
+	# the same reason (WALL_LIFT); this does it with modulate so the composite stays honest.
+	_rect.modulate = TILE_LIFT
 	var want := Vector2i(w * TILE_W, h * TILE_H)
 	if _tex != null and _tex.get_size() == Vector2(want):
 		_tex.update(img)
 	else:
 		_tex = ImageTexture.create_from_image(img)
 		_rect.texture = _tex
+	# THE LAST GAP: a picture with ink in it, a visible rect, and still nothing on screen. These
+	# say whether the texture reached the control and whether the control has any room to draw it.
+	probe["rect_size"] = [_rect.size.x, _rect.size.y]
+	probe["rect_min"] = [_rect.custom_minimum_size.x, _rect.custom_minimum_size.y]
+	probe["margin_size"] = [_map_margin.size.x, _map_margin.size.y] if _map_margin != null else []
+	probe["tex_on_rect"] = _rect.texture != null
+	probe["tex_size"] = [_tex.get_width(), _tex.get_height()]
+	probe["panel_size"] = [size.x, size.y]
 	return true
 
 
