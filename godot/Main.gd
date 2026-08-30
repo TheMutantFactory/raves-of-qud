@@ -200,6 +200,7 @@ func _ready() -> void:
 
 	renderer = ZoneRenderer.new()
 	add_child(renderer)
+	renderer.lighting_changed.connect(_relight_now)
 
 	client = BridgeClient.new()
 	add_child(client)
@@ -511,6 +512,16 @@ func _on_cyber(data: Dictionary) -> void:
 		_cyber.show_terminal(data, _palette)
 	else:
 		_cyber.hide_terminal()
+
+## Re-render what is already on screen, for a setting whose effect is decided during the relight.
+## The 2D/3D toggle and the deep-water depth both do this for the same reason: a control whose
+## result does not appear until you take a step reads as a control that does not work.
+func _relight_now() -> void:
+	var live: Dictionary = store.live_snapshot()
+	if not live.is_empty():
+		ZoneRenderer.mark_fire_lit(live)
+		renderer.render_snapshot(live, _neighbor_zones())
+
 
 func _on_snapshot(data: Dictionary) -> void:
 	# Data-freshness beacon for the test rig: the UI heartbeat proves the

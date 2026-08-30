@@ -96,6 +96,28 @@ func _ready() -> void:
 	_check("the marks are cleared when the fires go out, not left on the cells",
 		before > 0 and _count(data) == 0, "before=%d after=%d" % [before, _count(data)])
 
+	# ── the switch has to announce itself ────────────────────────────────────
+	# What this gate changes is read during the RELIGHT, which runs per snapshot — so without a
+	# signal, throwing the switch and looking at an unchanged world IS the experience of using it.
+	# Main listens and re-renders what is already on screen, the way the 2D/3D toggle does.
+	var r2 = Z.new()
+	add_child(r2)
+	var beeps := [0]
+	r2.lighting_changed.connect(func() -> void: beeps[0] += 1)
+	Settings.set_value("qol_firecells", true)
+	r2._refresh_fx_flags()
+	var base: int = beeps[0]
+	Settings.set_value("qol_firecells", false)
+	r2._refresh_fx_flags()
+	_check("throwing the switch announces itself", beeps[0] == base + 1,
+		"%d emits" % (beeps[0] - base))
+	r2._refresh_fx_flags()
+	_check("...once, not every frame it stays thrown", beeps[0] == base + 1,
+		"%d emits" % (beeps[0] - base))
+	Settings.set_value("qol_firecells", true)
+	r2._refresh_fx_flags()
+	_check("...and again on the way back", beeps[0] == base + 2, "%d emits" % (beeps[0] - base))
+
 	Z.fire_dark = false
 	_report()
 

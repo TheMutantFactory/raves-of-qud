@@ -623,6 +623,11 @@ func _refresh_fx_flags() -> bool:
 	var d := not _fx_on("firecells")
 	if d != fire_dark:
 		fire_dark = d
+		# INSTANT, NOT NEXT TURN. What this gate changes is read during the RELIGHT, and the
+		# relight runs per snapshot — so throwing the switch and looking at an unchanged world was
+		# the whole experience of using it, exactly the "silent success" this project keeps
+		# paying for. Main re-renders the stored snapshot, the same way the 2D/3D toggle does.
+		lighting_changed.emit()
 	if p == _fx_pool and f == _fx_flame and m == _fx_fsmoke:
 		return false
 	_fx_pool = p
@@ -2163,6 +2168,10 @@ func _cell_explored(cell: Dictionary) -> bool:
 ## The minimap needs exactly these when its fog toggle is on, and a second copy over there would
 ## be a second opinion about what you can see — the map and the world disagreeing about which
 ## cells are known is worse than either answer alone.
+## The firelight gate moved. Main re-renders the stored snapshot so the change is visible now
+## rather than on the next step (see _refresh_fx_flags).
+signal lighting_changed
+
 ## FIRELIGHT, SWITCHED OFF AT THE SOURCE. Daniel, twice: "Campfires and arc sconces still have
 ## the floor/walls lit... How do I disable the current campfire/sconce floor lighting?"
 ##
