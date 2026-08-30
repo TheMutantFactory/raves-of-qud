@@ -24,6 +24,8 @@ var tiles_dir := ""
 var palette := {}
 var _mask_cache := {}   # fname -> Image (raw grayscale mask)
 var _tex_cache := {}    # "fname|main|detail" -> ImageTexture (recoloured)
+var _img_cache := {}    # ...and the same recolour as an Image, for callers that composite
+const IMG_CACHE_MAX := 512   # tiles are small; 512 of them is a few MB and covers a busy zone
 
 ## Recoloured icon for a serialized object dict, honouring the global perceived/full toggle. When NOT
 ## full and the object carries a perceived override (tileP/colorP/detailP — present only for unidentified
@@ -84,6 +86,63 @@ func anim_step(phase: int) -> int:
 	return (phase % ANIM_PERIOD) / 15
 
 ## Recoloured tile texture for a tile path + main/detail colours, or null if there's no tile/mask.
+## The recoloured tile as an IMAGE, cached. Split out because the minimap composites two thousand
+## tiles a turn and needs PIXELS, not a GPU handle: it was calling get_image() on each returned
+## texture — a readback per cell — and the panel cost 545ms a turn, five times the whole live 3D
+## render. Images are CPU-side and free to hand out.
+func image_for(obj: Dictionary, full: bool) -> Image:
+	if not full and obj.has("tileP"):
+		return image(String(obj.get("tileP", "")),
+			color_of(String(obj.get("colorP", ""))), color_of(String(obj.get("detailP", ""))))
+	return image(String(obj.get("tile", "")), main_color(obj), detail_color(obj))
+
+
+func image(tile: String, main: Color, detail: Color) -> Image:
+	if tile == "":
+		return null
+	var fname := tile.replace("/", "_").replace("\\", "_").replace(":", "_")
+	var key := "%s|%s|%s" % [fname, main.to_html(), detail.to_html()]
+	if _img_cache.has(key):
+		return _img_cache[key]
+	var custom := _custom_path(fname)
+	if custom != "":
+		var cimg := _load_image(custom)
+		if cimg != null:
+			_bound(_img_cache)
+			_img_cache[key] = cimg
+			return cimg
+	var mask := _mask(fname)
+	if mask == null:
+		return null
+	var w := mask.get_width()
+	var h := mask.get_height()
+	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	for y in h:
+		for x in w:
+			var pix := mask.get_pixel(x, y)
+			if pix.a < 0.5:
+				img.set_pixel(x, y, Color(0, 0, 0, 0))
+			else:
+				var lum := (pix.r + pix.g + pix.b) / 3.0
+				var c := main.lerp(detail, lum)
+				img.set_pixel(x, y, Color(c.r, c.g, c.b, pix.a))
+	_bound(_img_cache)
+	_img_cache[key] = img
+	return img
+
+
+## BOUNDED BY EVICTION, NOT BY WIPE. The texture cache clears itself wholesale when it tips over,
+## so a zone with more distinct tile-and-colour pairs than the bound rebuilds EVERYTHING each time
+## it does — worst exactly when the zone is busiest. Dropping the oldest quarter keeps the common
+## tiles resident.
+static func _bound(cache: Dictionary) -> void:
+	if cache.size() <= IMG_CACHE_MAX:
+		return
+	var keys := cache.keys()
+	for i in int(IMG_CACHE_MAX / 4):
+		cache.erase(keys[i])
+
+
 func texture(tile: String, main: Color, detail: Color) -> Texture2D:
 	if tile == "":
 		return null

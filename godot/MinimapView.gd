@@ -52,6 +52,9 @@ const TILE_H := 24
 var persist := true
 var world_ref: Node3D   # unused; kept so MainFrame's late-bind does not need unpicking
 var probe := {}         # last tile-map pass, for control.py minimapdump
+## The ink count is a per-turn 48k-pixel scan. Off by default; `minimapdump` is still useful
+## without it, and the one question it answered has been answered.
+var ink_probe := false
 var _view: Control      # the clipping box the map is panned inside
 var _grab: Control      # the draggable bottom border
 var _zoom := 1.0        # 1.0 = the whole zone fits
@@ -288,6 +291,7 @@ func _render_qud_minimap(mm: Dictionary) -> bool:
 		_tex = ImageTexture.create_from_image(img)
 		_rect.texture = _tex
 	_layout_map()
+	Profiler.done("minimap.tiles")
 	return true
 
 ## Qud's minimap rect, measured off its live RectTransform + the rendered frame at 1080:
@@ -485,6 +489,7 @@ func _render_tiles(data: Dictionary, w: int, h: int) -> bool:
 	probe["with_objs"] = 0
 	probe["tex_ok"] = 0
 	probe["tex_null"] = 0
+	Profiler.begin("minimap.tiles")
 	var img := Image.create(w * TILE_W, h * TILE_H, false, Image.FORMAT_RGBA8)
 	img.fill(BG)
 	for cell in data.get("cells", []):
@@ -496,15 +501,16 @@ func _render_tiles(data: Dictionary, w: int, h: int) -> bool:
 		if objs.is_empty():
 			continue
 		probe["with_objs"] += 1
-		var tex: Texture2D = _tiles.texture_for(objs[objs.size() - 1], true)
-		if tex == null:
+		# THE IMAGE, NOT THE TEXTURE. get_image() on an ImageTexture can force a GPU readback, and
+		# doing it once per cell is what made this panel cost 545ms a turn — five times the whole
+		# live 3D render. QudTiles caches the recoloured Image now, so this is a dictionary hit.
+		var ti: Image = _tiles.image_for(objs[objs.size() - 1], true)
+		if ti == null:
 			probe["tex_null"] += 1
 			continue
 		probe["tex_ok"] += 1
-		var ti := tex.get_image()
-		if ti == null:
-			probe["img_null"] = int(probe.get("img_null", 0)) + 1
-			continue
+		# Idempotent, and cheap after the first: QudTiles builds RGBA8, but custom art is loaded
+		# from disk in whatever format it was authored in.
 		if ti.get_format() != Image.FORMAT_RGBA8:
 			ti.convert(Image.FORMAT_RGBA8)
 		# BLENDED, not blitted: the art is mostly transparent and a straight copy would punch the
@@ -521,14 +527,18 @@ func _render_tiles(data: Dictionary, w: int, h: int) -> bool:
 	# WHAT ENDED UP IN THE PICTURE. tex_ok counts textures that RESOLVED, which says nothing about
 	# whether their pixels reached the map — the difference between a compositing failure and a
 	# display one, and the only thing three rebuilds have not been able to tell apart.
-	var ink := 0
-	for yy in range(0, img.get_height(), 4):
-		for xx in range(0, img.get_width(), 4):
-			var c := img.get_pixel(xx, yy)
-			if absf(c.r - BG.r) > 0.03 or absf(c.g - BG.g) > 0.03 or absf(c.b - BG.b) > 0.03:
-				ink += 1
-	probe["ink"] = ink
-	probe["sampled"] = int(img.get_height() / 4) * int(img.get_width() / 4)
+	# THE INK COUNT WAS A DIAGNOSTIC AND IT STAYED IN. 48,000 get_pixel calls in GDScript, every
+	# turn, to answer a question that was answered once — is the composite blank. It is off unless
+	# asked for, because a probe that costs a frame is not free to leave lying around.
+	if ink_probe:
+		var ink := 0
+		for yy in range(0, img.get_height(), 4):
+			for xx in range(0, img.get_width(), 4):
+				var c := img.get_pixel(xx, yy)
+				if absf(c.r - BG.r) > 0.03 or absf(c.g - BG.g) > 0.03 or absf(c.b - BG.b) > 0.03:
+					ink += 1
+		probe["ink"] = ink
+		probe["sampled"] = int(img.get_height() / 4) * int(img.get_width() / 4)
 	# LINEAR, FOR THIS SOURCE ONLY. Every other map here is one pixel per cell and wants crisp
 	# nearest-neighbour; this one is 1280x600 of sprite art squeezed into a panel a quarter that
 	# wide, and NEAREST samples a single pixel per tile — usually one of the transparent ones,

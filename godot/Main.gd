@@ -964,6 +964,7 @@ var _walk_log: Array = []
 func _walk_log_frame() -> void:
 	if renderer == null:
 		return
+	Profiler.begin("walklog")
 	var e: Dictionary = renderer.walk_probe()
 	# THE FIVE MODAL FLAGS. _playfield_cell refuses a click while any of them is up, so a single
 	# one stuck true silently kills every click on the world while keys and the wheel carry on
@@ -995,6 +996,7 @@ func _walk_log_frame() -> void:
 	_walk_log.append(e)
 	if _walk_log.size() > WALK_LOG_N:
 		_walk_log.remove_at(0)
+	Profiler.done("walklog")
 
 
 func _walk_step(dt: float) -> void:
@@ -1611,7 +1613,10 @@ func _multiview_inspect(cam: Camera3D, pos: Vector2) -> void:
 ## Write the Pareto timing report to profile.txt (Claude reads it). Auto-called every
 ## 40 turns (reset=false, cumulative), and by the P key (reset=true, fresh window).
 func _dump_profile(reset := true) -> void:
-	var dir := renderer.tiles_dir().get_base_dir()
+	# THE SUPPORT DIR, like every other dump. This derived its path from the RENDERER's tiles_dir
+	# and returned silently when that was empty — so asking for a profile did nothing at all, with
+	# a stale report still sitting on disk to be mistaken for the answer. It was, twice.
+	var dir := _support_dir()
 	if dir == "":
 		return
 	var f := FileAccess.open(dir.path_join("profile.txt"), FileAccess.WRITE)

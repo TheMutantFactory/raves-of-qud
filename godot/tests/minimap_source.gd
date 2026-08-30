@@ -34,13 +34,15 @@ class FakeTiles:
 	## a check touches any source but "tiles".
 	func main_color(_obj: Dictionary, fallback := Color.WHITE) -> Color:
 		return fallback
-	func texture_for(_obj: Dictionary, _full: bool) -> Texture2D:
+	## image_for, not texture_for: the composite takes PIXELS now, because get_image() per cell was
+	## a GPU readback and cost the panel 545ms a turn.
+	func image_for(_obj: Dictionary, _full: bool) -> Image:
 		var im := Image.create(16, 24, false, Image.FORMAT_RGBA8)
 		im.fill(Color(0, 0, 0, 0))
 		for y in range(6, 18):
 			for x in range(4, 12):
 				im.set_pixel(x, y, ART)
-		return ImageTexture.create_from_image(im)
+		return im
 
 
 func _ready() -> void:

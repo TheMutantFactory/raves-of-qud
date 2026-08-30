@@ -225,6 +225,9 @@ def main(argv):
     elif cmd == "minimapdump":
         godot("minimapdump")
         print("godot: minimapdump -> minimapdump.json")
+    elif cmd == "profile":
+        godot("profile " + (argv[1] if len(argv) > 1 else ""))
+        print("godot: profile -> profile.txt")
     elif cmd == "walkdump":
         godot("walkdump")
         print("godot: walkdump -> walkdump.json")

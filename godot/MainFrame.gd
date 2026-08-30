@@ -2227,8 +2227,16 @@ func _apply_stats(data: Dictionary) -> void:
 	_check_mod_version(data)
 	# Every sub-view shares one entry point, so feeding them is a loop (adding a panel = build the scene
 	# + append it to _panels in _ready; no wiring change here).
+	# TIMED PER PANEL. The profiler covered Main, the renderer and the bridge and stopped at the
+	# side column — which is where a per-turn tile composite and a 48,000-pixel debug loop were
+	# quietly added. A phase nobody measures is a phase nobody suspects.
+	Profiler.begin("panels")
 	for p in _panels:
+		var nm: String = "panel." + String(p.name).to_lower()
+		Profiler.begin(nm)
 		p.set_snapshot(data)
+		Profiler.done(nm)
+	Profiler.done("panels")
 
 ## Compare the running mod's wire version to what this client needs, and pin a status line in the message
 ## log. A mod .cs change only takes effect after a Qud restart, so "deployed but not restarted" left the
