@@ -312,9 +312,16 @@ static func zoom_about(pan: Vector2, focus: Vector2, old_z: float, new_z: float)
 	return focus - (focus - pan) * k
 
 
-## How far the tile map is lifted. Enough to read a cave at panel size without blowing out the
-## lit cells — the player's own white mark is already at full.
-const TILE_LIFT := Color(2.2, 2.2, 2.2)
+## NO LIFT. Daniel: "Light the minimap full correctly. It looks like it has been bleached." It had
+## been: a flat 2.2x modulate multiplies every channel and CLIPS, so rock went to neon rust, water
+## to neon cyan, and anything already pale went to white — the colours stopped being Qud's, which
+## is the entire point of drawing its tiles.
+##
+## The composite needs no lift at all. texture_for hands back each object's FULL colour — the map
+## is already "fully lit" in the sense that matters, because it never applied the zone's darkness
+## in the first place. What made it look dim was measuring it wrong (a stddev crop that mostly
+## sampled panel background) and reading it at fit zoom on a dark panel.
+const TILE_LIFT := Color(1, 1, 1)
 const MAP_H_USER := 120.0
 const MAP_W_1TO1 := 240.0
 const MAP_H_1TO1 := 104.0
