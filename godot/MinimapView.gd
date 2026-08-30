@@ -33,22 +33,18 @@ var _mode := MODE_FULL
 ## one is new; the setting names all four in one place so the choice is somewhere you can find it.
 ##   full / minimal  the painted and structural client-side maps (the old toggle)
 ##   qud             Qud's OWN minimap, which until now only parity mode could reach
-##   topdown         a live camera looking straight down at the world, in the panel
+##   tiles           the zone composited from Qud's OWN tile art, one sprite per cell
 const SRC_KEY := "minimap_source"
-const TOPDOWN_SPAN := 26.0   # cells shown vertically; a corridor reads at about this
-const TOPDOWN_H := 60.0      # eye height — well above any wall, so nothing occludes the floor
+## THE TILE MAP'S CELL SIZE, in map pixels — Qud's own art size, so sprites keep their shape and
+## the TextureRect scales the whole thing nearest-neighbour like every other source here.
+const TILE_W := 16
+const TILE_H := 24
 ## WRITE-THROUGH TO Settings, off in tests. The toggle saves, and a headless run that presses it
 ## puts a fixture's choice into the developer's own settings.json — which this test did, once,
 ## before this existed. The drone panel has the same flag for the same reason.
 var persist := true
-var _svc: SubViewportContainer
-var _sv: SubViewport
-var _tcam: Camera3D
-## THE NODE THE ZONE IS DRAWN UNDER, set by MainFrame. The camera lives in the SubViewport, not in
-## that subtree, so a cell coordinate is NOT a world coordinate: the renderer carries a z-stretch
-## (see ZoneRenderer's `zs`), and placing the camera at a raw cell put it somewhere with nothing in
-## it. Everything the map aims at goes through this transform.
-var world_ref: Node3D
+var world_ref: Node3D   # unused; kept so MainFrame's late-bind does not need unpicking
+var probe := {}         # last tile-map pass, for control.py minimapdump
 var _last_data := {}   # last snapshot, so a mode toggle re-renders without waiting for a new one
 
 func _ready() -> void:
@@ -87,68 +83,6 @@ func _ready() -> void:
 	_rect.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_map_margin.add_child(_rect)
 
-	# THE TOP-DOWN SOURCE, sharing the game's own World3D exactly as the camera selector's panes do
-	# — one world, many cameras. Built here rather than lazily so switching the setting is a
-	# visibility flip and not a first-use stall.
-	_svc = SubViewportContainer.new()
-	_svc.stretch = true
-	_svc.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_svc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_svc.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_svc.visible = false
-	_map_margin.add_child(_svc)
-	_sv = SubViewport.new()
-	# THE WORLD IS BOUND LAZILY, not here. Panels are built before they are in the tree, so
-	# get_viewport() at this point can hand back something that is not the game's viewport — and a
-	# SubViewport with no world quietly renders its OWN empty one, which looks exactly like a
-	# camera pointed at nothing. Bound on first show, when being in the tree is certain.
-	_sv.transparent_bg = false
-	_svc.add_child(_sv)
-	_tcam = Camera3D.new()
-	_tcam.projection = Camera3D.PROJECTION_ORTHOGONAL
-	_tcam.size = TOPDOWN_SPAN
-	# NO FOG FROM ABOVE. The sight area is a lid when seen from overhead — underground it covers the
-	# whole zone, so the first version of this showed a dark sheet and nothing else. Dropping its
-	# layer leaves exactly what has been built: the geometry you have explored.
-	_tcam.cull_mask &= ~ZoneRenderer.DARK_LAYER
-	_sv.add_child(_tcam)
-	_tcam.current = true
-
-## Swap between the painted texture and the live camera. Both live in _map_margin; exactly one is
-## visible, and the viewport stops rendering entirely when it is not — a second camera on the game's
-## own world is not something to leave running behind a panel nobody is looking at.
-func _show_topdown(on: bool) -> void:
-	if _svc == null:
-		return
-	if on and _sv.world_3d == null:
-		var vp := get_viewport()
-		if vp != null:
-			_sv.world_3d = vp.find_world_3d()
-	_svc.visible = on
-	_rect.visible = not on
-	_sv.render_target_update_mode = SubViewport.UPDATE_ALWAYS if on else SubViewport.UPDATE_DISABLED
-
-
-## Point the top-down camera at the player. NORTH IS THE UP VECTOR, the same one CameraRig hands
-## its own top-down mode — a map whose north disagreed with the game's would be worse than no map.
-func _aim_topdown(data: Dictionary) -> void:
-	if _tcam == null:
-		return
-	var p: Dictionary = data.get("player", {})
-	var px := float(p.get("x", -1))
-	var py := float(p.get("y", -1))
-	if px < 0.0 or py < 0.0:
-		return
-	var ground := Vector3(px, 0.0, py)
-	var up := Vector3(0, 0, -1)
-	if is_instance_valid(world_ref):
-		ground = world_ref.global_transform * ground
-		# The stretch is on z, so "north" is stretched with it — take the direction through the
-		# same basis rather than assuming it survived.
-		up = (world_ref.global_transform.basis * Vector3(0, 0, -1)).normalized()
-	_tcam.position = ground + Vector3(0, TOPDOWN_H, 0)
-	_tcam.look_at(ground, up)
-
 
 ## MainFrame calls this each snapshot with the full data (needs cells + player + zone dims + palette).
 func set_snapshot(data: Dictionary) -> void:
@@ -157,6 +91,11 @@ func set_snapshot(data: Dictionary) -> void:
 	if not pal.is_empty():
 		_palette = pal
 	_tiles.palette = _palette
+	# ...AND WHERE THE ART LIVES. The painted map only ever asked QudTiles for COLOURS, which need
+	# no directory, so this line was never missed. texture_for does need it, and without it every
+	# lookup returns null and the tile map composites a blank image — which looks exactly like a
+	# camera pointed at nothing, the failure this replaced.
+	_tiles.tiles_dir = String(data.get("tilesDir", _tiles.tiles_dir))
 	if _one_to_one:
 		_update_title_1to1()   # Qud puts the zone name atop the minimap; keep it live as we travel
 	_rerender()
@@ -315,11 +254,7 @@ func _rerender() -> void:
 	# PARITY STILL WINS. In 1:1 the minimap is Qud's, whatever the user picked — the setting is a
 	# user-mode choice and 1:1 is the mode that has no choices.
 	var src := "qud" if _one_to_one else String(Settings.get_value(SRC_KEY, "full"))
-	_show_topdown(src == "topdown")
 	_refresh_toggle()   # Options can change this key too; the button must not disagree with it
-	if src == "topdown":
-		_aim_topdown(data)
-		return
 	# 1:1 renders QUD's map when the mod ships it; anything else falls back to the QoL map below.
 	if src == "qud":
 		var mm: Variant = data.get("minimap", null)
@@ -331,6 +266,12 @@ func _rerender() -> void:
 		_mode = MODE_MINIMAL
 	elif src == "full":
 		_mode = MODE_FULL
+	if src == "tiles":
+		var zt: Dictionary = data.get("zone", {})
+		var tw := int(zt.get("width", 0))
+		var th := int(zt.get("height", 0))
+		if tw > 0 and th > 0 and _render_tiles(data, tw, th):
+			return
 	var z: Dictionary = data.get("zone", {})
 	var w := int(z.get("width", 0))
 	var h := int(z.get("height", 0))
@@ -359,6 +300,76 @@ func _rerender() -> void:
 		_rect.texture = _tex
 
 ## Colour of one cell, per mode.
+## THE ZONE IN QUD'S OWN TILES. Daniel: "is it possible to just load the zone tilesets from Qud?
+## That's what I would be looking at. No 'camera' needed."
+##
+## He was right, and it retires a camera that never drew anything. A top-down view of a 3D world
+## has to be aimed, framed, transformed out of cell space and told which layers to ignore — four
+## chances to be wrong, and I was wrong at least three times. The tiles are already loaded, already
+## recoloured per object, and already keyed by the same cell data this panel reads: the map is a
+## composite, not a render.
+##
+## THE SAME OBJECT THE PAINTED MAP PICKS, so the two sources agree about what is in a cell and
+## differ only in how much of it they show.
+func _render_tiles(data: Dictionary, w: int, h: int) -> bool:
+	# WHAT THIS PASS ACTUALLY SAW, for `control.py minimapdump`. Two blind fixes in a row failed
+	# here; every one of them would have been a one-line read with this.
+	probe = {"w": w, "h": h, "tiles_dir": _tiles.tiles_dir, "cells": 0, "with_objs": 0,
+		"tex_ok": 0, "tex_null": 0, "rect_visible": _rect.visible}
+	var img := Image.create(w * TILE_W, h * TILE_H, false, Image.FORMAT_RGBA8)
+	img.fill(BG)
+	for cell in data.get("cells", []):
+		var x := int(cell.get("x", -1))
+		var y := int(cell.get("y", -1))
+		probe["cells"] += 1
+		if x < 0 or y < 0 or x >= w or y >= h:
+			continue
+		var objs: Array = cell.get("objs", [])
+		if objs.is_empty():
+			continue
+		probe["with_objs"] += 1
+		var tex: Texture2D = _tiles.texture_for(objs[objs.size() - 1], true)
+		if tex == null:
+			probe["tex_null"] += 1
+			continue
+		probe["tex_ok"] += 1
+		var ti := tex.get_image()
+		if ti == null:
+			continue
+		if ti.get_format() != Image.FORMAT_RGBA8:
+			ti.convert(Image.FORMAT_RGBA8)
+		# BLENDED, not blitted: the art is mostly transparent and a straight copy would punch the
+		# background out around every sprite, leaving each tile in its own black box.
+		img.blend_rect(ti, Rect2i(Vector2i.ZERO, ti.get_size()),
+			Vector2i(x * TILE_W, y * TILE_H))
+	var p: Dictionary = data.get("player", {})
+	var px := int(p.get("x", -1))
+	var py := int(p.get("y", -1))
+	if px >= 0 and py >= 0 and px < w and py < h:
+		# The player as a box rather than his own sprite: at this size the map is about WHERE he is,
+		# and his tile is one more sprite among two thousand.
+		_mark_player(img, px, py)
+	var want := Vector2i(w * TILE_W, h * TILE_H)
+	if _tex != null and _tex.get_size() == Vector2(want):
+		_tex.update(img)
+	else:
+		_tex = ImageTexture.create_from_image(img)
+		_rect.texture = _tex
+	return true
+
+
+## A hollow box around the player's cell — hollow so his own tile still reads inside it.
+func _mark_player(img: Image, px: int, py: int) -> void:
+	var x0 := px * TILE_W
+	var y0 := py * TILE_H
+	for i in TILE_W:
+		img.set_pixel(x0 + i, y0, PLAYER)
+		img.set_pixel(x0 + i, y0 + TILE_H - 1, PLAYER)
+	for j in TILE_H:
+		img.set_pixel(x0, y0 + j, PLAYER)
+		img.set_pixel(x0 + TILE_W - 1, y0 + j, PLAYER)
+
+
 func _cell_color(cell: Dictionary) -> Color:
 	var objs: Array = cell.get("objs", [])
 	if objs.is_empty():
@@ -379,8 +390,8 @@ func _cell_color_minimal(objs: Array) -> Color:
 ## setting would then overwrite on the next snapshot — the button would appear to work and undo
 ## itself a fraction of a second later. It cycles the SOURCE now, so the panel and Options are two
 ## views of one value.
-const SOURCES := ["full", "minimal", "qud", "topdown"]
-const SOURCE_LABEL := {"full": "full", "minimal": "minimal", "qud": "qud", "topdown": "top-down"}
+const SOURCES := ["full", "minimal", "qud", "tiles"]
+const SOURCE_LABEL := {"full": "full", "minimal": "minimal", "qud": "qud", "tiles": "tiles"}
 
 func _toggle_mode() -> void:
 	var i: int = SOURCES.find(String(Settings.get_value(SRC_KEY, "full")))

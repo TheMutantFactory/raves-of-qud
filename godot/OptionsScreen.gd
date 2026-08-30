@@ -35,8 +35,8 @@ const RAVES_ITEMS := [
 	# because the panel already has a mode (FULL/MINIMAL) and two words for one idea is how a
 	# setting ends up meaning neither.
 	{"key": "minimap_source", "label": "Minimap", "type": "choice",
-		"options": ["Painted", "Structural", "Qud (1:1)", "Top-down camera"],
-		"values": ["full", "minimal", "qud", "topdown"]},
+		"options": ["Painted", "Structural", "Qud (1:1)", "Qud tiles"],
+		"values": ["full", "minimal", "qud", "tiles"]},
 	{"key": "font_scale", "label": "Font scale", "type": "slider", "min": 0.7, "max": 1.5, "step": 0.05},
 	{"key": "fire_zone_radius", "label": "Lit fires: zone radius (0 = this zone only)",
 		"type": "slider", "min": 0, "max": 3, "step": 1},

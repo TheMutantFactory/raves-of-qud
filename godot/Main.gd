@@ -775,6 +775,14 @@ func _exec_godot_cmd(cmd: String) -> void:
 							d[k] = [r.position.x, r.position.y, r.size.x, r.size.y]
 					ud.store_string(JSON.stringify(d))
 					ud.close()
+		"minimapdump":
+			# What the tile map's last pass saw: how many cells carried objects, how many of those
+			# resolved to art, and where it was looking for it.
+			var mdf := FileAccess.open(_support_dir().path_join("minimapdump.json"), FileAccess.WRITE)
+			if mdf != null:
+				var mv = get_parent().get("_minimap") if get_parent() != null else null
+				mdf.store_string(JSON.stringify(mv.probe if mv != null else {"error": "no minimap"}))
+				mdf.close()
 		"walkdump":
 			# The last WALK_LOG_N frames of player/torch placement, for a stutter too fast to
 			# screenshot.
