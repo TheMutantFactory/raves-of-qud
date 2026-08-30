@@ -589,6 +589,61 @@ var _daylight := 0.0
 const GLOW_DAY_MIN := 0.0     # ground light-pool: fully gone at midday (no darkness to fill)
 const FLAME_DAY_MIN := 0.0    # flame ball: fully gone at midday; the sconce post carries the tile
 
+# ── which pieces of a fire are switched on ────────────────────────────────────────────────────
+#
+# A Raves fire is three separate objects over one Qud-lit cell — a pool on the floor, a flame, and
+# a plume — and each has its own QoL feature now. Read ONCE PER FRAME into these, not per light:
+# the flicker driver touches every fixture in the zone every frame, and three dictionary lookups
+# per torch per frame is a cost with no reader.
+var _fx_pool := true
+var _fx_flame := true
+var _fx_fsmoke := true
+
+## Groups, so a toggle reaches the fixtures this renderer is no longer driving. `_lights` holds
+## only the LIVE zone; remembered and neighbour zones are built once into a frozen bank and never
+## looked at again, so without these a toggle would clear the pools at your feet and leave the ones
+## across the zone line burning — a half-applied setting, which reads as a broken one.
+const FX_POOL_GROUP := "fx_pool"
+const FX_FLAME_GROUP := "fx_flame"
+
+## Is this piece of the fire switched on? The INVERSE of qud_shape: the gate answers "take Qud's
+## shape here", and Qud's shape is a lit cell with no 3D fixture over it at all.
+func _fx_on(feature: String) -> bool:
+	return not Settings.qud_shape(feature)
+
+## Re-read the three feature gates. Returns true if any of them moved, which is the only time
+## anything has to be walked.
+func _refresh_fx_flags() -> bool:
+	var p := _fx_on("floorglow")
+	var f := _fx_on("flames")
+	var m := _fx_on("firesmoke")
+	if p == _fx_pool and f == _fx_flame and m == _fx_fsmoke:
+		return false
+	_fx_pool = p
+	_fx_flame = f
+	_fx_fsmoke = m
+	return true
+
+## Apply the flags to every fixture in the scene, live zone and frozen banks alike. Only called on
+## a change (see _refresh_fx_flags), so the group walk is not a per-frame cost.
+func _apply_fx_flags() -> void:
+	if not is_inside_tree():
+		return
+	for n in get_tree().get_nodes_in_group(FX_POOL_GROUP):
+		(n as Node3D).visible = _fx_pool
+	for n in get_tree().get_nodes_in_group(FX_FLAME_GROUP):
+		(n as Node3D).visible = _fx_flame
+	# Smoke is an EMITTER, not a visibility: hiding a GPUParticles3D leaves it simulating, and
+	# switching it back on would pop a full plume into being mid-air instead of starting one.
+	for L in _lights:
+		if L.has("smoke") and is_instance_valid(L["smoke"]):
+			(L["smoke"] as GPUParticles3D).emitting = _smoke_wanted(bool(L.get("fire_smoke", false)))
+
+## Should this plume be emitting? A fire's smoke burns day and night under its own feature; a
+## sconce's is night-only ambience under `particles`.
+func _smoke_wanted(fire: bool) -> bool:
+	return _fx_fsmoke if fire else _smoke_on()
+
 ## Multiplier for the ground glow / the flame, given the current daylight. Both are 1.0
 ## at night and fall to their *_DAY_MIN floor at midday.
 func _glow_mul() -> float:
@@ -609,11 +664,10 @@ func set_daylight(sun_a: float) -> void:
 	# Smoke is night-only: toggle every live sconce's emitter with the time of day. Setting
 	# emitting=false lets the puffs already aloft finish rising and fade (~lifetime), so the
 	# plume tapers off at dawn rather than vanishing.
-	var on := _smoke_on()
 	for L in _lights:
 		if L.has("smoke"):
 			# a real fire burns day + night, so its smoke keeps emitting; a torch's smoke is night-only
-			(L["smoke"] as GPUParticles3D).emitting = true if L.get("fire_smoke", false) else on
+			(L["smoke"] as GPUParticles3D).emitting = _smoke_wanted(bool(L.get("fire_smoke", false)))
 
 var _active: Array = []
 var _sprite_pool: Array[Sprite3D] = []
@@ -686,6 +740,11 @@ func set_one_to_one(on: bool) -> void:
 	_drop_all_static()   # Main re-renders right after (same contract as set_flat_2d)
 
 func _ready() -> void:
+	# BEFORE THE FIRST ZONE BUILDS, so a fixture is born with the flags already applied. The pool
+	# beside this one carries the same lesson written the expensive way: anything corrected on the
+	# first _process instead of at birth is a frame of the wrong picture, and a build hitch holds
+	# that frame on screen long enough to be reported as a bug.
+	_refresh_fx_flags()
 	_plane = PlaneMesh.new()
 	_plane.size = Vector2(CELL, CELL)
 	_fence_quad = QuadMesh.new()
@@ -4187,6 +4246,8 @@ func _place_light(cx: int, cy: int, radius: float, smokes := true, on_fire := fa
 	glow.mesh = gm
 	glow.position = Vector3(cx, FLOOR_Y + 0.01, cy)
 	glow.material_override = _fx_material(_pool_texture(n, mask), true)
+	glow.add_to_group(FX_POOL_GROUP)
+	glow.visible = _fx_pool
 	lp.add_child(glow)
 
 	# THE FLAME. Live zone: PARTICLE FIRE (Daniel: the drawn flame was "not
@@ -4222,6 +4283,8 @@ func _place_light(cx: int, cy: int, radius: float, smokes := true, on_fire := fa
 			# flame's height — the whole of "clamped to the burning part".
 			var k: float = flame_h / (FIRE_RISE * FIRE_LIFETIME)
 			pf.scale = Vector3(k, k, k)
+		pf.add_to_group(FX_FLAME_GROUP)
+		pf.visible = _fx_flame
 		lp.add_child(pf)
 		flame = pf
 	else:
@@ -4243,6 +4306,8 @@ func _place_light(cx: int, cy: int, radius: float, smokes := true, on_fire := fa
 				else Vector3(cx, 0.55 if on_fire else 0.7, cy)
 		else:
 			fsp.position = flame_at if flame_at != Vector3.INF else Vector3(cx, 0.55 if on_fire else 0.7, cy)
+		fsp.add_to_group(FX_FLAME_GROUP)
+		fsp.visible = _fx_flame
 		lp.add_child(fsp)
 		flame = fsp
 
@@ -4268,7 +4333,7 @@ func _place_light(cx: int, cy: int, radius: float, smokes := true, on_fire := fa
 			# just above the flame — wherever the flame actually is
 			smoke.position = (flame_at + Vector3(0, 0.25, 0)) if flame_at != Vector3.INF \
 				else Vector3(cx, 0.85, cy)
-			smoke.emitting = true if on_fire else _smoke_on()
+			smoke.emitting = _smoke_wanted(on_fire)
 			lp.add_child(smoke)
 			entry["smoke"] = smoke
 			entry["fire_smoke"] = on_fire
@@ -5470,6 +5535,10 @@ func _process(_dt: float) -> void:
 	if _ib_active:
 		_ib_step()               # advance the incremental live-static build one chunk per frame
 	_drain_nb_builds()           # ...and at most ONE remembered-zone build per frame (see the queue)
+	# THE FEATURE GATES, once per frame rather than once per torch. A change walks every fixture in
+	# the scene, including the frozen banks the driver below never touches.
+	if _refresh_fx_flags():
+		_apply_fx_flags()
 	var gmul := _glow_mul()      # daylight dimming, recomputed once per frame
 	var fmul := _flame_mul()
 	for L in _lights:
@@ -5488,7 +5557,7 @@ func _process(_dt: float) -> void:
 			pf.speed_scale = 0.85 + a * 0.35
 			var ratio: float = 1.0 if L.get("on_fire", false) else clampf(a * fmul, 0.0, 1.0)
 			pf.amount_ratio = ratio
-			pf.emitting = ratio > 0.03
+			pf.emitting = _fx_flame and ratio > 0.03
 		else:
 			var flame := L["flame"] as Sprite3D
 			flame.scale = Vector3(fs, fs * (0.95 + randf() * 0.2), fs)

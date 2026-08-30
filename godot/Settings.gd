@@ -99,6 +99,21 @@ const QOL_FEATURES := {
 	"tiles3d": ["3D tiles (voxel walls + upright sprites)", false],
 	"lighting": ["Day/night lighting (grade + sun/moon + fog)", false],
 	"particles": ["Smoke plumes (sconces & torches at night)", false],
+	# THE THREE PIECES OF A FIRE, each switchable on its own. Qud lights a cell; Raves builds a
+	# fixture out of three separate things over that cell, and until now only the smoke had a
+	# lever. Daniel asked what could turn the floor lighting off and the answer was nothing —
+	# _place_light was gated on 1:1 and the world map and on nothing else.
+	#
+	# ON by default, all three, because they are what a Raves fire already looks like; these
+	# exist to take pieces AWAY. 1:1 is untouched either way — qud_shape short-circuits there,
+	# and _place_light returns before any of it in parity mode regardless.
+	"floorglow": ["Firelight pools on the floor (torches, sconces & fires)", true],
+	"flames": ["3D flames on torches, sconces & fires", true],
+	# SEPARATE FROM `particles`, which covers the night plumes on sconces and standing torches and
+	# is off by default. An on-fire object's smoke was deliberately exempt from that gate — "a real
+	# fire smokes whether or not the viewer opted into ambience" — so folding it in would have
+	# deleted campfire smoke for everyone who never turned `particles` on. It gets its own lever.
+	"firesmoke": ["Smoke from things that are on fire", true],
 	"depthcue": ["Depth cue (farther is slightly darker)", false],
 	"cutaway": ["Wall cutaway (fade rock between camera and you)", false],
 	# ON by default, unlike its neighbours: Qud draws a tree in one cell because it has

@@ -355,8 +355,7 @@ func _populate_body() -> void:
 		if not Settings.one_to_one():
 			for fname in Settings.QOL_FEATURES:
 				var spec: Array = Settings.QOL_FEATURES[fname]
-				var qitem := {"key": "qol_" + str(fname), "type": "toggle",
-					"label": "QoL · " + str(spec[0])}
+				var qitem := _qol_item(str(fname))
 				var qrow := _build_raves_setting(qitem)
 				qrow.set_meta("feedback_label", "option · " + str(qitem["label"]))
 				qrow.set_meta("feedback_action", "load back the QoL feature: " + str(spec[0]))
@@ -550,12 +549,29 @@ func _raves_slider(item: Dictionary) -> Control:
 	row.add_child(h)
 	return row
 
+## A TOGGLE MUST ASK FOR THE RIGHT DEFAULT, and only the caller knows it. This read `false`
+## unconditionally, which is right for every plain setting and wrong for every QoL feature that
+## ships ON: with no key written yet, the box drew unchecked over a feature that was running, and
+## the first click "turned it on" to the value it already had — a control that visibly does
+## nothing the first time you use it. The nine default-on features already registered only ever
+## looked right because a preset or an earlier toggle had written their keys out.
+## One QoL feature's options row, as a spec. Its own function so the registry-to-row mapping can
+## be asked a question without building the whole options column: `default` is spec[1], the
+## feature's shipped value and the same one Settings.qol_on falls back to. Without it the switch
+## and the gate disagree about what "never written" means, and the switch is the one that is wrong.
+func _qol_item(fname: String) -> Dictionary:
+	var spec: Array = Settings.QOL_FEATURES[fname]
+	return {"key": "qol_" + fname, "type": "toggle",
+		"label": "QoL · " + str(spec[0]), "default": bool(spec[1])}
+
+
 func _raves_toggle(item: Dictionary) -> Control:
 	var b := _flat_button()
-	var on := bool(Settings.get_value(item["key"], false))
+	var dflt := bool(item.get("default", false))
+	var on := bool(Settings.get_value(item["key"], dflt))
 	b.text = _check(on) + str(item["label"])
 	b.pressed.connect(func():
-		var now := not bool(Settings.get_value(item["key"], false))
+		var now := not bool(Settings.get_value(item["key"], dflt))
 		Settings.set_value(item["key"], now); Settings.save()
 		b.text = _check(now) + str(item["label"]))
 	return b
