@@ -1482,7 +1482,13 @@ func _interact_click(pos: Vector2) -> void:
 	var cell = _playfield_cell(pos)
 	if cell == null:
 		return
-	client.send_command("interact", {"x": cell.x, "y": cell.y})
+	interact_at_cell(Vector2i(cell.x, cell.y))
+
+
+## The same interaction, addressed by CELL. The minimap has a cell and no screen ray, so both
+## surfaces meet here rather than each having its own idea of what a right-click does.
+func interact_at_cell(c: Vector2i) -> void:
+	client.send_command("interact", {"x": c.x, "y": c.y})
 
 
 ## CLICK-TO-TRAVEL. Send the clicked cell to Qud, which walks the player there with its own
@@ -1509,7 +1515,14 @@ func _travel_click(pos: Vector2) -> void:
 		return
 	if cell == null:
 		return
-	var c := Vector2i(cell.x, cell.y)
+	travel_to_cell(Vector2i(cell.x, cell.y))
+
+
+## Travel addressed by CELL — everything below this line was the back half of _travel_click, and it
+## never needed the screen position, only the cell the position resolved to. Split out so the
+## minimap can order exactly the same walk: the off-zone edge case, the reach test, the verb the
+## cursor promised. A second copy of this on the map would drift from this one within a week.
+func travel_to_cell(c: Vector2i) -> void:
 	# CLICKED INTO A NEIGHBOUR ZONE. Daniel: "You need to be able to walk off-zone using the mouse."
 	# Raves draws the zones either side, so clicking into one is the obvious way to ask to go there
 	# -- and it did nothing, because a click becomes `moveto` and Qud's travel only addresses cells

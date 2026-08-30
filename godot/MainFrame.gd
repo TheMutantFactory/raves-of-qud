@@ -2040,6 +2040,16 @@ func _connect_holodeck() -> void:
 	# stripped option text keeps its hotkey prefix ("[c] Control Mapping") — match the tail
 	# A modal just left the screen -- whatever is behind it may now be stale (an item
 	# action lands when the viewer ANSWERS, not when the menu opened).
+	# THE MINIMAP'S CLICKS GO WHERE THE PLAYFIELD'S GO. Same two calls, addressed by cell — Daniel:
+	# "just like the playfield. This will help with the 3D view making some things harder to
+	# discern." Late-bound like every other _holo wire.
+	if _minimap != null and _holo != null:
+		_minimap.tile_travel.connect(func(c: Vector2i) -> void:
+			if _holo != null and _holo.has_method("travel_to_cell"):
+				_holo.travel_to_cell(c))
+		_minimap.tile_interact.connect(func(c: Vector2i) -> void:
+			if _holo != null and _holo.has_method("interact_at_cell"):
+				_holo.interact_at_cell(c))
 	if _minimap != null and _minimap.get("world_ref") == null and _holo != null:
 		_minimap.world_ref = _holo.renderer
 	_holo.connect("popup_closed", func():

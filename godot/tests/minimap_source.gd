@@ -196,7 +196,115 @@ func _ready() -> void:
 	_check("...and drops the pan the user had set", m._pan != Vector2(50, 50), str(m._pan))
 	_check("...and takes the resize handle away", not m._grab.visible)
 
+	# ── the pan tool, the centre button, and clicking tiles ───────────────────
+	# Daniel: "add a pan icon to the minimap tiles titlebar. While the pan tool is enabled, the
+	# minimap pans ... Now that the clicks are free when the pan tool is disabled, let's add the
+	# ability to left and right click tiles on the minimap, just like the playfield."
+	m._one_to_one = false
+	m.set_one_to_one(false)
+	Settings.set_value(m.SRC_KEY, "tiles")
+	m._last_data = _fixture()
+	m._rerender()
+	m._view.size = Vector2(4 * m.TILE_W, 3 * m.TILE_H)
+	m._zoom = 1.0
+	m._pan = Vector2.ZERO
+	m._layout_map()
+
+	_check("the titlebar has a pan tool", m._pan_btn != null)
+	_check("...and a centre button", m._center_btn != null)
+
+	# A CLICK IS A CELL. The inverse of the layout, which is the only reason a click on the map can
+	# mean a tile — get it wrong and every click acts on the wrong square, silently.
+	var mid: Vector2 = m._rect.position + Vector2(2.5 * m.TILE_W, 1.5 * m.TILE_H) * (m._rect.size / m._rect.texture.get_size())
+	_check("a click resolves to the cell under it", m.cell_at(mid) == Vector2i(2, 1),
+		str(m.cell_at(mid)))
+	_check("a click outside the map resolves to nothing",
+		m.cell_at(Vector2(-50, -50)) == Vector2i(-1, -1), str(m.cell_at(Vector2(-50, -50))))
+
+	# THE CLICKS REACH THE WORLD when the pan tool is off...
+	var travelled: Array = []
+	var interacted: Array = []
+	m.tile_travel.connect(func(c: Vector2i) -> void: travelled.append(c))
+	m.tile_interact.connect(func(c: Vector2i) -> void: interacted.append(c))
+	m._set_pan_tool(false)
+	_click(m, mid, MOUSE_BUTTON_LEFT)
+	_check("left click orders travel to that cell", travelled == [Vector2i(2, 1)], str(travelled))
+	_click(m, mid, MOUSE_BUTTON_RIGHT)
+	_check("right click interacts with that cell", interacted == [Vector2i(2, 1)], str(interacted))
+
+	# ...AND DO NOT while it is on. This is the whole point of the tool being a mode: a drag and a
+	# click are the same gesture at different speeds, so one of them has to be claimed explicitly.
+	travelled.clear()
+	m._set_pan_tool(true)
+	_click(m, mid, MOUSE_BUTTON_LEFT)
+	_check("with the pan tool on, a click does not order a walk", travelled.is_empty(),
+		str(travelled))
+
+	# A DRAG IS NOT A CLICK, even with the tool off — a sloppy press must not walk you somewhere.
+	travelled.clear()
+	m._set_pan_tool(false)
+	# THE RELEASE MUST LAND ON A REAL CELL, one cell over — released off the map there is nothing
+	# to emit either way, and the check passes without testing anything. (It did: removing the
+	# click-versus-drag rule left this green until the endpoint was brought back on to the map.)
+	var one_cell: Vector2 = Vector2(m.TILE_W, 0) * (m._rect.size / m._rect.texture.get_size())
+	_check("the drag's endpoint is on the map", m.cell_at(mid + one_cell).x >= 0,
+		str(m.cell_at(mid + one_cell)))
+	_drag_click(m, mid, mid + one_cell)
+	_check("a drag is not treated as a click", travelled.is_empty(), str(travelled))
+
+	# THE CENTRE BUTTON puts the player in the middle of the box.
+	m._zoom = 3.0
+	m._pan = Vector2(-500, -500)
+	m._layout_map()
+	var sc0: Vector2 = m._rect.size / m._rect.texture.get_size()
+	var before_d: float = (m._rect.position + Vector2(1.5 * m.TILE_W, 1.5 * m.TILE_H) * sc0) \
+		.distance_to(m._view.size * 0.5)
+	m.center_on_player()
+	var sc: Vector2 = m._rect.size / m._rect.texture.get_size()
+	var player_on_map: Vector2 = m._rect.position + Vector2(1.5 * m.TILE_W, 1.5 * m.TILE_H) * sc
+	var after_d: float = player_on_map.distance_to(m._view.size * 0.5)
+	# AS CENTRED AS THE CLAMP ALLOWS, which is the honest claim. A player near a zone edge CANNOT
+	# sit in the middle without the map pulling away from its own border and showing empty margin,
+	# and clamp_pan rightly refuses that — asserting dead-centre here was asserting a behaviour the
+	# pan rules forbid, not one the button owes.
+	_check("centre brings the player toward the middle", after_d < before_d,
+		"%.0f -> %.0f" % [before_d, after_d])
+	_check("...and lands dead centre when the map has the room, or against its edge",
+		after_d < 1.0 or is_equal_approx(m._rect.position.x, 0.0)
+			or is_equal_approx(m._rect.position.y, 0.0)
+			or is_equal_approx(m._rect.position.x, m._view.size.x - m._rect.size.x)
+			or is_equal_approx(m._rect.position.y, m._view.size.y - m._rect.size.y),
+		"player %.0fpx off centre with the map at %s" % [after_d, m._rect.position])
+
 	_report()
+
+
+## A press and release at one spot — a click.
+func _click(m, at: Vector2, btn: int) -> void:
+	var d := InputEventMouseButton.new()
+	d.button_index = btn
+	d.pressed = true
+	d.position = at
+	m._on_map_input(d)
+	var u := InputEventMouseButton.new()
+	u.button_index = btn
+	u.pressed = false
+	u.position = at
+	m._on_map_input(u)
+
+
+## Press here, release there — a drag.
+func _drag_click(m, from: Vector2, to: Vector2) -> void:
+	var d := InputEventMouseButton.new()
+	d.button_index = MOUSE_BUTTON_LEFT
+	d.pressed = true
+	d.position = from
+	m._on_map_input(d)
+	var u := InputEventMouseButton.new()
+	u.button_index = MOUSE_BUTTON_LEFT
+	u.pressed = false
+	u.position = to
+	m._on_map_input(u)
 
 
 ## A tiny zone with something in three of its cells, so the composite has art to place.

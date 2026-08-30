@@ -34,7 +34,14 @@ var _mode := MODE_FULL
 ##   full / minimal  the painted and structural client-side maps (the old toggle)
 ##   qud             Qud's OWN minimap, which until now only parity mode could reach
 ##   tiles           the zone composited from Qud's OWN tile art, one sprite per cell
+## -> MainFrame -> Main: the same two things a playfield click does, addressed by CELL. Daniel:
+## "let's add the ability to left and right click tiles on the minimap, just like the playfield.
+## This will help with the 3D view making some things harder to discern."
+signal tile_travel(cell: Vector2i)
+signal tile_interact(cell: Vector2i)
+
 const SRC_KEY := "minimap_source"
+const PAN_KEY := "minimap_pan_tool"
 ## THE TILE MAP'S CELL SIZE, in map pixels — Qud's own art size, so sprites keep their shape and
 ## the TextureRect scales the whole thing nearest-neighbour like every other source here.
 const TILE_W := 16
@@ -51,6 +58,10 @@ var _zoom := 1.0        # 1.0 = the whole zone fits
 var _pan := Vector2.ZERO
 var _panning := false
 var _drag_from := Vector2.ZERO
+var _pan_btn: Button
+var _center_btn: Button
+var _pan_tool := false
+var _press_at := Vector2.ZERO   # where a click started, so a drag is not mistaken for a click
 var _sizing := false
 var _size_from := 0.0
 var _map_h := MAP_H_USER
@@ -58,6 +69,7 @@ var _last_data := {}   # last snapshot, so a mode toggle re-renders without wait
 
 func _ready() -> void:
 	_map_h = clampf(float(Settings.get_value(MAP_H_KEY, MAP_H_USER)), MAP_H_MIN, MAP_H_MAX)
+	_pan_tool = bool(Settings.get_value(PAN_KEY, false))
 	_tiles = load("res://QudTiles.gd").new()
 	_apply_panel_box()
 
@@ -73,6 +85,24 @@ func _ready() -> void:
 	_title.add_theme_font_size_override("font_size", UiFont.px(get_viewport(), "title"))
 	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(_title)
+	# THE PAN TOOL, and a centre. Daniel: "add a pan icon to the minimap tiles titlebar. While the
+	# pan tool is enabled, the minimap pans ... Now that the clicks are free when the pan tool is
+	# disabled" — which is the whole point of making it a MODE rather than a modifier key: a drag
+	# and a click are the same gesture at different speeds, so one of them has to be claimed
+	# explicitly or the map would guess, and guess wrong on every hurried click.
+	_pan_btn = Button.new()
+	_pan_btn.text = "✥"
+	_pan_btn.toggle_mode = true
+	_pan_btn.focus_mode = Control.FOCUS_NONE
+	_pan_btn.button_pressed = _pan_tool
+	_pan_btn.toggled.connect(_set_pan_tool)
+	head.add_child(_pan_btn)
+	_center_btn = Button.new()
+	_center_btn.text = "◎"
+	_center_btn.focus_mode = Control.FOCUS_NONE
+	_center_btn.tooltip_text = "Centre the map on you"
+	_center_btn.pressed.connect(center_on_player)
+	head.add_child(_center_btn)
 	_toggle = Button.new()
 	_toggle.focus_mode = Control.FOCUS_NONE
 	_toggle.pressed.connect(_toggle_mode)
@@ -176,6 +206,11 @@ func set_one_to_one(on: bool) -> void:
 	if _grab != null:
 		# Qud has no resize handle on its sidebar map, so parity mode does not grow one.
 		_grab.visible = not on
+	# ...nor a pan tool, nor a centre button. Qud's sidebar map is a picture, not an instrument.
+	if _pan_btn != null:
+		_pan_btn.visible = not on
+	if _center_btn != null:
+		_center_btn.visible = not on
 	if on:
 		# ...and a magnified, panned map is not Qud's either: parity starts from fit, every time.
 		_zoom = 1.0
@@ -274,6 +309,7 @@ const ZOOM_STEP := 1.15      # per wheel notch, multiplicative — a fixed step 
 const MAP_H_MIN := 60.0
 const MAP_H_MAX := 600.0
 const GRAB_H := 6.0          # the bottom strip's hit height
+const CLICK_SLOP := 4.0      # px a press may wander and still count as a click, not a drag
 const MAP_H_KEY := "minimap_height"
 
 ## One wheel notch. Multiplicative so a notch means the same PROPORTION at every zoom — an additive
@@ -548,6 +584,60 @@ func _layout_map() -> void:
 
 
 ## The wheel zooms about the pointer; a held left button pans.
+## THE PAN TOOL. Persisted, because it is a working mode rather than a momentary state: a player
+## who reads the map by dragging wants it to still be dragging tomorrow.
+func _set_pan_tool(on: bool) -> void:
+	_pan_tool = on
+	_panning = false
+	Settings.set_value(PAN_KEY, on)
+	if persist:
+		Settings.save()
+	_refresh_pan_btn()
+
+
+func _refresh_pan_btn() -> void:
+	if _pan_btn == null:
+		return
+	_pan_btn.button_pressed = _pan_tool
+	_pan_btn.tooltip_text = ("Pan tool ON — drag to move the map, clicks do not reach the world"
+		if _pan_tool else "Pan tool off — click tiles as you would the playfield")
+
+
+## Put the player back in the middle. THE OBVIOUS COMPANION TO PANNING: once a map can be dragged
+## anywhere, the way back to yourself has to be one button and not a hunt.
+func center_on_player() -> void:
+	if _view == null or _rect == null or _rect.texture == null:
+		return
+	var p: Dictionary = _last_data.get("player", {})
+	var px := int(p.get("x", -1))
+	var py := int(p.get("y", -1))
+	if px < 0 or py < 0:
+		return
+	var t: Vector2 = _rect.texture.get_size()
+	if t.x <= 0.0 or t.y <= 0.0:
+		return
+	var scale_now: Vector2 = _rect.size / t
+	# The player's cell in TEXTURE space, then at the map's current scale, then offset so it lands
+	# in the middle of the box.
+	var on_map := Vector2((float(px) + 0.5) * TILE_W, (float(py) + 0.5) * TILE_H) * scale_now
+	_pan = _view.size * 0.5 - on_map
+	_layout_map()
+
+
+## Which zone cell a point in the map box falls on, or (-1,-1) if it is off the map. The exact
+## inverse of the placement in _layout_map, and the only reason a click on the minimap can mean a
+## tile at all.
+func cell_at(pos: Vector2) -> Vector2i:
+	if _rect == null or _rect.texture == null or _rect.size.x <= 0.0 or _rect.size.y <= 0.0:
+		return Vector2i(-1, -1)
+	var t: Vector2 = _rect.texture.get_size()
+	var local := (pos - _rect.position) / _rect.size * t   # -> texture pixels
+	var c := Vector2i(int(floorf(local.x / float(TILE_W))), int(floorf(local.y / float(TILE_H))))
+	if c.x < 0 or c.y < 0 or c.x >= int(t.x / TILE_W) or c.y >= int(t.y / TILE_H):
+		return Vector2i(-1, -1)
+	return c
+
+
 ## Counted, not inferred: "the drag does nothing" has two very different causes — the events never
 ## arrive, or they arrive and the arithmetic discards them — and no screenshot can tell them apart.
 var _dbg_btn := 0
@@ -574,9 +664,23 @@ func _on_map_input(e: InputEvent) -> void:
 				_pan = zoom_about(_pan, e.position, old, _zoom)
 				_layout_map()
 			accept_event()
-		elif e.button_index == MOUSE_BUTTON_LEFT:
-			_panning = e.pressed
-			_drag_from = e.position
+		elif e.button_index == MOUSE_BUTTON_LEFT or e.button_index == MOUSE_BUTTON_RIGHT:
+			if e.pressed:
+				_press_at = e.position
+				_panning = _pan_tool and e.button_index == MOUSE_BUTTON_LEFT
+				_drag_from = e.position
+			else:
+				_panning = false
+				# A CLICK, NOT A DRAG. Decided on release and only if the pointer barely moved —
+				# the same discipline the playfield uses, and for the same reason: a sloppy drag
+				# must not order a walk to wherever it happened to end.
+				if not _pan_tool and e.position.distance_to(_press_at) <= CLICK_SLOP:
+					var c := cell_at(e.position)
+					if c.x >= 0:
+						if e.button_index == MOUSE_BUTTON_LEFT:
+							tile_travel.emit(c)
+						else:
+							tile_interact.emit(c)
 			accept_event()
 	elif e is InputEventMouseMotion and _panning:
 		# FROM POSITIONS, NOT `relative`. Godot fills `relative` from real pointer deltas, so any
