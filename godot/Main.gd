@@ -518,6 +518,12 @@ func _on_snapshot(data: Dictionary) -> void:
 	# left stale zones (and stale dynamic creatures) on screen through a
 	# certification band while raves_state.json read perfectly healthy.
 	UiState.note_snapshot()
+	# WHICH CELLS A FIRE LIT, worked out ONCE and here, at the top of the one function every
+	# snapshot passes through. The renderer and the panels are handed the same cell dictionaries,
+	# so marking them at the door is what keeps the map and the room agreeing about what you can
+	# see — the alternative is each consumer forming its own opinion, which is the bug this
+	# codebase has now paid for twice.
+	ZoneRenderer.mark_fire_lit(data)
 	# WORLD MAP is a distinct SCREEN, not a zone: Qud sends it as a negative
 	# stratum (zone.z < 0 — the parasang overview ZoneRenderer already keys
 	# _world_map off). Report it so the rig can tell "player is reading the
@@ -783,6 +789,31 @@ func _exec_godot_cmd(cmd: String) -> void:
 				var mv = get_parent().get("_minimap") if get_parent() != null else null
 				mdf.store_string(JSON.stringify(mv.probe if mv != null else {"error": "no minimap"}))
 				mdf.close()
+		"firedump":
+			# WHERE THE FIRELIGHT SWITCH STOPS. The chain is four links long — the setting, the
+			# static gate, the per-cell mark, and what the relight makes of it — and a picture
+			# that barely changes cannot say which one broke. This asks all four at once.
+			var fd := FileAccess.open(_support_dir().path_join("firedump.json"), FileAccess.WRITE)
+			if fd != null:
+				var live: Dictionary = store.live_snapshot()
+				var cs: Array = live.get("cells", [])
+				var n_lit := 0
+				var n_mark := 0
+				var n_seen := 0
+				for c in cs:
+					if int(c.get("light", 200)) >= ZoneRenderer.LIGHT_LIT:
+						n_lit += 1
+					if bool(c.get("firelit", false)):
+						n_mark += 1
+					if ZoneRenderer.cell_is_seen(c):
+						n_seen += 1
+				fd.store_string(JSON.stringify({
+					"setting_firecells": Settings.qol_on("firecells"),
+					"fire_dark": ZoneRenderer.fire_dark,
+					"cells": cs.size(), "lit_raw": n_lit, "marked": n_mark, "seen": n_seen,
+					"player": live.get("player", {}).get("x", -1),
+				}))
+				fd.close()
 		"walkdump":
 			# The last WALK_LOG_N frames of player/torch placement, for a stutter too fast to
 			# screenshot.

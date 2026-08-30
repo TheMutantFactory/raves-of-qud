@@ -128,6 +128,13 @@ const QOL_FEATURES := {
 	# fire smokes whether or not the viewer opted into ambience" — so folding it in would have
 	# deleted campfire smoke for everyone who never turned `particles` on. It gets its own lever.
 	"firesmoke": ["Smoke from things that are on fire", true],
+	# ...AND THE CELLS THEMSELVES, which is what Daniel was actually after. The three above remove
+	# what Raves adds on top of a fire; this one takes away the light Qud's fire casts on the room.
+	# Switch it off and a campfire or arc sconce stops lighting the floor and walls around it —
+	# they fall back to the remembered ghost — while the light you are CARRYING still works, so
+	# you can see where you are going. See ZoneRenderer.mark_fire_lit for how a cell is attributed
+	# to a fire when Qud sends only one light byte and no account of what lit it.
+	"firecells": ["Campfires & sconces light the cells around them", true],
 	"depthcue": ["Depth cue (farther is slightly darker)", false],
 	"cutaway": ["Wall cutaway (fade rock between camera and you)", false],
 	# ON by default, unlike its neighbours: Qud draws a tree in one cell because it has

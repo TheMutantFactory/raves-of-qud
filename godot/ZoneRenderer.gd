@@ -617,6 +617,12 @@ func _refresh_fx_flags() -> bool:
 	var p := _fx_on("floorglow")
 	var f := _fx_on("flames")
 	var m := _fx_on("firesmoke")
+	# THE FOURTH GATE IS NOT A FIXTURE. The other three switch nodes off; this one changes what a
+	# cell's light READS AS, so there is nothing to walk — it lands on the next relight, which is
+	# the next turn. Kept here so all four are read in one place, once a frame.
+	var d := not _fx_on("firecells")
+	if d != fire_dark:
+		fire_dark = d
 	if p == _fx_pool and f == _fx_flame and m == _fx_fsmoke:
 		return false
 	_fx_pool = p
@@ -2125,7 +2131,7 @@ func _fires_allowed() -> bool:
 	return zd <= r
 
 func _light_frac(cell: Dictionary) -> float:
-	var lv := int(cell.get("light", 200))   # default full: surface, or an older mod w/o the field
+	var lv := cell_light(cell)              # default full: surface, or an older mod w/o the field
 	if lv <= LIGHT_NONE:
 		return 0.0                          # Blackout / None — not perceived at all
 	return maxf(clampf(float(lv - 1) / 199.0, 0.0, 1.0), MEMORY_GROUND)
@@ -2157,13 +2163,80 @@ func _cell_explored(cell: Dictionary) -> bool:
 ## The minimap needs exactly these when its fog toggle is on, and a second copy over there would
 ## be a second opinion about what you can see — the map and the world disagreeing about which
 ## cells are known is worse than either answer alone.
+## FIRELIGHT, SWITCHED OFF AT THE SOURCE. Daniel, twice: "Campfires and arc sconces still have
+## the floor/walls lit... How do I disable the current campfire/sconce floor lighting?"
+##
+## Qud sends one light byte per cell and no account of what lit it, so nothing downstream could
+## tell a campfire's light from daylight or from the torch in your hand. But the snapshot DOES
+## carry the sources — every campfire and arc sconce arrives as an object with a lightRadius — so
+## the attribution can be reconstructed once per turn and written onto the cell as a fact:
+## `firelit` means "this cell is lit, and a fire or sconce is why".
+##
+## Set by a STATIC var rather than read from Settings here, because this is called from the
+## minimap as well as the world and a static function cannot reach an autoload. The renderer
+## refreshes it every frame with the other fx gates.
+static var fire_dark := false
+
+## The cell's light AFTER the switch. One answer, asked by the world and the map alike — the
+## alternative is a map that disagrees with the room in front of you about whether you can see it.
+static func cell_light(cell: Dictionary) -> int:
+	var lv := int(cell.get("light", LIGHT_LIT))
+	if fire_dark and bool(cell.get("firelit", false)):
+		return LIGHT_NONE
+	return lv
+
+## Work out which lit cells a fire or sconce is responsible for, and mark them. Called once per
+## snapshot, before anything reads the cells.
+##
+## THE MARK IS A FACT, NOT A DECISION: it says a fire lit this cell, and stays true whether or not
+## the feature is switched on. That is what lets the switch take effect at read time instead of
+## having to un-rewrite a light byte that was already overwritten.
+##
+## Two deliberate limits. It only ever marks cells QUD ALREADY LIT — a radius is a circle and
+## Qud's light is not, so intersecting with the real lit set means this can darken a cell Qud lit
+## but never light one it did not. And the light you are CARRYING wins: your own torch keeps its
+## cells, so switching this off leaves you able to see, rather than standing blind in a lit room.
+static func mark_fire_lit(data: Dictionary) -> int:
+	var cells: Array = data.get("cells", [])
+	if cells.is_empty():
+		return 0
+	# CREATURES ARE NOT FIRES. A glowfish carries a lightRadius too and is nobody's campfire; it
+	# is also the one light in this game that swims away from where it was marked.
+	var srcs: Array = []
+	for c in cells:
+		for o in c.get("objs", []):
+			if o.has("lightRadius") and not bool(o.get("creature", o.get("sinks", false))):
+				srcs.append([int(c.get("x", 0)), int(c.get("y", 0)), float(o["lightRadius"])])
+	var pc: Dictionary = data.get("player", {})
+	var px := int(pc.get("x", -9999))
+	var py := int(pc.get("y", -9999))
+	var hl: Dictionary = pc.get("heldLight", {}) if pc.has("heldLight") else {}
+	var pr: float = float(hl.get("radius", 0.0)) if not hl.is_empty() else 0.0
+	var n := 0
+	for c in cells:
+		if c.has("firelit"):
+			c.erase("firelit")     # recomputed every turn: fires are lit, carried and put out
+		if int(c.get("light", LIGHT_LIT)) < LIGHT_LIT:
+			continue
+		var x := int(c.get("x", 0))
+		var y := int(c.get("y", 0))
+		if pr > 0.0 and Vector2(x - px, y - py).length() <= pr:
+			continue               # your own light, which this feature never takes away
+		for sc in srcs:
+			if Vector2(x - sc[0], y - sc[1]).length() <= sc[2]:
+				c["firelit"] = true
+				n += 1
+				break
+	return n
+
+
 static func cell_is_explored(cell: Dictionary) -> bool:
 	return bool(cell.get("explored", true))
 
 
 static func cell_is_seen(cell: Dictionary) -> bool:
 	# the mod omits `visible` when it is TRUE, so an absent key means seen — never read it as false
-	return bool(cell.get("visible", true)) and int(cell.get("light", 200)) > LIGHT_NONE
+	return bool(cell.get("visible", true)) and cell_light(cell) > LIGHT_NONE
 
 ## Currently in the player's sight AND lit. Mirrors 1:1's `full_1to1` exactly.
 ## Public form of _cell_seen, for the inspector's fog verdict — one source, so the report cannot
