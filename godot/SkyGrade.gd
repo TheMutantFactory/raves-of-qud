@@ -277,6 +277,15 @@ func _update_time(t: Dictionary) -> void:
 ## Underground: no celestial bodies, so ignore the surface clock and hold a fixed dim cave ambient. The
 ## grade/sky still ease toward these targets, so a descent fades smoothly from daylight into the dark.
 func _apply_cave_lighting() -> void:
+	# NO SUN REACHES A CAVE, and the renderer has to be TOLD that. set_daylight() is only ever
+	# called from _update_sky, which sits past the early return above — so underground the
+	# renderer kept whatever daylight the last SURFACE zone left it, and a fire's ground pool
+	# (_fire_glow_mul) is off above daylight 0.25. Descend at noon and every campfire in the cave
+	# had no pool at all; restart the app down there and _daylight came back as 0.0 and they all
+	# lit up again. Which of those you got depended on where you last stood outside, and the same
+	# staleness switched the night smoke plumes on and off (_smoke_on).
+	if _renderer != null:
+		_renderer.set_daylight(0.0)
 	_tint_target = CAVE_TINT
 	_sky_target = CAVE_SKY
 	if _sun != null:
