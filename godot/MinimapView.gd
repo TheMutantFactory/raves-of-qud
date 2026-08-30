@@ -42,6 +42,7 @@ signal tile_interact(cell: Vector2i)
 
 const SRC_KEY := "minimap_source"
 const PAN_KEY := "minimap_pan_tool"
+const FOLLOW_KEY := "minimap_follow"
 ## THE TILE MAP'S CELL SIZE, in map pixels — Qud's own art size, so sprites keep their shape and
 ## the TextureRect scales the whole thing nearest-neighbour like every other source here.
 const TILE_W := 16
@@ -64,6 +65,7 @@ var _drag_from := Vector2.ZERO
 var _pan_btn: Button
 var _center_btn: Button
 var _pan_tool := false
+var _follow := false
 var _press_at := Vector2.ZERO   # where a click started, so a drag is not mistaken for a click
 var _sizing := false
 var _size_from := 0.0
@@ -73,6 +75,7 @@ var _last_data := {}   # last snapshot, so a mode toggle re-renders without wait
 func _ready() -> void:
 	_map_h = clampf(float(Settings.get_value(MAP_H_KEY, MAP_H_USER)), MAP_H_MIN, MAP_H_MAX)
 	_pan_tool = bool(Settings.get_value(PAN_KEY, false))
+	_follow = bool(Settings.get_value(FOLLOW_KEY, false))
 	_tiles = load("res://QudTiles.gd").new()
 	_apply_panel_box()
 
@@ -100,11 +103,15 @@ func _ready() -> void:
 	_pan_btn.button_pressed = _pan_tool
 	_pan_btn.toggled.connect(_set_pan_tool)
 	head.add_child(_pan_btn)
+	# A TOGGLE, not a one-shot. Daniel: "this should be a toggle that then makes the minimap update
+	# to center on character whenever the character moves." Held down, it is a follow mode; the
+	# single centring it used to do is what switching it on does first.
 	_center_btn = Button.new()
 	_center_btn.text = "◎"
+	_center_btn.toggle_mode = true
 	_center_btn.focus_mode = Control.FOCUS_NONE
-	_center_btn.tooltip_text = "Centre the map on you"
-	_center_btn.pressed.connect(center_on_player)
+	_center_btn.button_pressed = _follow
+	_center_btn.toggled.connect(_set_follow)
 	head.add_child(_center_btn)
 	_toggle = Button.new()
 	_toggle.focus_mode = Control.FOCUS_NONE
@@ -214,6 +221,7 @@ func set_one_to_one(on: bool) -> void:
 		_pan_btn.visible = not on
 	if _center_btn != null:
 		_center_btn.visible = not on
+		_refresh_center_btn()
 	if on:
 		# ...and a magnified, panned map is not Qud's either: parity starts from fit, every time.
 		_zoom = 1.0
@@ -291,7 +299,6 @@ func _render_qud_minimap(mm: Dictionary) -> bool:
 		_tex = ImageTexture.create_from_image(img)
 		_rect.texture = _tex
 	_layout_map()
-	Profiler.done("minimap.tiles")
 	return true
 
 ## Qud's minimap rect, measured off its live RectTransform + the rendered frame at 1080:
@@ -559,6 +566,9 @@ func _render_tiles(data: Dictionary, w: int, h: int) -> bool:
 	_layout_map()
 	# THE LAST GAP: a picture with ink in it, a visible rect, and still nothing on screen. These
 	# say whether the texture reached the control and whether the control has any room to draw it.
+	probe["follow"] = _follow
+	probe["player"] = [int(_last_data.get("player", {}).get("x", -1)),
+		int(_last_data.get("player", {}).get("y", -1))]
 	probe["zoom"] = _zoom
 	probe["pan"] = [_pan.x, _pan.y]
 	probe["panning"] = _panning
@@ -572,6 +582,14 @@ func _render_tiles(data: Dictionary, w: int, h: int) -> bool:
 	probe["tex_on_rect"] = _rect.texture != null
 	probe["tex_size"] = [_tex.get_width(), _tex.get_height()]
 	probe["panel_size"] = [size.x, size.y]
+	# FOLLOW, AND THE CLOSING TIMER — both of which spent a session in _render_qud_minimap, the
+	# 1:1 path, because their anchor matched there first. So following never ran in user mode (the
+	# only mode that has the button), and the profiler's begin and done sat in different functions.
+	# Neither showed up as an error; the map simply did not follow, and a timing number that
+	# looked plausible was measuring a mismatched pair.
+	if _follow:
+		center_on_player()
+	Profiler.done("minimap.tiles")
 	return true
 
 
@@ -611,6 +629,27 @@ func _refresh_pan_btn() -> void:
 	_pan_btn.button_pressed = _pan_tool
 	_pan_btn.tooltip_text = ("Pan tool ON — drag to move the map, clicks do not reach the world"
 		if _pan_tool else "Pan tool off — click tiles as you would the playfield")
+
+
+## FOLLOW MODE. Switching it on centres at once — that single centring is what the button used to
+## do, and doing it here means the toggle never has a state where it is "on" but showing somewhere
+## else.
+func _set_follow(on: bool) -> void:
+	_follow = on
+	Settings.set_value(FOLLOW_KEY, on)
+	if persist:
+		Settings.save()
+	_refresh_center_btn()
+	if on:
+		center_on_player()
+
+
+func _refresh_center_btn() -> void:
+	if _center_btn == null:
+		return
+	_center_btn.button_pressed = _follow
+	_center_btn.tooltip_text = ("Following you — the map re-centres as you move"
+		if _follow else "Follow you: keep the map centred as you move")
 
 
 ## Put the player back in the middle. THE OBVIOUS COMPANION TO PANNING: once a map can be dragged
@@ -698,6 +737,12 @@ func _on_map_input(e: InputEvent) -> void:
 		# events with a relative of zero: the handler ran twelve times and moved the map nowhere,
 		# and nothing on screen or in the counters said why until the pan value was read across a
 		# drag. Positions are what the event always carries honestly.
+		# DRAGGING TAKES THE WHEEL BACK. With follow on, the next snapshot would re-centre and undo
+		# the drag — the map would fight the hand holding it. Panning is an explicit statement that
+		# you want to look somewhere else, so it turns following off rather than being overridden
+		# a fifth of a second later.
+		if _follow:
+			_set_follow(false)
 		_pan += e.position - _drag_from
 		_drag_from = e.position
 		_layout_map()

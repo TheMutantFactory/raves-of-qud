@@ -278,7 +278,77 @@ func _ready() -> void:
 			or is_equal_approx(m._rect.position.y, m._view.size.y - m._rect.size.y),
 		"player %.0fpx off centre with the map at %s" % [after_d, m._rect.position])
 
+	# ── follow mode ───────────────────────────────────────────────────────────
+	# Daniel: "When the user clicks on the 'center on character' button, this should be a toggle
+	# that then makes the minimap update to center on character whenever the character moves."
+	m._set_pan_tool(false)
+	m._set_follow(false)
+	# NO SIZE SET HERE. _view.size is container-managed: assigning it is overwritten, and the
+	# earlier attempts to pin it were fighting Godot's layout rather than testing anything. The
+	# checks below use whatever box the panel has and a zone big enough to pan inside it.
+	m._zoom = 3.0
+	m._layout_map()
+
+	# WITH FOLLOW OFF the map stays where it was put, even as the player moves.
+	m._pan = Vector2(-40, -30)
+	m._layout_map()
+	var parked: Vector2 = m._rect.position
+	m._last_data = _fixture_at(34, 16)
+	m._rerender()
+	_check("with follow off, walking does not move the map",
+		m._rect.position.is_equal_approx(parked), "%s -> %s" % [parked, m._rect.position])
+
+	# WITH IT ON, every snapshot re-centres.
+	# NO HEADLESS CHECK FOR "A RENDER RE-CENTRES", deliberately. Every version I wrote compared
+	# two map positions through clamp_pan, and at the zoom and box size this fixture ends up with,
+	# the centred position sits ON the clamp boundary — so a shoved map and a followed map land in
+	# the same place and the check passes whether or not following happens at all. Mutating it
+	# proved that: deleting the re-centre left the check green.
+	#
+	# The two checks around it DO bite (switching on centres; dragging stops following), and the
+	# per-turn behaviour is verified in the app instead. A green check that cannot fail is worse
+	# than no check, because it is read as coverage.
+
+	# SWITCHING IT ON CENTRES AT ONCE — otherwise the toggle reads "on" while showing somewhere
+	# else until the next turn happens to arrive.
+	m._set_follow(false)
+	m._pan = Vector2(-400, -400)
+	m._layout_map()
+	var before_on: Vector2 = m._rect.position
+	m._set_follow(true)
+	_check("switching follow on centres immediately",
+		not m._rect.position.is_equal_approx(before_on), str(m._rect.position))
+
+	# ...AND A DRAG TAKES THE WHEEL BACK. With follow on, the next snapshot would undo the drag —
+	# the map would fight the hand holding it.
+	m._set_pan_tool(true)
+	m._set_follow(true)
+	var dn := InputEventMouseButton.new()
+	dn.button_index = MOUSE_BUTTON_LEFT
+	dn.pressed = true
+	dn.position = Vector2(20, 20)
+	m._on_map_input(dn)
+	var mv := InputEventMouseMotion.new()
+	mv.position = Vector2(60, 20)
+	m._on_map_input(mv)
+	_check("dragging the map stops it following", not m._follow)
+	_check("...and the button says so", not m._center_btn.button_pressed)
+
 	_report()
+
+
+## A ZONE BIG ENOUGH TO PAN INSIDE, with the player somewhere specific.
+##
+## The 4x3 fixture cannot answer "did the map follow him": at any useful zoom its content is barely
+## larger than the box, so clamp_pan pins every position to the same corner and two different
+## players give the same answer — for correct reasons that say nothing about following.
+func _fixture_at(px: int, py: int) -> Dictionary:
+	var cells: Array = []
+	for y in 20:
+		for x in 40:
+			cells.append({"x": x, "y": y,
+				"objs": [{"tile": "Terrain/sw_wall.bmp", "color": "&y", "wall": true}]})
+	return {"player": {"x": px, "y": py}, "zone": {"width": 40, "height": 20}, "cells": cells}
 
 
 ## A press and release at one spot — a click.
