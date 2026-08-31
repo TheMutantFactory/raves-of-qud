@@ -39,20 +39,22 @@ class FakeTiles:
 	## NO TILE, NO ART — which is what the real one does, and what lets a check tell WHICH object
 	## the map picked. Returning the same picture for every object made "the map draws the creature
 	## rather than the puddle over him" pass against code that still drew the puddle.
-	## THE REAL ONE DOES THE GHOSTING. A stub that applied its own memory tint would be checking
-	## the stub — the whole point of the check is that the map wears the tint the shipped code
-	## makes, and that it is the same one the 3D view uses.
-	var _real = load("res://QudTiles.gd").new()
-	var MEMORY_TINT = _real.MEMORY_TINT
+	## THE REAL RECIPE DECIDES THE GHOST. The stub draws the shape; which COLOURS a remembered cell
+	## is painted in comes from ZoneRenderer.ghost_obj, so what the check grades is the rule that
+	## ships rather than one the test invented.
+	const GHOST_ART := Color(0.13, 0.32, 0.32, 1)
 	func image_for(obj: Dictionary, _full: bool, ghost := false) -> Image:
 		if String(obj.get("tile", "")) == "":
 			return null
+		var g: Dictionary = load("res://ZoneRenderer.gd").ghost_obj(obj) if ghost else obj
 		var im := Image.create(16, 24, false, Image.FORMAT_RGBA8)
 		im.fill(Color(0, 0, 0, 0))
+		# the ghost's colour comes from the repainted object, exactly as the real path does
+		var col: Color = GHOST_ART if String(g.get("tilecolor", "")) == "&K" else ART
 		for y in range(6, 18):
 			for x in range(4, 12):
-				im.set_pixel(x, y, ART)
-		return _real.ghost_of(im) if ghost else im
+				im.set_pixel(x, y, col)
+		return im
 
 
 func _ready() -> void:
@@ -409,9 +411,28 @@ func _ready() -> void:
 		"red:blue seen=%.2f remembered=%.2f" % [seen_rb, mem_rb])
 	# ...and the tint is the WORLD'S. Two answers to "what does remembered look like" is the bug
 	# this replaces, not a detail of it.
-	_check("...with the same memory tint the 3D view uses",
-		m._tiles.MEMORY_TINT == load("res://ZoneRenderer.gd").MEMORY_TINT,
-		"tiles %s vs world %s" % [m._tiles.MEMORY_TINT, load("res://ZoneRenderer.gd").MEMORY_TINT])
+	# THE MAP'S GHOST IS THE WORLD'S GHOST, by construction rather than by two constants kept in
+	# step. A remembered puddle drawn with the map's old tint came out a vivid blue BRIGHTER than
+	# Qud's entire field; repainted to K/k it is flat teal like everything else remembered.
+	var Zg = load("res://ZoneRenderer.gd")
+	var g: Dictionary = Zg.ghost_obj({"tile": "puddle", "color": "&B", "tilecolor": "&B",
+		"detail": "b", "fgHex": "#00a0ff"})
+	_check("a remembered object is REPAINTED to Qud's K/k", String(g.get("tilecolor", "")) == "&K"
+		and String(g.get("detail", "")) == "k", str(g))
+	# ...and the painted-colour overrides must go, or they beat the repaint in the recolour path
+	# and the puddle stays blue anyway.
+	_check("...with its colour overrides dropped", not g.has("fgHex") and not g.has("detailHex"),
+		str(g))
+	# ...and QudTiles actually ASKS for the repaint. Every check in this file stubs QudTiles, so
+	# nothing here reaches image_for — deleting the repaint from it broke nothing until this.
+	var qt = load("res://QudTiles.gd").new()
+	var live := {"tile": "puddle", "color": "&B", "tilecolor": "&B", "detail": "b"}
+	_check("QudTiles paints a remembered cell with the repaint",
+		String(qt.paint_obj(live, true).get("tilecolor", "")) == "&K",
+		str(qt.paint_obj(live, true)))
+	_check("...and a seen cell with the object's own colours",
+		String(qt.paint_obj(live, false).get("tilecolor", "")) == "&B",
+		str(qt.paint_obj(live, false)))
 	var seen_lum := _mean_lum_in(im2, 0, 0, m.TILE_W, m.TILE_H)
 	var mem_lum := _mean_lum_in(im2, m.TILE_W, 0, m.TILE_W, m.TILE_H)
 	# A MARGIN, NOT AN INEQUALITY. `mem_lum < seen_lum` is satisfied by a veil at alpha 0.02 —

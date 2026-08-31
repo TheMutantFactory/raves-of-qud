@@ -1484,6 +1484,20 @@ const DYN_LIFT_1TO1 := 0.02
 ## ColorString "&K", DetailColor "k" in tiles mode). Applied to EVERY drawn object in a
 ## non-visible/unlit 1:1 cell: walls, furniture, items, the painted ground alike.
 func _ghost_obj(obj: Dictionary) -> Dictionary:
+	return ghost_obj(obj)
+
+
+## QUD'S MEMORY OF AN OBJECT: its glyph REPAINTED in the K/k pair, not its own colours dimmed.
+##
+## STATIC AND SHARED, because the minimap needs the same answer. It had a tint of its own — the
+## live art multiplied by MEMORY_TINT — and a multiply keeps whatever the art already was: a
+## remembered puddle came out at (0,77,129), a vivid blue BRIGHTER than Qud's whole field, while
+## Qud draws it flat teal like everything else you only remember. Daniel, with Qud beside it: "the
+## floor in Qud looks... darker? Can we make the floor in Raves look the same?"
+##
+## A replace also costs nothing per pixel — the recolour path caches by (tile, main, detail), so
+## every remembered tile in the zone collapses onto ONE cached image instead of one per tile.
+static func ghost_obj(obj: Dictionary) -> Dictionary:
 	var o: Dictionary = obj.duplicate()
 	o["color"] = "&K"
 	o["tilecolor"] = "&K"
