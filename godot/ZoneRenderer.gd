@@ -6437,9 +6437,9 @@ func _place_door_vox(tile: String, main_c: String, detail_c: String, cx: int, cy
 	var leaf_mi := _vox_model_mesh(leaf_m, pal, main_c, xs, zs, ew, hinge_x, lf, DOOR_LEAF_DIM, art)
 	var pivot := Node3D.new()
 	var hx: float = hinge_x * xs - 0.5
-	pivot.position = Vector3(cx, 0, cy) + (Vector3(hx, 0, 0) if ew else Vector3(0, 0, hx))
+	pivot.position = Vector3(cx, 0, cy) + door_pivot(hx, ew)
 	var dir := -1.0 if hinge_hi else 1.0
-	pivot.rotation.y = 0.0 if closed else deg_to_rad(DOOR_OPEN_DEG) * dir * (1.0 if ew else -1.0)
+	pivot.rotation.y = 0.0 if closed else deg_to_rad(DOOR_OPEN_DEG) * dir
 	pivot.add_child(leaf_mi)
 	_spawn_parent().add_child(pivot)
 	_track(pivot)
@@ -6599,8 +6599,28 @@ func _vox_box_faces(st: SurfaceTool, occ: Dictionary, lo: Vector3i, hi: Vector3i
 		var sc := Color(c.r * shade, c.g * shade, c.b * shade, 1.0)
 		_vox_face(st, lo, hi, dv, xs, zs, ew, x_off, sc)
 
+## Where the leaf's hinge sits, relative to the cell centre. THE HINGE RIDES THE SAME TURN THE
+## GEOMETRY DOES: a N-S door is the E-W one rotated 90 degrees about the vertical (X' = Z, Z' = -X),
+## so the E-W offset (hx, 0, 0) becomes (0, 0, -hx) and not (0, 0, hx). Left at +hx the leaf hangs
+## off the wrong edge of its own frame — the sort of thing the old axis-swap hid, because a mirror
+## put it back where it looked right for the wrong reason.
+static func door_pivot(hx: float, ew: bool) -> Vector3:
+	return Vector3(hx, 0.0, 0.0) if ew else Vector3(0.0, 0.0, -hx)
+
+
 ## One face quad of a voxel box, in the cell's space. Vox x is the door's SPAN, vox y its DEPTH and
 ## vox z its height; which world axis the span is depends on the wall run the door sits in.
+##
+## A DOOR IN A NORTH/SOUTH RUN IS THE EAST/WEST ONE TURNED 90 DEGREES, NOT SWAPPED. This used to
+## reach the N-S case by exchanging world x and z — (span, height, depth) -> (depth, height, span) —
+## and exchanging two axes is a REFLECTION, the same handedness flip the wall models carried. The
+## two orientations therefore disagreed with each other: one of them drew every door mirrored, so
+## a design with a knob on one side had it on the other depending on which way its wall ran.
+##
+## Negating the span after the swap makes it the real turn (X' = Z, Y' = Y, Z' = -X), which is why
+## the leaf's pivot below no longer needs its `-1.0 if not ew` sign — that sign was undoing this
+## mirror on the swing so at least the door opened the right way, which is exactly the kind of
+## compensation a reflection leaves scattered behind it.
 func _vox_face(st: SurfaceTool, lo: Vector3i, hi: Vector3i, dv: Vector3i,
 		xs: float, zs: float, ew: bool, x_off: float, c: Color) -> void:
 	var a0: float = (float(lo.x) - x_off) * xs
@@ -6627,9 +6647,9 @@ func _vox_face(st: SurfaceTool, lo: Vector3i, hi: Vector3i, dv: Vector3i,
 		q = [[a0, y0, d0], [a1, y0, d0], [a1, y0, d1], [a0, y0, d1]]
 	for i in [0, 1, 2, 0, 2, 3]:
 		var p: Array = q[i]
-		var wp := (Vector3(p[0], p[1], p[2]) if ew else Vector3(p[2], p[1], p[0]))
+		var wp := (Vector3(p[0], p[1], p[2]) if ew else Vector3(p[2], p[1], -p[0]))
 		st.set_color(c)
-		st.set_normal(Vector3(dv.x, dv.z, dv.y) if ew else Vector3(dv.y, dv.z, dv.x))
+		st.set_normal(Vector3(dv.x, dv.z, dv.y) if ew else Vector3(dv.y, dv.z, -dv.x))
 		st.add_vertex(wp)
 
 ## Build the voxel door: a FRAME that never moves, and a LEAF hinged inside it.
