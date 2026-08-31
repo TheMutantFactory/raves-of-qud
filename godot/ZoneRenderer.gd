@@ -10830,7 +10830,67 @@ func _wall_vox_path(variant_tile: String) -> String:
 ## Joppa's zone: 162 brinestalk wall cells across 58 distinct signatures, five of them wearing the
 ## one authored name. "Missing sig = silent STOCK fallback" was the metal family's hardest-won
 ## lesson, and skipping the projection re-created it on the vox path verbatim.
+## WHERE A HAND MODEL LIVES IN THE REPO, and how it says so.
+##
+## `<exported tile name>-model-<anything>.vox` under res://art — the same stem the tile itself has,
+## so the file names the wall it replaces and nothing has to be mapped. Daniel dropped
+## Assets_Content_Textures_Tiles_wall_rock-10000000-model-16x16x10.vox in there and that is the
+## whole convention.
+##
+## THE NAME IS THE DECLARATION, NOT THE LAYER COUNT. WALL_VOX_LAYERS exists to tell a hand-authored
+## wall from a wall2vox EXPORT of the band grammar, because a path that took any .vox it found would
+## have moved wall_metal off its working art onto a round-trip of itself. Height was a fine proxy
+## while 24 was the only hand-authored size; this model is 16x16x10 and stretches to the tile, so the
+## proxy would have rejected it and — worse — rejected it SILENTLY, back to stock art. `-model-` in
+## the name cannot be written by wall2vox, so it says the same thing without constraining the shape.
+const ART_VOX_DIR := "res://art"
+var _art_vox_names: PackedStringArray = []
+var _art_vox_listed := false
+
+func _wall_vox_declared(variant_tile: String) -> String:
+	if not _art_vox_listed:
+		_art_vox_listed = true
+		_art_vox_names = DirAccess.get_files_at(ART_VOX_DIR)
+	var stem := variant_tile.get_file().get_basename()
+	if stem == "":
+		return ""
+	# THE EXACT NAME, THEN ITS CARDINAL PROJECTION — the same two-step the .vox path below takes,
+	# and for the reason recorded there: Qud reports DIAGONAL-flavoured signatures (00100110,
+	# 01100010) that nobody will author a model for, and the diagonal bits change nothing a wall
+	# cell renders. Matching only the exact name would leave one authored model covering a handful
+	# of cells and every other one silently on stock art.
+	for want in [stem, _cardinal_stem(stem)]:
+		if want == "":
+			continue
+		for f in _art_vox_names:
+			if f.ends_with(".vox") and f.begins_with(want + "-model-"):
+				return ART_VOX_DIR.path_join(f)
+	return ""
+
+
+## `wall_rock-00100110` -> `wall_rock-00100010`: zero the diagonal bits, keep the cardinals.
+## "" when the stem carries no 8-bit signature, or the projection is the stem itself.
+static func _cardinal_stem(stem: String) -> String:
+	var dash := stem.rfind("-")
+	if dash < 0:
+		return ""
+	var bits := stem.substr(dash + 1)
+	if bits.length() != 8:
+		return ""
+	var card := ""
+	for i in 8:
+		card += bits[i] if i % 2 == 0 else "0"
+	return "" if card == bits else "%s-%s" % [stem.substr(0, dash), card]
+
+
 func _wall_vox_model(variant_tile: String) -> Dictionary:
+	# A DECLARED MODEL WINS, at whatever height it was drawn — see _wall_vox_declared.
+	var decl := _wall_vox_declared(variant_tile)
+	if decl != "":
+		if not _wall_vox_cache.has(decl):
+			_wall_vox_cache[decl] = _read_wall_vox(decl, true)
+		if not _wall_vox_cache[decl].is_empty():
+			return _wall_vox_cache[decl]
 	var path := _wall_vox_path(variant_tile)
 	if path == "":
 		return {}
@@ -10858,7 +10918,7 @@ func _wall_vox_model(variant_tile: String) -> Dictionary:
 	return _wall_vox_cache[path]
 
 ## Read one wall .vox, honouring the layer-count opt-in. {} when absent or not a wall model.
-func _read_wall_vox(path: String) -> Dictionary:
+func _read_wall_vox(path: String, declared := false) -> Dictionary:
 	var got := {}
 	if FileAccess.file_exists(path):
 		var v: Dictionary = VoxFileScript.read(path)
@@ -10866,11 +10926,15 @@ func _read_wall_vox(path: String) -> Dictionary:
 		if not ms.is_empty():
 			var m: Dictionary = ms[0]
 			var d: Vector3i = m["dims"]
-			# the height IS the opt-in — see WALL_VOX_LAYERS
-			if d.z == WALL_VOX_LAYERS:
+			# the height is the opt-in for an UNDECLARED file — see WALL_VOX_LAYERS. A file whose
+			# name declares it a model is taken at whatever height it was drawn: the mesh divides
+			# WALL_H by d.z, so a 10-layer model simply stretches to the tile.
+			var ok := declared or d.z == WALL_VOX_LAYERS
+			if ok:
 				got = {"model": m, "palette": v.get("palette", PackedColorArray())}
 			_wall_vox_files[path.get_file()] = "%dx%dx%d %s (%s indexing)" % [d.x, d.y, d.z,
-				"USED" if d.z == WALL_VOX_LAYERS else "ignored (not %d layers)" % WALL_VOX_LAYERS,
+				("USED (declared)" if declared else "USED") if ok
+					else "ignored (not %d layers)" % WALL_VOX_LAYERS,
 				String(v.get("convention", "straight"))]
 	return got
 

@@ -116,7 +116,25 @@ if __name__ == "__main__":
     print("named nodes:")
     for n, d in sorted(v["nodes"].items()):
         print("  %-8s -> model %d   translation %s" % (n, d["model"], d["t"]))
+    # WHICH INDEXING CONVENTION, scored the way VoxFile.gd scores it — a reader that always
+    # assumed one of them reported this file's colours a slot off from what the game draws, which
+    # is a diagnostic disagreeing with the renderer it exists to explain. vengi writes PER SPEC
+    # (colour index i is RGBA entry i-1); MagicaVoxel writes it straight.
+    pal = v["palette"]
+    straight = spec = 0
+    for m in v["models"]:
+        for e in m["voxels"]:
+            i = e[3] if len(e) > 3 else e[-1]
+            if i < len(pal) and pal[i][3] >= 250:
+                straight += 1
+            if 1 <= i and (i - 1) < len(pal) and pal[i - 1][3] >= 250:
+                spec += 1
+    conv = "spec" if spec > straight else "straight"
+    print("indexing: %s  (straight scores %d, spec %d — a real drawing is opaque, so the"
+          " correct read wins)" % (conv, straight, spec))
     print("palette entries used:")
     used = sorted({p[3] for m in v["models"] for p in m["voxels"]})
     for i in used:
-        print("  idx %3d  rgba %s" % (i, v["palette"][i]))
+        j = (i - 1) if conv == "spec" else i
+        print("  idx %3d  rgba %s%s" % (i, v["palette"][j] if 0 <= j < len(v["palette"]) else "?",
+                                        "   <- entry %d under %s" % (j, conv)))
