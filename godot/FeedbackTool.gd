@@ -236,17 +236,34 @@ func claims(p: Vector2) -> bool:
 ## Ordering: higher CanvasLayer wins; within a layer, later document order wins (later siblings
 ## draw on top, and a child draws over its parent — which also preserves the old deepest-wins
 ## behaviour for lineal chains). z_index and top_level are not modelled.
+## "No clipping ancestor yet." Big enough to contain any window and any panned content, and a
+## plain Rect2 rather than a null so the walk has one code path.
+const CLIP_ALL := Rect2(-1e7, -1e7, 2e7, 2e7)
+
 func _deepest_control_at(p: Vector2) -> Control:
 	var best: Control = null
 	var best_layer := -2147483648
 	var best_order := -1
 	var order := 0
-	var stack: Array = [[get_tree().root, 0]]
+	# THE CLIP RECT TRAVELS WITH THE WALK, because a Control's RECT is not what you can see of it.
+	#
+	# Daniel: "When I hover the mouse, I don't see the boot icon. When I see you hover, I DO." My
+	# probe set the cell directly and never came through here; his pointer does. The minimap is a
+	# texture in a CLIPPING box — panned and zoomed by hand, so at his 6.9x zoom its TextureRect is
+	# thousands of pixels wide and reaches most of the way across the window, invisible the whole
+	# way. This walk asked get_global_rect().has_point() and answered "chrome" for a control that
+	# paints nothing there, so _playfield_cell returned null over the middle of the playfield —
+	# taking the verb cursor, click-to-walk and Ctrl+click inspection with it.
+	#
+	# A control can only be hit where an ancestor's clip_contents still lets it draw, so the
+	# intersection of every clipping ancestor rides down the stack with each node.
+	var stack: Array = [[get_tree().root, 0, CLIP_ALL]]
 	# document-order walk: push children reversed so the stack pops them first-to-last
 	while not stack.is_empty():
 		var top: Array = stack.pop_back()
 		var node: Node = top[0]
 		var layer: int = top[1]
+		var clip: Rect2 = top[2]
 		if node == self:
 			continue   # never name our own form
 		if node is CanvasLayer:
@@ -265,15 +282,17 @@ func _deepest_control_at(p: Vector2) -> Control:
 			# paint late and would shadow every real element under them; they are never what the
 			# user means, so they are transparent to the hit test (their subtree still walks).
 			if not c.has_meta("feedback_pass"):
-				var contains := c.get_global_rect().has_point(p)
+				var contains := c.get_global_rect().has_point(p) and clip.has_point(p)
 				var on_top := layer > best_layer or (layer == best_layer and order > best_order)
 				if contains and on_top:
 					best = c
 					best_layer = layer
 					best_order = order
+		if c != null and c.clip_contents:
+			clip = clip.intersection(c.get_global_rect())
 		var kids := node.get_children()
 		for i in range(kids.size() - 1, -1, -1):
-			stack.push_back([kids[i], layer])
+			stack.push_back([kids[i], layer, clip])
 	return best
 
 ## The first TEXT anywhere in a node's subtree — a cell's caption, whatever leaf carries it.

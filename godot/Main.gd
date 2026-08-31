@@ -977,28 +977,45 @@ func _exec_godot_cmd(cmd: String) -> void:
 				# get_mouse_position() is frozen wherever the user last left it — asking about one
 				# point tells you about that point and nothing else. This walks a grid over the
 				# viewport and reports what the assist WOULD say at each, which is the question.
+				# A MAP, NOT A TALLY. Daniel: "when I hover the mouse, I don't see the boot icon.
+				# When I see you hover, I DO." He is pointing at the one thing assistat cannot
+				# test — it sets the cell DIRECTLY and skips _playfield_cell, which is the whole
+				# pointer path. Counts said 122 of 192 points were chrome and that number means
+				# nothing without knowing WHERE, so the sweep draws the window instead:
+				#   .  chrome claims it        x  no cell under it
+				#   -  a cell, but no verb     w/u/t/^/v  walk / use / talk / up / down
 				var vs: Vector2 = get_viewport().get_visible_rect().size
 				var found := {}
 				var probed := 0
 				var chrome := 0
 				var nocell := 0
-				for iy in 12:
-					for ix in 16:
-						var q := Vector2(vs.x * (float(ix) + 0.5) / 16.0,
-							vs.y * (float(iy) + 0.5) / 12.0)
+				var rows: Array = []
+				var claimers := {}
+				for iy in 24:
+					var row := ""
+					for ix in 48:
+						var q := Vector2(vs.x * (float(ix) + 0.5) / 48.0,
+							vs.y * (float(iy) + 0.5) / 24.0)
 						probed += 1
 						if FeedbackTool.claims(q):
 							chrome += 1
+							row += "."
+							var hc: Control = FeedbackTool._deepest_control_at(q)
+							var nm: String = (hc.get_path() as String) if hc != null else "(null)"
+							claimers[nm] = int(claimers.get(nm, 0)) + 1
 							continue
 						var qc = _playfield_cell(q)
 						if qc == null:
 							nocell += 1
+							row += "x"
 							continue
 						var qv: String = _assist.verb_at(Vector2i(qc.x, qc.y)) if _assist != null else ""
 						var kk: String = qv if qv != "" else "(no verb — wall or nothing)"
 						found[kk] = int(found.get(kk, 0)) + 1
+						row += {"walk": "w", "use": "u", "talk": "t", "up": "^", "down": "v"}.get(qv, "-")
+					rows.append(row)
 				rep["sweep"] = {"points": probed, "chrome": chrome, "no_cell": nocell,
-					"verbs": found}
+					"verbs": found, "map": rows, "claimed_by": claimers}
 				# ...AND OVER THE WHOLE ZONE, not just the pixels that happen to be on screen. A
 				# screen sweep samples where the camera is pointing; if a verb is missing because
 				# of what the SNAPSHOT contains, only the zone tally shows it — 63 sampled points
