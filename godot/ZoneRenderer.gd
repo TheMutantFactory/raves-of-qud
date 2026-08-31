@@ -2045,23 +2045,16 @@ func _ghost_wall_mesh_body(src: Mesh) -> ArrayMesh:
 		if cols.is_empty():
 			out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
 			continue
-		# FLAT K, NOT K SCALED BY THE VERTEX. The sprite path reached this conclusion first and
-		# said why: Qud does not lerp or scale a remembered thing, it draws the glyph in K on a
-		# field of k, one flat colour each, and the ratio between those two IS the look.
-		#
-		# Scaling K by each vertex's own brightness keeps a wall's baked face shades (1.00 broad /
-		# 0.92 top / 0.72 rim) and, worse, keeps how dark the ROCK was: remembered walls measured
-		# (4,25,26), lum 18.8, against a field of 41.4 and Qud's K of 64.3 — 0.29 of where Qud
-		# puts them, and dark where Qud is bright. Daniel: "the sprites outside of the line of
-		# sight are too dark. The floor is the correct color." The floor had just been fixed; this
-		# is the other half of the same mistake, in the path the sprite fix did not touch.
-		#
-		# The faces going flat is the point, not a cost — a remembered wall in Qud is a flat glyph,
-		# and the field behind it supplies the contrast.
+		var vmax := 0.0
+		for c in cols:
+			vmax = maxf(vmax, maxf(c.r, maxf(c.g, c.b)))
+		if vmax <= 0.0:
+			vmax = 1.0
 		var ng := PackedColorArray()
 		ng.resize(cols.size())
 		for i in cols.size():
-			ng[i] = Color(gc.r, gc.g, gc.b, cols[i].a)
+			var v: float = maxf(cols[i].r, maxf(cols[i].g, cols[i].b)) / vmax
+			ng[i] = Color(gc.r * v, gc.g * v, gc.b * v, cols[i].a)
 		arr[Mesh.ARRAY_COLOR] = ng
 		out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
 	return out
@@ -2353,28 +2346,6 @@ static func cell_face(objs: Array) -> Dictionary:
 	return best
 
 
-## HOW MUCH OF QUD'S FIELD THIS CELL WEARS. Qud paints the field in EVERY cell and draws glyphs on
-## it, so the ground is never a hole:
-##
-##   COVER_NONE   you can see it — the floor's own art, at full colour
-##   COVER_MEMORY you have seen it and cannot now — the field, with a trace of the floor through it
-##   COVER_FULL   you have never seen it — the field and nothing else
-##
-## Static and its own function because it is the whole of the decision, and because it used to be
-## two spellings in two passes of _build_darkness with a black film standing in for the last case.
-## The film was there to HIDE floor art in a cell you have not explored; painting the field does the
-## same hiding in Qud's colour instead of leaving a void, which is what made the whole underground
-## read darker than Qud however the remembered cells were tuned.
-enum { COVER_NONE, COVER_MEMORY, COVER_FULL }
-
-static func ground_cover(cell: Dictionary) -> int:
-	if not cell_is_explored(cell):
-		return COVER_FULL
-	if not cell_is_seen(cell):
-		return COVER_MEMORY
-	return COVER_NONE
-
-
 static func cell_is_explored(cell: Dictionary) -> bool:
 	return bool(cell.get("explored", true))
 
@@ -2619,7 +2590,6 @@ func _build_darkness(cells: Array, parent: Node, frozen_off := NOT_FROZEN) -> vo
 	var dark := {}          # k -> the composed max(tone, veil), pre-amax
 	var veil_kind := {}     # k -> 1 frozen ramp, 2 live edge fade; absent = flat, no resampling
 	var wash := {}          # k -> paint the FIELD colour under the darkness (see REMEMBER_COVER)
-	var wash_full := {}     # k -> paint the field OPAQUE: an unexplored cell is field and nothing else
 	if not frozen:
 		dark_dbg.clear()
 	var walls := {}
@@ -2636,21 +2606,12 @@ func _build_darkness(cells: Array, parent: Node, frozen_off := NOT_FROZEN) -> vo
 		var t: float
 		if not _cell_explored(cell):
 			t = 1.0 - FOG_GROUND      # NEVER SEEN — see FOG_GROUND; NOT black, Qud has no black
-			# ...AND IT GETS THE FIELD, like every other cell in Qud. "Not black" was the
-			# intention here all along and a black film over hidden floor art is not how you
-			# reach it: Qud paints the field in EVERY cell and draws glyphs on it, so an
-			# unexplored cell is simply field with nothing on it. Raves left a dark void, which
-			# is what made the whole underground read darker than Qud however the remembered
-			# cells were tuned. Daniel, with the two side by side: "paint Qud's field across
-			# every cell."
-			if not frozen and ground_cover(cell) == COVER_FULL:
-				wash_full[k] = true
 		elif not frozen:
 			# The live zone's rule lives in _live_cell_tone, because the SURROUND BAND has to start
 			# at exactly this value and a second copy of it would drift. Only the wash bookkeeping
 			# stays here — that is pass 1's own, not part of the tone.
 			t = _live_cell_tone(cell, lit_floor)
-			if ground_cover(cell) == COVER_MEMORY and not lit_floor:
+			if not _cell_seen(cell) and not lit_floor:
 				wash[k] = true
 		else:
 			# REMEMBERED — a DEPARTED zone, every explored cell of it. (The live zone's own
@@ -2706,8 +2667,7 @@ func _build_darkness(cells: Array, parent: Node, frozen_off := NOT_FROZEN) -> vo
 		# whatever occludes it — a tree's own sprite, the wall in front of it. The pass knows; it
 		# just never said.
 		if not frozen:
-			dark_dbg[k] = {"wash": wash.has(k), "full": wash_full.has(k),
-				"wall": walls.has(k), "tone": t, "veil": v,
+			dark_dbg[k] = {"wash": wash.has(k), "wall": walls.has(k), "tone": t, "veil": v,
 				"seen": _cell_seen(cell), "explored": _cell_explored(cell)}
 		# A wall the player has never seen is HIDDEN now (see _relight_static_sprites), so it must
 		# not be treated as a wall here either: its darkness would be a roof quad at WALL_H and a
@@ -2795,32 +2755,11 @@ func _build_darkness(cells: Array, parent: Node, frozen_off := NOT_FROZEN) -> vo
 			# the fade INSTEAD — thin black over the real floor, which is how a remembered pool one
 			# tile from the boundary still rendered bright blue (cell 34,1: explored, not visible,
 			# inside the band). Two questions, two layers.
-			if wash_full.has(k):
-				# OPAQUE: there is nothing to see through to. Covering the floor art is exactly
-				# what the black film was for; doing it with the FIELD instead is the same hiding
-				# and Qud's colour rather than a hole.
-				_dark_quad_col(st, cx, cy, DARK_FLOOR_Y - 0.005,
-					Color(_world_bg.r, _world_bg.g, _world_bg.b, 1.0))
-				any = true
-			elif wash.has(k):
+			if wash.has(k):
 				_dark_quad_col(st, cx, cy, DARK_FLOOR_Y - 0.005,
 					Color(_world_bg.r, _world_bg.g, _world_bg.b, REMEMBER_COVER))
 				any = true
 			var a := float(dark[k]) * amax
-			# NO FILM OVER THE WASH — the double-darkening this file already names for a departed
-			# zone ("any film laid over it double-darkens"), reached by the other road.
-			#
-			# The wash paints the cell with QUD'S OWN FIELD COLOUR, which is a complete answer to
-			# what a remembered cell looks like; laying the remembered-ground film over it then
-			# darkens a colour that was already correct. Measured against a live capture of Qud's
-			# screen, the same cell: Qud (15,59,58) lum 45.7, Raves (14,40,43) lum 32.5. Daniel,
-			# with the two side by side: "the floor in Qud looks... darker?" — it looks darker in
-			# RAVES, and this is the multiply doing it.
-			#
-			# The VEIL survives, because it answers the other question: how far past the edge of
-			# the visible the cell sits. That is not about what the cell is.
-			if wash.has(k) or wash_full.has(k):
-				a = float(veil.get(k, 0.0)) * amax
 			if penumbra_divisions > 1 and veil_kind.has(k):
 				# SUBDIVIDE ONLY A CELL THAT IS ACTUALLY A GRADIENT. Part of this cell's darkness is
 				# a DISTANCE, so it CAN be resampled inside the tile — but "can" is not "must", and

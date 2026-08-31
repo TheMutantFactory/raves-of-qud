@@ -559,7 +559,6 @@ func _nodes_over_cell(root: Node, cell: Vector2i, out: Array) -> void:
 			# THE HEIGHTS, not just the lowest. A single minimum cannot tell a film laid under the
 			# floor from a wall's side face that happens to reach the ground beside it.
 			var yhist := {}
-			var ycol := {}
 			for si in dm.get_surface_count():
 				var arr: Array = dm.surface_get_arrays(si)
 				var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
@@ -569,19 +568,12 @@ func _nodes_over_cell(root: Node, cell: Vector2i, out: Array) -> void:
 					if absi(int(round(c3.x)) - cell.x) == 0 and absi(int(round(c3.z)) - cell.y) == 0:
 						hits += 1
 						ylo = minf(ylo, c3.y)
-						# ...AND WHAT COLOUR IT PAINTS. A quad's height says which layer it is; its
-						# vertex colour says what it does. The wash is supposed to be Qud's field
-						# colour and the film a black alpha, and only this can tell them apart.
 						var key := "%.3f" % c3.y
 						yhist[key] = int(yhist.get(key, 0)) + 1
-						var cols: PackedColorArray = arr[Mesh.ARRAY_COLOR]
-						if cols.size() > i:
-							ycol[key] = "rgba(%.2f,%.2f,%.2f,%.2f)" % [cols[i].r, cols[i].g,
-								cols[i].b, cols[i].a]
 					i += 3
 			out.append({"cls": "DARKNESS mesh", "name": dmi.name, "y": (ylo if hits > 0 else -1.0),
 				"vis": dmi.is_visible_in_tree(), "layers": dmi.layers,
-				"where": _short_path(dmi), "yhist": yhist, "ycol": ycol,
+				"where": _short_path(dmi), "yhist": yhist,
 				"mat": "%d vertices over this cell" % hits})
 	elif root is VisualInstance3D:
 		var vi := root as VisualInstance3D
@@ -1010,7 +1002,9 @@ func _exec_godot_cmd(cmd: String) -> void:
 				# `screenpos` prints where nobody can read them and this rides the file instead.
 				cn.store_string(JSON.stringify({"cell": [target.x, target.y], "nodes": found,
 					"screen": [_cell_screen_pos(target).x, _cell_screen_pos(target).y],
-					# The colour the memory wash is MADE of, and how completely it covers.
+					# KEPT THROUGH THE REVERT. The rendering changes go; the instruments that found
+					# them stay — they are what any next attempt at this will need on its first
+					# day rather than its seventh.
 					"world_bg": [renderer._world_bg.r, renderer._world_bg.g, renderer._world_bg.b],
 					"remember_cover": ZoneRenderer.REMEMBER_COVER,
 					"decided": renderer.dark_dbg.get(target, {}),

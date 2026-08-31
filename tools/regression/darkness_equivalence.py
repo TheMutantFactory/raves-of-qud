@@ -11,12 +11,6 @@ live-zone unexplored cells with light < FOG_GROUND. The old chain wrote `min(lig
 a ceiling on LIGHT rather than a floor on brightness, so unexplored ground only looked right in
 daylight and went to alpha 0.94 -- the near-black FOG_GROUND exists to remove -- at night.
 
-NOT COVERED: the memory WASH. A remembered live cell is painted with Qud's field colour at
-REMEMBER_COVER and, since 2026-08-30, takes no tone film over the top — the wash already says what
-the cell is, and darkening it too was making Raves' remembered ground read below Qud's. This file
-mirrors the tone/veil composition only, so it passes either way; the wash is checked by measuring
-the app against a live capture of Qud's own screen, not here.
-
 Keep the constants in step with ZoneRenderer.gd. Run it before any change to the darkness pipeline;
 it is exhaustive and takes about a second, which is a better first check than a build.
 """
