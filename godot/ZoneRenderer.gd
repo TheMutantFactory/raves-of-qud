@@ -2291,6 +2291,44 @@ static func mark_fire_lit(data: Dictionary) -> int:
 	return n
 
 
+## WHAT A CELL LOOKS LIKE WHEN IT GETS ONE PICTURE.
+##
+## Daniel: "NPCs + player should be shown when there are multiple objects on a tile. Right now I
+## just see a puddle, not the player." His cell held three objects and the map drew the last one:
+##
+##   [0] Door      layer 7
+##   [1] Humanoid  layer 100, creature   <- the face of the cell
+##   [2] Water     layer 2               <- what was drawn
+##
+## Qud sends a cell's objects in CELL-STACK order, which is not render order — the same fact the
+## floor batch's LAYER_LIFT comment records, learned there when a crack drew over the water hiding
+## it. Taking the last one is taking an arbitrary member of the stack.
+##
+## The world already answers this, in two halves that agree: a creature is its cell's face (the
+## static winner under it hides for the turn, see _rebuild_dynamics), and everything else stacks by
+## RenderLayer. This states that rule once so the map draws the same object the world does.
+##
+## Ties keep the LATER object, which is the old behaviour for everything that was not being
+## displaced by this — two identical-layer floors have no render-order opinion either.
+static func cell_face(objs: Array) -> Dictionary:
+	if objs.is_empty():
+		return {}
+	var best: Dictionary = {}
+	var best_rank := -1.0
+	var best_layer := -1.0
+	for o in objs:
+		# A CREATURE OUTRANKS EVERY LAYER, not merely most of them. Ranking on `layer` alone would
+		# work here only because Qud happens to put creatures at 100, and would put a corpse or a
+		# high-layer prop over the player the day it did not.
+		var rank := 1.0 if bool(o.get("creature", o.get("sinks", false))) else 0.0
+		var lay := float(o.get("layer", 0))
+		if rank > best_rank or (rank == best_rank and lay >= best_layer):
+			best = o
+			best_rank = rank
+			best_layer = lay
+	return best
+
+
 static func cell_is_explored(cell: Dictionary) -> bool:
 	return bool(cell.get("explored", true))
 
