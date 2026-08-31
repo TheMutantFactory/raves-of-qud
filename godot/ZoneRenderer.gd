@@ -2227,6 +2227,9 @@ var fx_flash_where := ""
 var fx_walked := 0
 ## ...and how many live fixtures the driver knows about, for the same comparison.
 var fx_lights := 0
+## Per cell, what the darkness pass decided for the LIVE zone this turn — read by cellnodes.
+var dark_dbg := {}
+
 ## The last 240 frames of what was on screen — see the note where it is filled.
 var fx_ring: Array = []
 
@@ -2587,6 +2590,8 @@ func _build_darkness(cells: Array, parent: Node, frozen_off := NOT_FROZEN) -> vo
 	var dark := {}          # k -> the composed max(tone, veil), pre-amax
 	var veil_kind := {}     # k -> 1 frozen ramp, 2 live edge fade; absent = flat, no resampling
 	var wash := {}          # k -> paint the FIELD colour under the darkness (see REMEMBER_COVER)
+	if not frozen:
+		dark_dbg.clear()
 	var walls := {}
 	for cell in cells:
 		var k := Vector2i(int(cell.get("x", 0)), int(cell.get("y", 0)))
@@ -2657,6 +2662,13 @@ func _build_darkness(cells: Array, parent: Node, frozen_off := NOT_FROZEN) -> vo
 		tone[k] = t
 		veil[k] = v
 		dark[k] = maxf(t, v)
+		# WHAT THIS CELL WAS DECIDED TO BE, for `control.py cellnodes`. Six rounds of this have been
+		# spent trying to read the answer out of pixels, and a cell's ground in a 3D view is behind
+		# whatever occludes it — a tree's own sprite, the wall in front of it. The pass knows; it
+		# just never said.
+		if not frozen:
+			dark_dbg[k] = {"wash": wash.has(k), "wall": walls.has(k), "tone": t, "veil": v,
+				"seen": _cell_seen(cell), "explored": _cell_explored(cell)}
 		# A wall the player has never seen is HIDDEN now (see _relight_static_sprites), so it must
 		# not be treated as a wall here either: its darkness would be a roof quad at WALL_H and a
 		# ring of side faces, left hanging in the air over nothing. Unexplored wall cells fall

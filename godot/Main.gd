@@ -1013,6 +1013,7 @@ func _exec_godot_cmd(cmd: String) -> void:
 					# The colour the memory wash is MADE of, and how completely it covers.
 					"world_bg": [renderer._world_bg.r, renderer._world_bg.g, renderer._world_bg.b],
 					"remember_cover": ZoneRenderer.REMEMBER_COVER,
+					"decided": renderer.dark_dbg.get(target, {}),
 					"cam_cull_mask": cmask,
 					"dark_layer": ZoneRenderer.DARK_LAYER,
 					"cam_sees_dark_layer": (cmask & ZoneRenderer.DARK_LAYER) != 0}))
