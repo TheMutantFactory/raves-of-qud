@@ -156,9 +156,32 @@ func verb() -> String:
 ##   talk   a person is the most specific thing a cell can hold, and one standing on the stairs is
 ##          still someone to speak to — you were not going to walk through them anyway.
 ##   stairs the reason you came, when nobody is standing in the way.
-##   use    anything else that is not scenery.
+##   use    anything else that is not scenery — a LIQUID POOL is scenery, see is_pool.
 ##   wall   no verb at all: not a destination, not a thing to poke.
 ##   walk   what is left when nothing else claims the cell.
+## A LIQUID POOL — something you WADE THROUGH, not something you poke.
+##
+## Daniel, having watched the boots never appear: "make liquids count as ground so puddles say
+## walk." He is right, and it was worth more than the icon: the click ACTION comes from this same
+## verb, so a left click on shallow water was trying to interact with the water instead of walking
+## into it. In his canyon that was every floor cell — sixteen sampled in a row, "use" on all
+## sixteen — and the zone tally read use 141 against walk 115 for the same reason.
+##
+## TWO SIGNALS, AND BOTH ARE NEEDED. `liquid` is the mod's `go.LiquidVolume != null`, which is just
+## as true of a dropped WATERSKIN as of a puddle — on that alone a real item would vanish behind a
+## walk icon, which is the opposite mistake and the harder one to notice. The tile path alone would
+## take art that is not a pool. A pool is the object that is both: a LiquidVolume drawn from
+## Liquids/.
+##
+## Deep water is deliberately included. You can walk into it — Qud swims you — so "walk" is what
+## the click does, and a cursor that lies about a lethal step would be worse than one that says
+## nothing.
+static func is_pool(o: Dictionary) -> bool:
+	if not bool(o.get("liquid", false)):
+		return false
+	return String(o.get("tile", "")).replace("\\", "/").to_lower().begins_with("liquids/")
+
+
 func verb_at(c: Vector2i) -> String:
 	var objs: Array = _cells.get("%d,%d" % [c.x, c.y], [])
 	if objs.is_empty():
@@ -177,7 +200,7 @@ func verb_at(c: Vector2i) -> String:
 			talks = true
 		elif bool(o.get("wall", false)) or bool(o.get("occluding", false)):
 			solid = true
-		elif not bool(o.get("ground", false)):
+		elif not (bool(o.get("ground", false)) or is_pool(o)):
 			thing = true
 	if talks:
 		return "talk"

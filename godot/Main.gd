@@ -924,6 +924,13 @@ func _exec_godot_cmd(cmd: String) -> void:
 			# background process, so Godot never sees the mouse move and the assist can only be
 			# photographed by hand. This drives the last link — do the box and the icon actually
 			# DRAW — from the outside, which is the half no tally can answer.
+			#
+			# THE CHANNEL HOLDS ONE PENDING COMMAND. RemoteControl replaces godot_cmd atomically
+			# and Godot consumes it on a 100ms poll, so a second write before that poll REPLACES
+			# the first — and the poll does not run at all while _support_dir() is empty (the
+			# title screen, a stalled rebuild). Sending `assistat` and `assistdump` back to back
+			# therefore loses the hold silently, which cost me eight cells that all answered from
+			# the one cell it was still holding. Leave a beat between them, or release first.
 			if parts.size() >= 3 and _assist != null:
 				var ac := Vector2i(int(parts[1]), int(parts[2]))
 				# `assistat -9999 -9999` HANDS THE POINTER BACK. A probe that can only be turned on

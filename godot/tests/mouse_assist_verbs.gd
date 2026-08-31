@@ -12,6 +12,7 @@ extends Node
 ## verb_at is a pure function of the cell's objects, so it can be asked directly. The fixtures are
 ## the wire's own shape — `tile`, `talks`, `wall`, `ground` — not a tidied-up version of it.
 
+const MA = preload("res://MouseAssist.gd")
 var _failed: Array[String] = []
 
 
@@ -28,6 +29,19 @@ func _ready() -> void:
 		"up, over stairs up":           [[_ground(), _stairs("Tiles2/sw_stairsup.bmp")], "up"],
 		"nothing over a wall":          [[_ground(), _wall()], ""],
 		"nothing over an unseen cell":  [[], ""],
+		# A PUDDLE IS SCENERY YOU WADE THROUGH. It used to answer "use", and since the click
+		# ACTION reads the same verb, a left click on shallow water tried to interact with the
+		# water instead of walking into it.
+		"walk over a puddle":           [[_ground(), _pool()], "walk"],
+		"walk over deep water too":     [[_ground(), _pool("Liquids/Water/deep-00100010.png")], "walk"],
+		# ...AND IT MUST NOT SWALLOW WHAT IS STANDING IN IT. This is the mistake that would be
+		# harder to notice than the one being fixed: an item lost behind a walk icon.
+		"use, over a thing in a puddle": [[_ground(), _pool(), _thing()], "use"],
+		"talk, over someone in a puddle": [[_ground(), _pool(), _creature(true)], "talk"],
+		"nothing over a flooded wall":  [[_ground(), _pool(), _wall()], ""],
+		# A WATERSKIN HAS A LiquidVolume. On the `liquid` flag alone it would read as ground and
+		# the item would disappear from the cursor — which is why is_pool wants the tile too.
+		"use, over a dropped waterskin": [[_ground(), _waterskin()], "use"],
 	}
 	var i := 0
 	for name in cells:
@@ -52,12 +66,30 @@ func _ready() -> void:
 		_check("a talker on the stairs is a talker, whichever order the cell lists",
 			ma.verb_at(Vector2i(51, 0)) == "talk", "got %s" % ma.verb_at(Vector2i(51, 0)))
 
+	# is_pool wants BOTH signals, asserted directly because each half alone is a real object in
+	# the game: a waterskin carries the flag, and Liquids/ art is drawn without one by the
+	# renderer's own splash paths.
+	_check("a pool is a LiquidVolume drawn from Liquids/", MA.is_pool(_pool()))
+	_check("...not the flag alone", not MA.is_pool(_waterskin()))
+	_check("...and not the tile alone",
+		not MA.is_pool({"tile": "Liquids/Water/shallow-10001000.png"}))
+	_check("...case and separator do not matter",
+		MA.is_pool({"liquid": true, "tile": "LIQUIDS\\Water\\shallow-1.png"}))
+
 	print("\n%s (%d checks failed)" % ["all good" if _failed.is_empty() else "FAILED", _failed.size()])
 	get_tree().quit(0 if _failed.is_empty() else 1)
 
 
 func _ground() -> Dictionary:
 	return {"tile": "Tiles/tile-dirt1.png", "ground": true}
+
+## The wire's own shape for a liquid pool: the mod sets `liquid` from go.LiquidVolume != null.
+func _pool(tile := "Liquids/Water/shallow-10001000.png") -> Dictionary:
+	return {"tile": tile, "display": "puddle of dilute salt", "liquid": true}
+
+## A container that HOLDS liquid — same flag, ordinary item art.
+func _waterskin() -> Dictionary:
+	return {"tile": "Items/sw_waterskin.bmp", "display": "waterskin", "liquid": true}
 
 func _thing() -> Dictionary:
 	return {"tile": "Items/sw_basket.bmp", "display": "wicker basket"}
