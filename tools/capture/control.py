@@ -232,6 +232,12 @@ def main(argv):
         arg = " ".join(sys.argv[2:4]) if len(sys.argv) > 3 else ""
         godot(("cellnodes " + arg).strip())
         print("godot: cellnodes %s -> cellnodes.json" % (arg or "(player cell)"))
+    elif cmd == "assistat":
+        godot("assistat " + argv[1] + " " + argv[2])
+        print("godot: assistat", argv[1], argv[2])
+    elif cmd == "assistdump":
+        godot("assistdump")
+        print("godot: assistdump -> assistdump.json")
     elif cmd == "firedump":
         godot("firedump")
         print("godot: firedump -> firedump.json")

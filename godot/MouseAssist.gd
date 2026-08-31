@@ -112,6 +112,27 @@ func hover(at: Vector2, cell: Variant) -> void:
 		if tex != null and tex.get_height() > 0:
 			_mark.pixel_size = SPRITE_PX / float(tex.get_height())
 
+## The two nodes, as they actually stand in the tree. A feature that is switched on and invisible is
+## either not being asked or not being drawn, and only the second half of that shows up here.
+func probe() -> Dictionary:
+	var d := {"icons_loaded": _icons.size(), "cell": "%d,%d" % [_cell.x, _cell.y], "verb": _verb}
+	for pair in [["box", _box], ["mark", _mark]]:
+		var n: Node3D = pair[1]
+		if n == null:
+			d[pair[0]] = "null"
+		elif not is_instance_valid(n):
+			d[pair[0]] = "FREED — its parent was rebuilt out from under it"
+		else:
+			d[pair[0]] = "visible=%s pos=%s parent=%s parent_visible=%s" % [
+				n.visible, str(n.position),
+				(n.get_parent().name if n.get_parent() != null else "(none)"),
+				(str((n.get_parent() as Node3D).visible) if n.get_parent() is Node3D else "n/a")]
+	if _mark != null and is_instance_valid(_mark):
+		d["mark_texture"] = "none" if _mark.texture == null else "%dx%d" % [
+			_mark.texture.get_width(), _mark.texture.get_height()]
+	return d
+
+
 func _clear() -> void:
 	if _box != null:
 		_box.visible = false

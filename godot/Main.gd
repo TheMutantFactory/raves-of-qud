@@ -78,6 +78,11 @@ var _target                        # TargetCursor: Qud's target picker, mirrored
 var _trade: TradeOverlay           # Qud's trade screen, mirrored
 var _assist                        # MouseAssist (Node); created in _ready
 var _assist_pos := Vector2(-1, -1) # last pointer position, re-read once a frame (see _process)
+## A cell the `assistat` probe is holding the verb cursor on, or (-9999,-9999). DEBUG ONLY — it is
+## set from the command channel and by nothing else, and it exists because the pointer cannot be
+## driven into an unfocused window on macOS.
+const ASSIST_NO_HOLD := Vector2i(-9999, -9999)
+var _assist_hold := ASSIST_NO_HOLD
 
 const SURFACE_Z := 10
 var _depth := SURFACE_Z            # current stratum (zone.z); >SURFACE_Z is underground
@@ -914,6 +919,100 @@ func _exec_godot_cmd(cmd: String) -> void:
 				var mv = get_parent().get("_minimap") if get_parent() != null else null
 				mdf.store_string(JSON.stringify(mv.probe if mv != null else {"error": "no minimap"}))
 				mdf.close()
+		"assistat":
+			# SHOW THE CURSOR AT A NAMED CELL, with no pointer involved. macOS refuses focus to a
+			# background process, so Godot never sees the mouse move and the assist can only be
+			# photographed by hand. This drives the last link — do the box and the icon actually
+			# DRAW — from the outside, which is the half no tally can answer.
+			if parts.size() >= 3 and _assist != null:
+				var ac := Vector2i(int(parts[1]), int(parts[2]))
+				# `assistat -9999 -9999` HANDS THE POINTER BACK. A probe that can only be turned on
+				# leaves the game holding a cursor on a cell nobody is pointing at.
+				if ac == ASSIST_NO_HOLD:
+					_assist_hold = ac
+					_assist.hover(Vector2.ZERO, null)
+					print("[assistat] released")
+				else:
+					_assist.hover(Vector2.ZERO, ac)
+					_assist_hold = ac
+					print("[assistat] %s -> verb '%s'" % [str(ac), _assist.verb()])
+		"assistdump":
+			# WHERE THE MOUSE-ASSIST CURSOR STOPS. Daniel: "It looks like we ditched the look/walk
+			# icons for the mouse on the gamefield" — and the code was all still there, on main,
+			# untouched since it was written. A feature that is present and invisible has a CHAIN,
+			# and a screenshot cannot say which link broke: the setting, the target-picker's claim
+			# on the pointer, the chrome test, the modal test, the raycast, the verb, the two
+			# nodes and their visibility. This asks every link at once, for the pointer where it
+			# actually is.
+			var ad := FileAccess.open(_support_dir().path_join("assistdump.json"), FileAccess.WRITE)
+			if ad != null:
+				var mp: Vector2 = get_viewport().get_mouse_position()
+				var claimed := FeedbackTool.claims(mp)
+				var hit: Control = FeedbackTool._deepest_control_at(mp)
+				var cell = _playfield_cell(mp)
+				var rep := {
+					"pointer": [int(mp.x), int(mp.y)],
+					"assist_exists": _assist != null,
+					"enabled": _assist != null and _assist.enabled(),
+					"one_to_one": Settings.one_to_one(),
+					"qol_mouseassist": Settings.qol_on("mouseassist"),
+					"target_active": _target != null and _target.active,
+					"modal_owns_input": _modal_owns_input(),
+					"chrome_claims_pointer": claimed,
+					"control_under_pointer": (hit.get_path() as String) if hit != null else "",
+					"cell": ("%d,%d" % [cell.x, cell.y]) if cell != null else "(none)",
+					"verb": _assist.verb() if _assist != null else "",
+				}
+				if _assist != null:
+					rep["nodes"] = _assist.probe()
+				# A SWEEP, BECAUSE THE POINTER CANNOT BE DRIVEN FROM OUTSIDE. macOS refuses focus
+				# to a background process, so Godot never sees the mouse move and
+				# get_mouse_position() is frozen wherever the user last left it — asking about one
+				# point tells you about that point and nothing else. This walks a grid over the
+				# viewport and reports what the assist WOULD say at each, which is the question.
+				var vs: Vector2 = get_viewport().get_visible_rect().size
+				var found := {}
+				var probed := 0
+				var chrome := 0
+				var nocell := 0
+				for iy in 12:
+					for ix in 16:
+						var q := Vector2(vs.x * (float(ix) + 0.5) / 16.0,
+							vs.y * (float(iy) + 0.5) / 12.0)
+						probed += 1
+						if FeedbackTool.claims(q):
+							chrome += 1
+							continue
+						var qc = _playfield_cell(q)
+						if qc == null:
+							nocell += 1
+							continue
+						var qv: String = _assist.verb_at(Vector2i(qc.x, qc.y)) if _assist != null else ""
+						var kk: String = qv if qv != "" else "(no verb — wall or nothing)"
+						found[kk] = int(found.get(kk, 0)) + 1
+				rep["sweep"] = {"points": probed, "chrome": chrome, "no_cell": nocell,
+					"verbs": found}
+				# ...AND OVER THE WHOLE ZONE, not just the pixels that happen to be on screen. A
+				# screen sweep samples where the camera is pointing; if a verb is missing because
+				# of what the SNAPSHOT contains, only the zone tally shows it — 63 sampled points
+				# in a canyon are mostly wall either way, and "no boots anywhere" and "the camera
+				# is facing a cliff" look identical from the viewport.
+				var lv: Dictionary = store.live_snapshot()
+				var zc: Array = lv.get("cells", [])
+				var tally := {}
+				for c in zc:
+					var v2: String = _assist.verb_at(
+						Vector2i(int(c.get("x", 0)), int(c.get("y", 0)))) if _assist != null else ""
+					var k2: String = v2 if v2 != "" else "(none)"
+					tally[k2] = int(tally.get(k2, 0)) + 1
+				rep["zone"] = {
+					"cells_in_snapshot": zc.size(),
+					"zone_size": "%dx%d" % [int(renderer._live_w), int(renderer._live_h)],
+					"verbs": tally,
+				}
+				ad.store_string(JSON.stringify(rep, "  "))
+				ad.close()
+				print("[assistdump] ", JSON.stringify(rep))
 		"firedump":
 			# WHERE THE FIRELIGHT SWITCH STOPS. The chain is four links long — the setting, the
 			# static gate, the per-cell mark, and what the relight makes of it — and a picture
@@ -1373,6 +1472,12 @@ func _assist_step() -> void:
 		return
 	if not _assist.enabled():
 		_assist.hover(Vector2.ZERO, null)   # feature off mid-session: put the system arrow back
+		return
+	# A HELD CELL WINS, and only a probe can set one (`assistat`). Without it the very next frame
+	# re-reads the frozen pointer and clears what the probe just placed, so the thing being
+	# photographed is gone before the shutter opens.
+	if _assist_hold != ASSIST_NO_HOLD:
+		_assist.hover(Vector2.ZERO, _assist_hold)
 		return
 	var pos: Vector2 = get_viewport().get_mouse_position()
 	var cell = _playfield_cell(pos)
