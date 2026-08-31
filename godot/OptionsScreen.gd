@@ -565,10 +565,15 @@ func _qol_item(fname: String) -> Dictionary:
 		"label": "QoL · " + str(spec[0]), "default": bool(spec[1])}
 
 
-## Called after any qol_* toggle is flipped, so a feature that owns a panel's shape reaches the
-## panel now rather than at the next launch. Set by MainFrame for the in-game overlay; unset (and
-## harmlessly skipped) on the title-screen options, where there are no panels to reshape.
-var apply_qol_cb: Callable = Callable()
+## Called after a toggle that owns something already on screen — a QoL feature that shapes a panel,
+## or one of LIVE_KEYS — so the change reaches it now rather than at the next launch. Set by
+## MainFrame for the in-game overlay; unset (and harmlessly skipped) on the title-screen options.
+## Settings that own a LIVE SURFACE and are not qol_ features. Hand-listed because there is no way
+## to tell from a key's name that something on screen is already showing it; the audit
+## (tools/regression/settings_reach_audit.py) is what finds the candidates.
+const LIVE_KEYS := {"fx_scanlines": true, "fx_vignette": true}
+
+var apply_live_cb: Callable = Callable()
 
 func _raves_toggle(item: Dictionary) -> Control:
 	var b := _flat_button()
@@ -581,8 +586,9 @@ func _raves_toggle(item: Dictionary) -> Control:
 		b.text = _check(now) + str(item["label"])
 		# A QoL FEATURE CAN OWN A PANEL'S SHAPE, and the panel is only re-shaped when something
 		# tells it to. Saving the key is not telling it.
-		if apply_qol_cb.is_valid() and str(item["key"]).begins_with("qol_"):
-			apply_qol_cb.call())
+		if apply_live_cb.is_valid() and (str(item["key"]).begins_with("qol_")
+				or LIVE_KEYS.has(str(item["key"]))):
+			apply_live_cb.call())
 	return b
 
 func _raves_options(item: Dictionary) -> Control:

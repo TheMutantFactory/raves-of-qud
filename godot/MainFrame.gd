@@ -1324,8 +1324,9 @@ func _open_options_overlay() -> void:
 	# turning the minimap feature on left the panel showing Qud's map until the next restart —
 	# which reads as a switch that does nothing. Daniel found it as "let's get the minimap tiles
 	# working again", after a stray click of mine had turned the feature off.
-	scn.apply_qol_cb = func() -> void:
+	scn.apply_live_cb = func() -> void:
 		_set_panels_one_to_one(_panels_1to1)
+		_refresh_crt()
 	_options.add_child(scn)
 	add_child(_options)
 	UiState.set_scene("options")
@@ -1430,18 +1431,34 @@ func _add_crt_overlay() -> void:
 	# over the whole window, so without the pass-through every feedback hit-test resolved to it —
 	# labels collapsed to "MainFrame" and the playfield handoff to the tile inspector broke.
 	rect.set_meta("feedback_pass", true)
-	# Scanlines and vignette are independent 1:1-test effects; the overlay shows if either is on.
-	var scan := bool(Settings.get_value("fx_scanlines", false))
-	var vig := bool(Settings.get_value("fx_vignette", false))
 	var sh: Shader = load("res://crt.gdshader")
 	if sh != null:
 		var mat := ShaderMaterial.new()
 		mat.shader = sh
-		mat.set_shader_parameter("scanline_lift", 0.042 if scan else 0.0)
-		mat.set_shader_parameter("vignette_strength", 0.42 if vig else 0.0)
 		rect.material = mat
 	_crt_layer.add_child(rect)
 	add_child(_crt_layer)
+	_crt_rect = rect
+	_refresh_crt()
+
+## The two CRT effects, read from the settings and applied to the overlay that already exists.
+##
+## SPLIT OUT OF _add_crt_overlay BECAUSE THAT RUNS ONCE. It returns early when the layer is built,
+## so the scanline and vignette switches were read at startup and never again — flip either in
+## Options and nothing happened until the next launch. Found by tools/regression/settings_reach_audit.py,
+## which is exactly the sweep it was written for.
+var _crt_rect: ColorRect = null
+
+func _refresh_crt() -> void:
+	if _crt_layer == null or _crt_rect == null:
+		return
+	# Scanlines and vignette are independent 1:1-test effects; the overlay shows if either is on.
+	var scan := bool(Settings.get_value("fx_scanlines", false))
+	var vig := bool(Settings.get_value("fx_vignette", false))
+	var mat := _crt_rect.material as ShaderMaterial
+	if mat != null:
+		mat.set_shader_parameter("scanline_lift", 0.042 if scan else 0.0)
+		mat.set_shader_parameter("vignette_strength", 0.42 if vig else 0.0)
 	_crt_layer.visible = scan or vig
 
 # Chrome-overflow tripwire: if any row's minimum width exceeds the window, the root

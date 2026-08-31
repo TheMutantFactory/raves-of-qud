@@ -89,7 +89,7 @@ func _ready() -> void:
 	# next restart — a switch that does nothing, which is how it was reported.
 	var scn2 = scr.new()
 	var rang := [0]
-	scn2.apply_qol_cb = func() -> void: rang[0] += 1
+	scn2.apply_live_cb = func() -> void: rang[0] += 1
 	var qrow = scn2._raves_toggle(scn2._qol_item("minimap"))
 	qrow.emit_signal("pressed")
 	_check("flipping a QoL feature tells the panels to re-shape", rang[0] == 1,
@@ -99,6 +99,12 @@ func _ready() -> void:
 	var prow = scn2._raves_toggle({"key": "fullscreen", "label": "x", "type": "toggle"})
 	prow.emit_signal("pressed")
 	_check("...and a plain setting does not", rang[0] == 1, "%d calls" % rang[0])
+	# ...but a setting that owns a live surface does. The CRT overlay is built once and returns
+	# early ever after, so its two switches were read at startup and never again.
+	var crow = scn2._raves_toggle({"key": "fx_scanlines", "label": "x", "type": "toggle"})
+	crow.emit_signal("pressed")
+	_check("a setting owning a live surface tells it too", rang[0] == 2, "%d calls" % rang[0])
+	crow.free()
 	# UNSET IS SAFE: the title-screen options have no panels and leave the callback empty.
 	var scn3 = scr.new()
 	var srow = scn3._raves_toggle(scn3._qol_item("minimap"))
