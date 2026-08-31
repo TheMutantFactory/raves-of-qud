@@ -18,7 +18,20 @@ const DAY_TINT := Color(1.0, 0.99, 0.96)     # near-neutral, a hair warm
 const DUSK_TINT := Color(1.0, 0.72, 0.50)    # warm dawn/dusk
 
 const SURFACE_Z := 10                        # Qud's surface stratum; > this is underground (no sun/moon)
-const CAVE_TINT := Color(0.82, 0.85, 0.95)   # faintly cool underground; the per-cell darkness does the dim
+## NEUTRAL, MEASURED AGAINST QUD. This was Color(0.82, 0.85, 0.95) — "faintly cool underground" —
+## and it is a fullscreen MULTIPLY, so it darkened the whole cave by about a sixth. Qud has no such
+## pass, and that sixth was most of why Raves' remembered ground read darker than Qud's beside it.
+##
+## Sampling exactly the pixels the memory wash paints, against a live capture of Qud's own screen:
+##   Qud's remembered field   (15, 59, 58)  lum 45.7
+##   with the cool tint       (14, 44, 61)  lum 36.7
+##   neutral                  (16, 52, 65)  lum 42.5   ...and (16,60,78) 48.6, straddling Qud
+##
+## Daniel, with the two tiles side by side: "can we please, please please try and match the sprite
+## shade and the floor? I feel like I'm taking crazy pills." He was right every time he said it.
+## The cast is recoverable — it is one constant — but it cannot be had for free, because the way it
+## tinted was by taking light away.
+const CAVE_TINT := Color(1.0, 1.0, 1.0)   # faintly cool underground; the per-cell darkness does the dim
 const CAVE_SKY := Color(0.015, 0.02, 0.03)   # near-black rock void behind/into the fog
 
 var _renderer: Node                # for set_daylight() — fades the additive torch glow so day doesn't blow out
