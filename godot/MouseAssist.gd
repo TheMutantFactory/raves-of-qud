@@ -226,9 +226,61 @@ func _icon_for(v: String) -> Texture2D:
 			tex = _speech_tex()
 		"use":
 			tex = _look_tex()
+	tex = _outlined(tex)
 	if tex != null:
 		_icons[v] = tex
 	return tex
+
+
+## THE MARK CARRIES ITS OWN CONTRAST, because it is drawn ON the thing it describes and cannot
+## choose its background.
+##
+## Daniel, straight after liquids started answering "walk": "The walk boots aren't showing when I
+## hover over water." They were showing. The A/B capture has them plainly — and unreadable. The
+## walk icon is Qud's leather boots recoloured to the cursor's pale (b1c9c3) and blue (77bfcf), and
+## SHALLOW WATER IS PALE GREY AND BLUE. The icon and the tile under it were the same two colours,
+## so a thin item silhouette dissolved into the ripples. Making water walkable put the boots
+## exactly where they were least legible; the change did not break the icon, it aimed it at its
+## own worst background.
+##
+## A one-pixel dark rim separates any art from any ground, which is what the cursor actually needs
+## — it is not "boots on water" that is the problem but "no guaranteed contrast anywhere". So it is
+## done to EVERY verb rather than special-cased for this one: the speech bubble over a lit floor
+## and the stairs arrow over pale stone have the same failure waiting.
+##
+## Grown rather than drawn over: eating a pixel of the art would thin a 16x24 sprite noticeably,
+## and the mark is scaled by its own height, so the rim scales with it.
+const MARK_RIM := Color(0.04, 0.06, 0.06, 0.92)
+
+func _outlined(tex: Texture2D) -> Texture2D:
+	if tex == null:
+		return null
+	var src: Image = tex.get_image()
+	if src == null:
+		return tex
+	var w := src.get_width()
+	var h := src.get_height()
+	var out := Image.create(w + 2, h + 2, false, Image.FORMAT_RGBA8)
+	out.fill(Color(0, 0, 0, 0))
+	for y in h:
+		for x in w:
+			if src.get_pixel(x, y).a >= 0.5:
+				out.set_pixel(x + 1, y + 1, src.get_pixel(x, y))
+	for y in h + 2:
+		for x in w + 2:
+			if out.get_pixel(x, y).a >= 0.5:
+				continue
+			var near := false
+			for dy in [-1, 0, 1]:
+				for dx in [-1, 0, 1]:
+					var sx: int = x - 1 + dx
+					var sy: int = y - 1 + dy
+					if sx >= 0 and sx < w and sy >= 0 and sy < h \
+							and src.get_pixel(sx, sy).a >= 0.5:
+						near = true
+			if near:
+				out.set_pixel(x, y, MARK_RIM)
+	return ImageTexture.create_from_image(out)
 
 ## The footprint outline: a square line loop just clear of the floor, in cell-local space so the
 ## instance can simply be moved to the cell.
