@@ -550,6 +550,10 @@ func _nodes_over_cell(root: Node, cell: Vector2i, out: Array) -> void:
 		var dmi := root as MeshInstance3D
 		var dm: Mesh = dmi.mesh
 		if dm != null and dm.get_surface_count() > 0:
+			# CENTROIDS, NOT VERTICES. A quad over this cell and a quad over its neighbour both
+			# have a corner exactly 0.707 away, so "has a vertex near the cell" cannot tell them
+			# apart — and answering "is this cell filmed" with a neighbour's corner is the kind of
+			# almost-right reading that has cost this hunt four wrong conclusions already.
 			var hits := 0
 			var ylo := 1e9
 			# THE HEIGHTS, not just the lowest. A single minimum cannot tell a film laid under the
@@ -558,12 +562,15 @@ func _nodes_over_cell(root: Node, cell: Vector2i, out: Array) -> void:
 			for si in dm.get_surface_count():
 				var arr: Array = dm.surface_get_arrays(si)
 				var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
-				for v in verts:
-					if Vector2(v.x - float(cell.x), v.z - float(cell.y)).length() < 0.75:
+				var i := 0
+				while i + 2 < verts.size():
+					var c3: Vector3 = (verts[i] + verts[i + 1] + verts[i + 2]) / 3.0
+					if absi(int(round(c3.x)) - cell.x) == 0 and absi(int(round(c3.z)) - cell.y) == 0:
 						hits += 1
-						ylo = minf(ylo, v.y)
-						var key := "%.3f" % v.y
+						ylo = minf(ylo, c3.y)
+						var key := "%.3f" % c3.y
 						yhist[key] = int(yhist.get(key, 0)) + 1
+					i += 3
 			out.append({"cls": "DARKNESS mesh", "name": dmi.name, "y": (ylo if hits > 0 else -1.0),
 				"vis": dmi.is_visible_in_tree(), "layers": dmi.layers,
 				"where": _short_path(dmi), "yhist": yhist,
@@ -975,7 +982,11 @@ func _exec_godot_cmd(cmd: String) -> void:
 			if cn != null:
 				var lv2: Dictionary = store.live_snapshot()
 				var p2: Dictionary = lv2.get("player", {})
+				# `cellnodes` for where you stand, `cellnodes X Y` for a cell you are looking at
+				# from across the zone — which is most of the interesting ones.
 				var target := Vector2i(int(p2.get("x", -1)), int(p2.get("y", -1)))
+				if parts.size() > 2:
+					target = Vector2i(int(parts[1]), int(parts[2]))
 				# FROM THE TREE ROOT, not from `renderer`. Walking the renderer found NOTHING
 				# over the cell — not even the player — which is a zero that means "the walk
 				# never reached the geometry", not "nothing is drawn there". The world does not
@@ -986,7 +997,11 @@ func _exec_godot_cmd(cmd: String) -> void:
 				var cmask := 0
 				if _cam_rig != null and _cam_rig._cam != null:
 					cmask = _cam_rig._cam.cull_mask
+				# ...and WHERE IT IS ON SCREEN, so a reading can be taken from the pixels rather
+				# than from a click aimed by eye. The exported app flushes no stdout, which is why
+				# `screenpos` prints where nobody can read them and this rides the file instead.
 				cn.store_string(JSON.stringify({"cell": [target.x, target.y], "nodes": found,
+					"screen": [_cell_screen_pos(target).x, _cell_screen_pos(target).y],
 					"cam_cull_mask": cmask,
 					"dark_layer": ZoneRenderer.DARK_LAYER,
 					"cam_sees_dark_layer": (cmask & ZoneRenderer.DARK_LAYER) != 0}))
