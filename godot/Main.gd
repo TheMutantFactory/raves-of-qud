@@ -200,6 +200,7 @@ func _ready() -> void:
 
 	renderer = ZoneRenderer.new()
 	add_child(renderer)
+	renderer.lighting_changed.connect(_relight_now)
 
 	client = BridgeClient.new()
 	add_child(client)
@@ -512,12 +513,135 @@ func _on_cyber(data: Dictionary) -> void:
 	else:
 		_cyber.hide_terminal()
 
+## Re-render what is already on screen, for a setting whose effect is decided during the relight.
+## The 2D/3D toggle and the deep-water depth both do this for the same reason: a control whose
+## result does not appear until you take a step reads as a control that does not work.
+## EVERY NODE THAT DRAWS ANYTHING OVER ONE CELL, for `control.py cellnodes`.
+##
+## Five rounds of this bug were spent inferring a mechanism from cell data and whole-frame
+## metrics, and every inference was wrong while every number was right. The question was always
+## "which node drew that orange pixel", and nothing could answer it. This does.
+##
+## MULTIMESH IS THE REASON IT HAS TO BE THIS THOROUGH: the floors are MultiMeshInstance3D, one
+## node holding thousands of instance transforms, so the NODE sits at the origin and only its
+## instances are over the cell. A walker that reads node positions sees nothing there at all.
+func _nodes_over_cell(root: Node, cell: Vector2i, out: Array) -> void:
+	if root is MultiMeshInstance3D:
+		var mmi := root as MultiMeshInstance3D
+		var mm := mmi.multimesh
+		if mm != null:
+			var base: Transform3D = mmi.global_transform
+			var best_d := 1e9
+			var best := {}
+			for i in mm.instance_count:
+				var o: Vector3 = (base * mm.get_instance_transform(i)).origin
+				var dd: float = Vector2(o.x - float(cell.x), o.z - float(cell.y)).length()
+				if dd < best_d:
+					best_d = dd
+					best = {"cls": "MultiMesh inst", "name": mmi.name, "y": o.y, "d": dd,
+						"vis": mmi.is_visible_in_tree(), "layers": mmi.layers,
+						"where": _short_path(mmi), "mat": _mat_note(mmi.material_override)}
+			if best_d < 1.5:
+				out.append(best)
+	elif root is MeshInstance3D and root.has_meta("is_darkness"):
+		# THE FILM IS ONE MESH WITH WORLD-SPACE VERTICES, so its NODE sits at the origin and a
+		# walker that reads node positions decides it is nowhere near the cell — the third zero in
+		# this hunt that meant "wrong question", not "nothing there". Ask the vertices instead.
+		var dmi := root as MeshInstance3D
+		var dm: Mesh = dmi.mesh
+		if dm != null and dm.get_surface_count() > 0:
+			var hits := 0
+			var ylo := 1e9
+			# THE HEIGHTS, not just the lowest. A single minimum cannot tell a film laid under the
+			# floor from a wall's side face that happens to reach the ground beside it.
+			var yhist := {}
+			for si in dm.get_surface_count():
+				var arr: Array = dm.surface_get_arrays(si)
+				var verts: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+				for v in verts:
+					if Vector2(v.x - float(cell.x), v.z - float(cell.y)).length() < 0.75:
+						hits += 1
+						ylo = minf(ylo, v.y)
+						var key := "%.3f" % v.y
+						yhist[key] = int(yhist.get(key, 0)) + 1
+			out.append({"cls": "DARKNESS mesh", "name": dmi.name, "y": (ylo if hits > 0 else -1.0),
+				"vis": dmi.is_visible_in_tree(), "layers": dmi.layers,
+				"where": _short_path(dmi), "yhist": yhist,
+				"mat": "%d vertices over this cell" % hits})
+	elif root is VisualInstance3D:
+		var vi := root as VisualInstance3D
+		var o2: Vector3 = vi.global_transform.origin
+		if Vector2(o2.x - float(cell.x), o2.z - float(cell.y)).length() < 1.5:
+			var mat: Material = null
+			if root is GeometryInstance3D:
+				mat = (root as GeometryInstance3D).material_override
+			# GROUP MEMBERSHIP IS THE QUESTION. The pool gate walks fx_pool and sets `visible`;
+			# a pool that never joined the group is one the switch can never reach, and from the
+			# outside that is indistinguishable from a switch that does not work.
+			out.append({"cls": root.get_class(), "name": vi.name, "y": o2.y,
+				"vis": vi.is_visible_in_tree(), "layers": vi.layers,
+				"pool_grp": vi.is_in_group(ZoneRenderer.FX_POOL_GROUP),
+				"flame_grp": vi.is_in_group(ZoneRenderer.FX_FLAME_GROUP),
+				"where": _short_path(vi), "mat": _mat_note(mat)})
+	for ch in root.get_children():
+		_nodes_over_cell(ch, cell, out)
+
+
+## The last few names of a node's path — enough to say WHERE a thing lives without a wall of text.
+func _short_path(n: Node) -> String:
+	var parts: Array = []
+	var cur: Node = n
+	while cur != null and parts.size() < 4:
+		parts.push_front(String(cur.name))
+		cur = cur.get_parent()
+	return "/".join(parts)
+
+
+## Enough of a material to recognise it by: what it is, and the colour it paints.
+func _mat_note(m: Material) -> String:
+	if m == null:
+		return "-"
+	if m is StandardMaterial3D:
+		var sm := m as StandardMaterial3D
+		return "Std albedo=%s blend=%d unshaded=%s" % [str(sm.albedo_color).left(28),
+			sm.blend_mode, sm.shading_mode == BaseMaterial3D.SHADING_MODE_UNSHADED]
+	return m.get_class()
+
+
+## What the darkness double-buffer is actually showing, for `control.py firedump`.
+func _dark_buffer_report() -> Array:
+	var out: Array = []
+	var root = renderer.get("_dark_root")
+	if root == null:
+		return [["no _dark_root", 0]]
+	for ch in root.get_children():
+		var meshes := 0
+		for m in ch.get_children():
+			if m.has_meta("is_darkness"):
+				meshes += 1
+		out.append([(ch as Node3D).visible, meshes])
+	return out
+
+
+func _relight_now() -> void:
+	var live: Dictionary = store.live_snapshot()
+	if not live.is_empty():
+		ZoneRenderer.mark_fire_lit(live)
+		renderer.render_snapshot(live, _neighbor_zones())
+
+
 func _on_snapshot(data: Dictionary) -> void:
 	# Data-freshness beacon for the test rig: the UI heartbeat proves the
 	# VIEWER is alive, not that the WIRE is — a dropped bridge connection
 	# left stale zones (and stale dynamic creatures) on screen through a
 	# certification band while raves_state.json read perfectly healthy.
 	UiState.note_snapshot()
+	# WHICH CELLS A FIRE LIT, worked out ONCE and here, at the top of the one function every
+	# snapshot passes through. The renderer and the panels are handed the same cell dictionaries,
+	# so marking them at the door is what keeps the map and the room agreeing about what you can
+	# see — the alternative is each consumer forming its own opinion, which is the bug this
+	# codebase has now paid for twice.
+	ZoneRenderer.mark_fire_lit(data)
 	# WORLD MAP is a distinct SCREEN, not a zone: Qud sends it as a negative
 	# stratum (zone.z < 0 — the parasang overview ZoneRenderer already keys
 	# _world_map off). Report it so the rig can tell "player is reading the
@@ -775,6 +899,98 @@ func _exec_godot_cmd(cmd: String) -> void:
 							d[k] = [r.position.x, r.position.y, r.size.x, r.size.y]
 					ud.store_string(JSON.stringify(d))
 					ud.close()
+		"minimapdump":
+			# What the tile map's last pass saw: how many cells carried objects, how many of those
+			# resolved to art, and where it was looking for it.
+			var mdf := FileAccess.open(_support_dir().path_join("minimapdump.json"), FileAccess.WRITE)
+			if mdf != null:
+				var mv = get_parent().get("_minimap") if get_parent() != null else null
+				mdf.store_string(JSON.stringify(mv.probe if mv != null else {"error": "no minimap"}))
+				mdf.close()
+		"firedump":
+			# WHERE THE FIRELIGHT SWITCH STOPS. The chain is four links long — the setting, the
+			# static gate, the per-cell mark, and what the relight makes of it — and a picture
+			# that barely changes cannot say which one broke. This asks all four at once.
+			var fd := FileAccess.open(_support_dir().path_join("firedump.json"), FileAccess.WRITE)
+			if fd != null:
+				var live: Dictionary = store.live_snapshot()
+				var cs: Array = live.get("cells", [])
+				var n_lit := 0
+				var n_mark := 0
+				var n_seen := 0
+				for c in cs:
+					if int(c.get("light", 200)) >= ZoneRenderer.LIGHT_LIT:
+						n_lit += 1
+					if bool(c.get("firelit", false)):
+						n_mark += 1
+					if ZoneRenderer.cell_is_seen(c):
+						n_seen += 1
+				# PER-CELL, around the player. Whole-zone counts said the switch was working while
+				# the floor in front of him stayed orange; the disagreement is per cell, so the
+				# report has to be per cell — light, both marks, the verdict, and the ground tone
+				# the darkness pass actually computes.
+				var rows: Array = []
+				var pcx := int(live.get("player", {}).get("x", -1))
+				var pcy := int(live.get("player", {}).get("y", -1))
+				for c in cs:
+					var dx: int = absi(int(c.get("x", 0)) - pcx)
+					var dy: int = absi(int(c.get("y", 0)) - pcy)
+					if dx <= 2 and dy <= 2:
+						rows.append({
+							"xy": [int(c.get("x", 0)), int(c.get("y", 0))],
+							"light": int(c.get("light", -1)),
+							"vis": bool(c.get("visible", true)),
+							"expl": bool(c.get("explored", true)),
+							"firelit": bool(c.get("firelit", false)),
+							"torchlit": bool(c.get("torchlit", false)),
+							"off": ZoneRenderer.switched_off(c),
+							"tone": renderer._live_cell_tone(c, false),
+							"objs": c.get("objs", []).size(),
+							"floor_y": renderer.floor_top.get(
+								Vector2i(int(c.get("x", 0)), int(c.get("y", 0))), -99.0),
+						})
+				fd.store_string(JSON.stringify({
+					"near_player": rows,
+					"dark_floor_y": ZoneRenderer.DARK_FLOOR_Y,
+					"fx_corrections": renderer.fx_corrections,
+					"fx_flashes": renderer.fx_flashes,
+					"fx_ring": renderer.fx_ring,
+					"fx_walked": renderer.fx_walked,
+					"fx_lights": renderer.fx_lights,
+					"fx_flash_where": renderer.fx_flash_where,
+					# THE LAST LINK. The film is double-buffered — a new one is built hidden and
+					# swapped in when the player arrives — so "is it computed" and "is it on
+					# screen" are different questions, and every number above answers only the
+					# first. Each entry: [visible, how many darkness meshes it holds].
+					"dark_buffers": _dark_buffer_report(),
+					"setting_firecells": Settings.qol_on("firecells"),
+					"fire_dark": ZoneRenderer.fire_dark,
+					"cells": cs.size(), "lit_raw": n_lit, "marked": n_mark, "seen": n_seen,
+					"player": live.get("player", {}).get("x", -1),
+				}))
+				fd.close()
+		"cellnodes":
+			# Everything drawing over the player's cell, deepest first. See _nodes_over_cell.
+			var cn := FileAccess.open(_support_dir().path_join("cellnodes.json"), FileAccess.WRITE)
+			if cn != null:
+				var lv2: Dictionary = store.live_snapshot()
+				var p2: Dictionary = lv2.get("player", {})
+				var target := Vector2i(int(p2.get("x", -1)), int(p2.get("y", -1)))
+				# FROM THE TREE ROOT, not from `renderer`. Walking the renderer found NOTHING
+				# over the cell — not even the player — which is a zero that means "the walk
+				# never reached the geometry", not "nothing is drawn there". The world does not
+				# all hang off the renderer node.
+				var found: Array = []
+				_nodes_over_cell(get_tree().root, target, found)
+				found.sort_custom(func(a2, b2): return float(a2["y"]) < float(b2["y"]))
+				var cmask := 0
+				if _cam_rig != null and _cam_rig._cam != null:
+					cmask = _cam_rig._cam.cull_mask
+				cn.store_string(JSON.stringify({"cell": [target.x, target.y], "nodes": found,
+					"cam_cull_mask": cmask,
+					"dark_layer": ZoneRenderer.DARK_LAYER,
+					"cam_sees_dark_layer": (cmask & ZoneRenderer.DARK_LAYER) != 0}))
+				cn.close()
 		"walkdump":
 			# The last WALK_LOG_N frames of player/torch placement, for a stutter too fast to
 			# screenshot.
@@ -956,12 +1172,39 @@ var _walk_log: Array = []
 func _walk_log_frame() -> void:
 	if renderer == null:
 		return
+	Profiler.begin("walklog")
 	var e: Dictionary = renderer.walk_probe()
+	# THE FIVE MODAL FLAGS. _playfield_cell refuses a click while any of them is up, so a single
+	# one stuck true silently kills every click on the world while keys and the wheel carry on
+	# working — which is exactly how this presented.
+	e["modal"] = {
+		"trade": _trade != null and _trade.active(),
+		"popup": _popup != null and _popup.visible,
+		"item_picker": _item_picker != null and _item_picker.visible,
+		"cyber": _cyber != null and _cyber.visible,
+		"overlay": overlay_check.is_valid() and bool(overlay_check.call()),
+		"owns": _modal_owns_input(),
+	}
+	# ...AND THE THREE GATES BEFORE THEM. _playfield_cell returns null for four different reasons
+	# and says which to nobody; a click that does nothing looks identical whichever it was.
+	e["pick"] = {
+		"inspector": inspector != null,
+		"cam": _cam_rig != null and _cam_rig._cam != null,
+		# THE GUARD THE MINIMAP DOES NOT GO THROUGH. _travel_click hands the click to the target
+		# cursor before it considers travelling, so an active cursor eats every click on the world
+		# while the minimap, which calls travel_to_cell directly, keeps working. That asymmetry is
+		# the whole shape of "I cannot click to move but the arrow keys work", and it is the first
+		# thing to read when that is reported again.
+		"target_active": _target != null and _target.active,
+	}
+	# NOT the pick itself. Asking _playfield_cell here would raycast and walk the control tree
+	# EVERY FRAME to answer a question that only matters when someone is reading the dump.
 	e["at"] = [_walk_at.x, _walk_at.y]
 	e["to"] = [_walk_to.x, _walk_to.y]
 	_walk_log.append(e)
 	if _walk_log.size() > WALK_LOG_N:
 		_walk_log.remove_at(0)
+	Profiler.done("walklog")
 
 
 func _walk_step(dt: float) -> void:
@@ -1474,7 +1717,13 @@ func _interact_click(pos: Vector2) -> void:
 	var cell = _playfield_cell(pos)
 	if cell == null:
 		return
-	client.send_command("interact", {"x": cell.x, "y": cell.y})
+	interact_at_cell(Vector2i(cell.x, cell.y))
+
+
+## The same interaction, addressed by CELL. The minimap has a cell and no screen ray, so both
+## surfaces meet here rather than each having its own idea of what a right-click does.
+func interact_at_cell(c: Vector2i) -> void:
+	client.send_command("interact", {"x": c.x, "y": c.y})
 
 
 ## CLICK-TO-TRAVEL. Send the clicked cell to Qud, which walks the player there with its own
@@ -1501,7 +1750,14 @@ func _travel_click(pos: Vector2) -> void:
 		return
 	if cell == null:
 		return
-	var c := Vector2i(cell.x, cell.y)
+	travel_to_cell(Vector2i(cell.x, cell.y))
+
+
+## Travel addressed by CELL — everything below this line was the back half of _travel_click, and it
+## never needed the screen position, only the cell the position resolved to. Split out so the
+## minimap can order exactly the same walk: the off-zone edge case, the reach test, the verb the
+## cursor promised. A second copy of this on the map would drift from this one within a week.
+func travel_to_cell(c: Vector2i) -> void:
 	# CLICKED INTO A NEIGHBOUR ZONE. Daniel: "You need to be able to walk off-zone using the mouse."
 	# Raves draws the zones either side, so clicking into one is the obvious way to ask to go there
 	# -- and it did nothing, because a click becomes `moveto` and Qud's travel only addresses cells
@@ -1565,7 +1821,10 @@ func _multiview_inspect(cam: Camera3D, pos: Vector2) -> void:
 ## Write the Pareto timing report to profile.txt (Claude reads it). Auto-called every
 ## 40 turns (reset=false, cumulative), and by the P key (reset=true, fresh window).
 func _dump_profile(reset := true) -> void:
-	var dir := renderer.tiles_dir().get_base_dir()
+	# THE SUPPORT DIR, like every other dump. This derived its path from the RENDERER's tiles_dir
+	# and returned silently when that was empty — so asking for a profile did nothing at all, with
+	# a stale report still sitting on disk to be mistaken for the answer. It was, twice.
+	var dir := _support_dir()
 	if dir == "":
 		return
 	var f := FileAccess.open(dir.path_join("profile.txt"), FileAccess.WRITE)

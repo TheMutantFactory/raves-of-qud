@@ -1319,6 +1319,14 @@ func _open_options_overlay() -> void:
 	scn.apply_camera_cb = func(m: int) -> void:
 		if _holo != null and _holo.has_method("set_camera_mode"):
 			_holo.set_camera_mode(m)
+	# ...and a QoL feature that owns a PANEL'S SHAPE has to reach the panel the moment it is
+	# flipped. _set_panels_one_to_one ran only on the master 1:1 switch and once at launch, so
+	# turning the minimap feature on left the panel showing Qud's map until the next restart —
+	# which reads as a switch that does nothing. Daniel found it as "let's get the minimap tiles
+	# working again", after a stray click of mine had turned the feature off.
+	scn.apply_live_cb = func() -> void:
+		_set_panels_one_to_one(_panels_1to1)
+		_refresh_crt()
 	_options.add_child(scn)
 	add_child(_options)
 	UiState.set_scene("options")
@@ -1423,18 +1431,34 @@ func _add_crt_overlay() -> void:
 	# over the whole window, so without the pass-through every feedback hit-test resolved to it —
 	# labels collapsed to "MainFrame" and the playfield handoff to the tile inspector broke.
 	rect.set_meta("feedback_pass", true)
-	# Scanlines and vignette are independent 1:1-test effects; the overlay shows if either is on.
-	var scan := bool(Settings.get_value("fx_scanlines", false))
-	var vig := bool(Settings.get_value("fx_vignette", false))
 	var sh: Shader = load("res://crt.gdshader")
 	if sh != null:
 		var mat := ShaderMaterial.new()
 		mat.shader = sh
-		mat.set_shader_parameter("scanline_lift", 0.042 if scan else 0.0)
-		mat.set_shader_parameter("vignette_strength", 0.42 if vig else 0.0)
 		rect.material = mat
 	_crt_layer.add_child(rect)
 	add_child(_crt_layer)
+	_crt_rect = rect
+	_refresh_crt()
+
+## The two CRT effects, read from the settings and applied to the overlay that already exists.
+##
+## SPLIT OUT OF _add_crt_overlay BECAUSE THAT RUNS ONCE. It returns early when the layer is built,
+## so the scanline and vignette switches were read at startup and never again — flip either in
+## Options and nothing happened until the next launch. Found by tools/regression/settings_reach_audit.py,
+## which is exactly the sweep it was written for.
+var _crt_rect: ColorRect = null
+
+func _refresh_crt() -> void:
+	if _crt_layer == null or _crt_rect == null:
+		return
+	# Scanlines and vignette are independent 1:1-test effects; the overlay shows if either is on.
+	var scan := bool(Settings.get_value("fx_scanlines", false))
+	var vig := bool(Settings.get_value("fx_vignette", false))
+	var mat := _crt_rect.material as ShaderMaterial
+	if mat != null:
+		mat.set_shader_parameter("scanline_lift", 0.042 if scan else 0.0)
+		mat.set_shader_parameter("vignette_strength", 0.42 if vig else 0.0)
 	_crt_layer.visible = scan or vig
 
 # Chrome-overflow tripwire: if any row's minimum width exceeds the window, the root
@@ -1462,7 +1486,13 @@ func _report_overflow() -> void:
 # The Holodeck owns the master switch + camera (hotkey / highvisor / preset flip it there and
 # emit one_to_one_changed); here we swap the side panels to their Qud-faithful variant and
 # persist the choice so the next launch (and presets) stick.
+## The master 1:1 state the panels were last shaped against. Kept so a QoL toggle can re-run that
+## same decision without inventing an answer for it — every panel's shape is `on and
+## qud_shape(feature)`, and only the second half is what a feature switch changes.
+var _panels_1to1 := true
+
 func _on_one_to_one_changed(on: bool, chosen: bool) -> void:
+	_panels_1to1 = on
 	_set_panels_one_to_one(on)
 	_apply_layout_mode(on)
 	# ONLY A CHOICE IS PERSISTED. Two ways this arrives: the viewer pressed Ctrl+M, or Raves simply
@@ -1498,6 +1528,8 @@ func _panel_feature(p: Object) -> String:
 		return "nearby"
 	if p == _locations:
 		return "locations"
+	if p == _minimap:
+		return "minimap"
 	return ""
 
 ## Reshape the chrome to match Qud (1:1) or restore the QoL layout (user). Three moves: widen the side
@@ -1883,6 +1915,9 @@ func _row_main() -> Control:
 	side.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_side = side
 	_minimap = load("res://MinimapView.gd").new()    # the real Minimap view (its own file)
+	# The top-down map needs the node the zone is DRAWN under — cells are not world coordinates.
+	# Late-bound: _holo does not exist when this column is built.
+	_minimap.set_meta("needs_world", true)
 	_minimap.name = "Minimap"
 	_minimap.custom_minimum_size = Vector2(0, 220)
 	_nearby = load("res://NearbyObjects.gd").new()   # the real Nearby objects view (its own file)
@@ -2035,6 +2070,18 @@ func _connect_holodeck() -> void:
 	# stripped option text keeps its hotkey prefix ("[c] Control Mapping") — match the tail
 	# A modal just left the screen -- whatever is behind it may now be stale (an item
 	# action lands when the viewer ANSWERS, not when the menu opened).
+	# THE MINIMAP'S CLICKS GO WHERE THE PLAYFIELD'S GO. Same two calls, addressed by cell — Daniel:
+	# "just like the playfield. This will help with the 3D view making some things harder to
+	# discern." Late-bound like every other _holo wire.
+	if _minimap != null and _holo != null:
+		_minimap.tile_travel.connect(func(c: Vector2i) -> void:
+			if _holo != null and _holo.has_method("travel_to_cell"):
+				_holo.travel_to_cell(c))
+		_minimap.tile_interact.connect(func(c: Vector2i) -> void:
+			if _holo != null and _holo.has_method("interact_at_cell"):
+				_holo.interact_at_cell(c))
+	if _minimap != null and _minimap.get("world_ref") == null and _holo != null:
+		_minimap.world_ref = _holo.renderer
 	_holo.connect("popup_closed", func():
 		if _status != null and _status.visible and _status.has_method("_refresh_after_popup"):
 			_status._refresh_after_popup())
@@ -2064,6 +2111,7 @@ func _connect_holodeck() -> void:
 	# emits one_to_one_changed → _on_one_to_one_changed pushes the 1:1 variant to the panels too.
 	_holo.set_one_to_one(Settings.clone_of_qud())
 	if Settings.clone_of_qud():
+		_panels_1to1 = true
 		_set_panels_one_to_one(true)            # ensure panels match on a 1:1 launch
 		_apply_layout_mode(true)                # widen sidebar, compact menu, drop dev strip, recentre cam
 		_enable_viewport.call_deferred()        # 1:1 is a parity view — bring the 3D up automatically
@@ -2210,8 +2258,16 @@ func _apply_stats(data: Dictionary) -> void:
 	_check_mod_version(data)
 	# Every sub-view shares one entry point, so feeding them is a loop (adding a panel = build the scene
 	# + append it to _panels in _ready; no wiring change here).
+	# TIMED PER PANEL. The profiler covered Main, the renderer and the bridge and stopped at the
+	# side column — which is where a per-turn tile composite and a 48,000-pixel debug loop were
+	# quietly added. A phase nobody measures is a phase nobody suspects.
+	Profiler.begin("panels")
 	for p in _panels:
+		var nm: String = "panel." + String(p.name).to_lower()
+		Profiler.begin(nm)
 		p.set_snapshot(data)
+		Profiler.done(nm)
+	Profiler.done("panels")
 
 ## Compare the running mod's wire version to what this client needs, and pin a status line in the message
 ## log. A mod .cs change only takes effect after a Qud restart, so "deployed but not restarted" left the

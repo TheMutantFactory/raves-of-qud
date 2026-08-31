@@ -353,6 +353,11 @@ var _placing_player := false                 # true while placing the player's o
 ## front of the camera on occasion. Like right now." Neither is a placement question -- it is a
 ## per-camera one, and Godot answers it with layers and cull_mask.
 const PLAYER_LAYER := 1 << 9
+## THE SIGHT AREA'S OWN LAYER, so a camera can be built that does not see it. The minimap's
+## top-down view is the reason: from above, the fog is a LID — underground it covers the whole
+## zone, and a camera looking down at it sees a dark sheet and nothing else. A map that shows only
+## fog is not a map. Every other camera keeps it, because cull_mask defaults to all layers.
+const DARK_LAYER := 1 << 11
 
 ## Put every VisualInstance3D in a subtree on a layer (bit OR'd in, so it keeps rendering to
 
@@ -584,6 +589,76 @@ var _daylight := 0.0
 const GLOW_DAY_MIN := 0.0     # ground light-pool: fully gone at midday (no darkness to fill)
 const FLAME_DAY_MIN := 0.0    # flame ball: fully gone at midday; the sconce post carries the tile
 
+# ── which pieces of a fire are switched on ────────────────────────────────────────────────────
+#
+# A Raves fire is three separate objects over one Qud-lit cell — a pool on the floor, a flame, and
+# a plume — and each has its own QoL feature now. Read ONCE PER FRAME into these, not per light:
+# the flicker driver touches every fixture in the zone every frame, and three dictionary lookups
+# per torch per frame is a cost with no reader.
+var _fx_pool := true
+var _fx_flame := true
+var _fx_fsmoke := true
+
+## Groups, so a toggle reaches the fixtures this renderer is no longer driving. `_lights` holds
+## only the LIVE zone; remembered and neighbour zones are built once into a frozen bank and never
+## looked at again, so without these a toggle would clear the pools at your feet and leave the ones
+## across the zone line burning — a half-applied setting, which reads as a broken one.
+const FX_POOL_GROUP := "fx_pool"
+const FX_FLAME_GROUP := "fx_flame"
+
+## Is this piece of the fire switched on? The INVERSE of qud_shape: the gate answers "take Qud's
+## shape here", and Qud's shape is a lit cell with no 3D fixture over it at all.
+func _fx_on(feature: String) -> bool:
+	return not Settings.qud_shape(feature)
+
+## Re-read the three feature gates. Returns true if any of them moved, which is the only time
+## anything has to be walked.
+func _refresh_fx_flags() -> bool:
+	var p := _fx_on("floorglow")
+	var f := _fx_on("flames")
+	var m := _fx_on("firesmoke")
+	# THE FOURTH GATE IS NOT A FIXTURE. The other three switch nodes off; this one changes what a
+	# cell's light READS AS, so there is nothing to walk — it lands on the next relight, which is
+	# the next turn. Kept here so all four are read in one place, once a frame.
+	var d := not _fx_on("firecells")
+	var td := not _fx_on("carriedlight")
+	if d != fire_dark or td != torch_dark:
+		fire_dark = d
+		torch_dark = td
+		# INSTANT, NOT NEXT TURN. What this gate changes is read during the RELIGHT, and the
+		# relight runs per snapshot — so throwing the switch and looking at an unchanged world was
+		# the whole experience of using it, exactly the "silent success" this project keeps
+		# paying for. Main re-renders the stored snapshot, the same way the 2D/3D toggle does.
+		lighting_changed.emit()
+	if p == _fx_pool and f == _fx_flame and m == _fx_fsmoke:
+		return false
+	_fx_pool = p
+	_fx_flame = f
+	_fx_fsmoke = m
+	return true
+
+## Apply the flags to every fixture in the scene, live zone and frozen banks alike. Only called on
+## a change (see _refresh_fx_flags), so the group walk is not a per-frame cost.
+func _apply_fx_flags() -> void:
+	if not is_inside_tree():
+		return
+	fx_walked = 0
+	for n in get_tree().get_nodes_in_group(FX_POOL_GROUP):
+		(n as Node3D).visible = _fx_pool
+		fx_walked += 1
+	for n in get_tree().get_nodes_in_group(FX_FLAME_GROUP):
+		(n as Node3D).visible = _fx_flame
+	# Smoke is an EMITTER, not a visibility: hiding a GPUParticles3D leaves it simulating, and
+	# switching it back on would pop a full plume into being mid-air instead of starting one.
+	for L in _lights:
+		if L.has("smoke") and is_instance_valid(L["smoke"]):
+			(L["smoke"] as GPUParticles3D).emitting = _smoke_wanted(bool(L.get("fire_smoke", false)))
+
+## Should this plume be emitting? A fire's smoke burns day and night under its own feature; a
+## sconce's is night-only ambience under `particles`.
+func _smoke_wanted(fire: bool) -> bool:
+	return _fx_fsmoke if fire else _smoke_on()
+
 ## Multiplier for the ground glow / the flame, given the current daylight. Both are 1.0
 ## at night and fall to their *_DAY_MIN floor at midday.
 func _glow_mul() -> float:
@@ -604,11 +679,10 @@ func set_daylight(sun_a: float) -> void:
 	# Smoke is night-only: toggle every live sconce's emitter with the time of day. Setting
 	# emitting=false lets the puffs already aloft finish rising and fade (~lifetime), so the
 	# plume tapers off at dawn rather than vanishing.
-	var on := _smoke_on()
 	for L in _lights:
 		if L.has("smoke"):
 			# a real fire burns day + night, so its smoke keeps emitting; a torch's smoke is night-only
-			(L["smoke"] as GPUParticles3D).emitting = true if L.get("fire_smoke", false) else on
+			(L["smoke"] as GPUParticles3D).emitting = _smoke_wanted(bool(L.get("fire_smoke", false)))
 
 var _active: Array = []
 var _sprite_pool: Array[Sprite3D] = []
@@ -681,6 +755,11 @@ func set_one_to_one(on: bool) -> void:
 	_drop_all_static()   # Main re-renders right after (same contract as set_flat_2d)
 
 func _ready() -> void:
+	# BEFORE THE FIRST ZONE BUILDS, so a fixture is born with the flags already applied. The pool
+	# beside this one carries the same lesson written the expensive way: anything corrected on the
+	# first _process instead of at birth is a frame of the wrong picture, and a build hitch holds
+	# that frame on screen long enough to be reported as a bug.
+	_refresh_fx_flags()
 	_plane = PlaneMesh.new()
 	_plane.size = Vector2(CELL, CELL)
 	_fence_quad = QuadMesh.new()
@@ -1088,6 +1167,13 @@ func render_snapshot(data: Dictionary, neighbors: Array = []) -> void:
 	if _ray_bumped(data) and not _ray_path.is_empty():
 		flash_flames(_ray_path)
 		_ray_path = []
+	# THE SAME FRAME THE STEP IS BUILT IN, not the next one. Daniel: "whenever I take a step, the
+	# floor light I'm trying to turn off is on for a frame or two and then turns off." The driver
+	# in _process re-asserts these gates, but it runs AFTER this build — so every step showed one
+	# or two frames of the pool before the correction landed. The same lesson the pool's own birth
+	# fade carries three hundred lines up: anything corrected on the next frame is a frame of the
+	# wrong picture, and a build hitch holds it on screen long enough to be reported as a bug.
+	_apply_fx_flags()
 
 ## Build one zone's STATIC geometry (walls + non-creature nonwalls + lights) into the
 ## current bank, cells shifted by `offset`. `skip_creatures` drops mobile actors —
@@ -1764,7 +1850,9 @@ func _rebuild_dynamics(cells: Array) -> void:
 	_tally_edge_tone(cells, bool(Settings.get_value("lit_floor", false)))
 	_build_unexplored(_dynamic_root)
 	if any_dark:
-		_build_darkness(cells, _swap_dark())           # fall off to black around light sources
+		var dnode := _swap_dark()
+		_build_darkness(cells, dnode)                  # fall off to black around light sources
+		_tag_layer(dnode, DARK_LAYER)                  # ...on its own layer — see DARK_LAYER
 		if not _one_to_one:
 			_relight_static_sprites(cells)             # dim trees/brinestalks/fences by cell light
 	elif _was_dark:
@@ -2059,7 +2147,7 @@ func _fires_allowed() -> bool:
 	return zd <= r
 
 func _light_frac(cell: Dictionary) -> float:
-	var lv := int(cell.get("light", 200))   # default full: surface, or an older mod w/o the field
+	var lv := cell_light(cell)              # default full: surface, or an older mod w/o the field
 	if lv <= LIGHT_NONE:
 		return 0.0                          # Blackout / None — not perceived at all
 	return maxf(clampf(float(lv - 1) / 199.0, 0.0, 1.0), MEMORY_GROUND)
@@ -2084,7 +2172,132 @@ const MEMORY_TINT := Color(0.32, 0.58, 0.55)
 ## bands Qud shows as memory, which is over-hiding rather than parity. Kept because the field is
 ## real and the discrepancy is worth chasing; the fog currently rests on `visible` alone.
 func _cell_explored(cell: Dictionary) -> bool:
+	return cell_is_explored(cell)
+
+
+## THE TWO FOG PREDICATES, STATIC, so anything drawing this zone can ask them without a renderer.
+## The minimap needs exactly these when its fog toggle is on, and a second copy over there would
+## be a second opinion about what you can see — the map and the world disagreeing about which
+## cells are known is worse than either answer alone.
+## The firelight gate moved. Main re-renders the stored snapshot so the change is visible now
+## rather than on the next step (see _refresh_fx_flags).
+signal lighting_changed
+
+## FIRELIGHT, SWITCHED OFF AT THE SOURCE. Daniel, twice: "Campfires and arc sconces still have
+## the floor/walls lit... How do I disable the current campfire/sconce floor lighting?"
+##
+## Qud sends one light byte per cell and no account of what lit it, so nothing downstream could
+## tell a campfire's light from daylight or from the torch in your hand. But the snapshot DOES
+## carry the sources — every campfire and arc sconce arrives as an object with a lightRadius — so
+## the attribution can be reconstructed once per turn and written onto the cell as a fact:
+## `firelit` means "this cell is lit, and a fire or sconce is why".
+##
+## Set by a STATIC var rather than read from Settings here, because this is called from the
+## minimap as well as the world and a static function cannot reach an autoload. The renderer
+## refreshes it every frame with the other fx gates.
+static var fire_dark := false
+## ...and the same for the light you are CARRYING. Kept apart from the fires deliberately: with
+## one switch there was no way to tell the two apart on screen, and the honest answer to "is that
+## the campfire or your torch?" turned out to be "your torch" often enough that Daniel and I
+## disagreed about it three times running. Two switches settle it by experiment in five seconds.
+static var torch_dark := false
+## How many times the driver has had to put a fixture back the way its switch says. A number that
+## keeps climbing means something re-shows them every turn, and names the frame to look at.
+var fx_corrections := 0
+## ...of which this many were ON SCREEN when corrected, and where the first one lived.
+var fx_flashes := 0
+var fx_flash_where := ""
+## How many pool nodes the last group walk actually reached. If the driver keeps correcting
+## fixtures this says it walked, the walk is not the problem; if it walks none, the group lookup
+## is missing them and the gate never had a chance.
+var fx_walked := 0
+## ...and how many live fixtures the driver knows about, for the same comparison.
+var fx_lights := 0
+## The last 240 frames of what was on screen — see the note where it is filled.
+var fx_ring: Array = []
+
+## The cell's light AFTER the switch. One answer, asked by the world and the map alike — the
+## alternative is a map that disagrees with the room in front of you about whether you can see it.
+static func cell_light(cell: Dictionary) -> int:
+	var lv := int(cell.get("light", LIGHT_LIT))
+	if lv <= LIGHT_NONE:
+		return lv
+	var by_fire := bool(cell.get("firelit", false))
+	var by_torch := bool(cell.get("torchlit", false))
+	if not by_fire and not by_torch:
+		return lv              # something else lit it; not ours to switch off
+	# A CELL CAN HAVE TWO REASONS TO BE LIT, and one surviving reason is enough. Standing beside a
+	# campfire with a torch in hand, every cell around you has both — which is why switching the
+	# fires off changed nothing there, correctly.
+	if by_fire and not fire_dark:
+		return lv
+	if by_torch and not torch_dark:
+		return lv
+	return LIGHT_NONE
+
+## Was this cell lit, and has every reason for it been switched off? The ONE question the ground
+## tone and the light byte both ask, so a floor cannot go dark under a cell still counted as lit.
+static func switched_off(cell: Dictionary) -> bool:
+	return int(cell.get("light", LIGHT_LIT)) >= LIGHT_LIT and cell_light(cell) <= LIGHT_NONE
+
+## Work out which lit cells a fire or sconce is responsible for, and mark them. Called once per
+## snapshot, before anything reads the cells.
+##
+## THE MARK IS A FACT, NOT A DECISION: it says a fire lit this cell, and stays true whether or not
+## the feature is switched on. That is what lets the switch take effect at read time instead of
+## having to un-rewrite a light byte that was already overwritten.
+##
+## Two deliberate limits. It only ever marks cells QUD ALREADY LIT — a radius is a circle and
+## Qud's light is not, so intersecting with the real lit set means this can darken a cell Qud lit
+## but never light one it did not. And the light you are CARRYING wins: your own torch keeps its
+## cells, so switching this off leaves you able to see, rather than standing blind in a lit room.
+static func mark_fire_lit(data: Dictionary) -> int:
+	var cells: Array = data.get("cells", [])
+	if cells.is_empty():
+		return 0
+	# CREATURES ARE NOT FIRES. A glowfish carries a lightRadius too and is nobody's campfire; it
+	# is also the one light in this game that swims away from where it was marked.
+	var srcs: Array = []
+	for c in cells:
+		for o in c.get("objs", []):
+			if o.has("lightRadius") and not bool(o.get("creature", o.get("sinks", false))):
+				srcs.append([int(c.get("x", 0)), int(c.get("y", 0)), float(o["lightRadius"])])
+	var pc: Dictionary = data.get("player", {})
+	var px := int(pc.get("x", -9999))
+	var py := int(pc.get("y", -9999))
+	var hl: Dictionary = pc.get("heldLight", {}) if pc.has("heldLight") else {}
+	var pr: float = float(hl.get("radius", 0.0)) if not hl.is_empty() else 0.0
+	var n := 0
+	for c in cells:
+		# recomputed every turn: fires are lit, carried and put out, and so are torches
+		if c.has("firelit"):
+			c.erase("firelit")
+		if c.has("torchlit"):
+			c.erase("torchlit")
+		if int(c.get("light", LIGHT_LIT)) < LIGHT_LIT:
+			continue
+		var x := int(c.get("x", 0))
+		var y := int(c.get("y", 0))
+		# BOTH MARKS, not one or the other: a cell beside a campfire while you hold a torch has two
+		# reasons to be lit, and recording only the first made the fire switch look broken exactly
+		# where you were standing.
+		if pr > 0.0 and Vector2(x - px, y - py).length() <= pr:
+			c["torchlit"] = true
+		for sc in srcs:
+			if Vector2(x - sc[0], y - sc[1]).length() <= sc[2]:
+				c["firelit"] = true
+				n += 1
+				break
+	return n
+
+
+static func cell_is_explored(cell: Dictionary) -> bool:
 	return bool(cell.get("explored", true))
+
+
+static func cell_is_seen(cell: Dictionary) -> bool:
+	# the mod omits `visible` when it is TRUE, so an absent key means seen — never read it as false
+	return bool(cell.get("visible", true)) and cell_light(cell) > LIGHT_NONE
 
 ## Currently in the player's sight AND lit. Mirrors 1:1's `full_1to1` exactly.
 ## Public form of _cell_seen, for the inspector's fog verdict — one source, so the report cannot
@@ -2093,8 +2306,7 @@ func cell_seen(cell: Dictionary) -> bool:
 	return _cell_seen(cell)
 
 func _cell_seen(cell: Dictionary) -> bool:
-	# the mod omits `visible` when it is TRUE, so an absent key means seen — never read it as false
-	return bool(cell.get("visible", true)) and int(cell.get("light", 200)) > LIGHT_NONE
+	return cell_is_seen(cell)
 
 ## The same decision as a COLOUR, for anything that takes a modulate: out of sight leans teal.
 func _view_tint(cell: Dictionary) -> Color:
@@ -2633,6 +2845,21 @@ func _frozen_tone(k: Vector2i, off: Vector2i) -> float:
 func _live_cell_tone(cell: Dictionary, lit_floor: bool) -> float:
 	if not _cell_explored(cell):
 		return 1.0 - FOG_GROUND
+	# THE GROUND HAS TO GO DARK TOO, and MEMORY_GROUND will not take it there.
+	#
+	# Daniel, three times: "There's still floor lighting from the arc sconces and campfires." The
+	# switch was reaching these cells the whole time — it moved them from `seen` to `not seen`,
+	# which is the most the tone table had to offer, and that is a film of 0.16. An unlit floor in
+	# Raves sits at 84% of a lit one.
+	#
+	# That 0.84 is not arbitrary and must not be touched: it was MEASURED off Qud, whose lit ground
+	# is rgb(17,53,52) against remembered rgb(15,45,44), a ratio of 0.85. The ratio is right and the
+	# SURFACE it was measured on is not the one it is applied to — Qud's ground is ~99.7% empty
+	# background, so 85% of near-black is near-black, while 85% of the painted tan floor tile Raves
+	# draws in the same cell is still a painted tan floor tile. The parity constant stays; a cell
+	# this feature has switched off gets its own tone, the deepest the live zone allows.
+	if switched_off(cell):
+		return 1.0
 	if not _cell_seen(cell):
 		return 0.0 if lit_floor else 1.0 - MEMORY_GROUND
 	return 1.0 - _light_frac(cell)
@@ -4168,6 +4395,13 @@ func _place_light(cx: int, cy: int, radius: float, smokes := true, on_fire := fa
 	glow.mesh = gm
 	glow.position = Vector3(cx, FLOOR_Y + 0.01, cy)
 	glow.material_override = _fx_material(_pool_texture(n, mask), true)
+	glow.add_to_group(FX_POOL_GROUP)
+	# ASK THE SETTING, NOT THE CACHE. The cached gates are filled in _ready and refreshed per
+	# frame, and the very first zone builds before that cache can be trusted: seven fixtures — one
+	# per light in the zone — were born visible and corrected a frame later, which is a frame of
+	# firelight nobody asked for on every startup. A dictionary lookup once per fixture per build
+	# is not a cost worth a frame of the wrong picture.
+	glow.visible = _fx_on("floorglow")
 	lp.add_child(glow)
 
 	# THE FLAME. Live zone: PARTICLE FIRE (Daniel: the drawn flame was "not
@@ -4203,6 +4437,8 @@ func _place_light(cx: int, cy: int, radius: float, smokes := true, on_fire := fa
 			# flame's height — the whole of "clamped to the burning part".
 			var k: float = flame_h / (FIRE_RISE * FIRE_LIFETIME)
 			pf.scale = Vector3(k, k, k)
+		pf.add_to_group(FX_FLAME_GROUP)
+		pf.visible = _fx_on("flames")
 		lp.add_child(pf)
 		flame = pf
 	else:
@@ -4224,6 +4460,8 @@ func _place_light(cx: int, cy: int, radius: float, smokes := true, on_fire := fa
 				else Vector3(cx, 0.55 if on_fire else 0.7, cy)
 		else:
 			fsp.position = flame_at if flame_at != Vector3.INF else Vector3(cx, 0.55 if on_fire else 0.7, cy)
+		fsp.add_to_group(FX_FLAME_GROUP)
+		fsp.visible = _fx_on("flames")
 		lp.add_child(fsp)
 		flame = fsp
 
@@ -4249,7 +4487,7 @@ func _place_light(cx: int, cy: int, radius: float, smokes := true, on_fire := fa
 			# just above the flame — wherever the flame actually is
 			smoke.position = (flame_at + Vector3(0, 0.25, 0)) if flame_at != Vector3.INF \
 				else Vector3(cx, 0.85, cy)
-			smoke.emitting = true if on_fire else _smoke_on()
+			smoke.emitting = _smoke_wanted(on_fire)
 			lp.add_child(smoke)
 			entry["smoke"] = smoke
 			entry["fire_smoke"] = on_fire
@@ -5451,6 +5689,43 @@ func _process(_dt: float) -> void:
 	if _ib_active:
 		_ib_step()               # advance the incremental live-static build one chunk per frame
 	_drain_nb_builds()           # ...and at most ONE remembered-zone build per frame (see the queue)
+	# THE FEATURE GATES, once per frame rather than once per torch. A change walks every fixture in
+	# the scene, including the frozen banks the driver below never touches.
+	if _refresh_fx_flags():
+		_apply_fx_flags()
+	fx_lights = _lights.size()
+	# A FRAME RING, because the thing being reported lasts one or two frames and a screenshot
+	# takes six hundred milliseconds. Each entry is what the eye could actually have seen that
+	# frame: how many glow pools were on screen, which sight-area buffer was showing, and how far
+	# through a step we were.
+	# THE HELD POOL IS NOT IN _lights. _place_light returns early for a no_flame caller, and only
+	# appends under _live_build — so the light carried in your hand is rebuilt every turn and the
+	# per-frame re-assertion above never reaches it. Every turn is every step, which is the shape
+	# of what Daniel reported.
+	if not _held_pool.is_empty():
+		var hg = _held_pool.get("glow")
+		if is_instance_valid(hg) and (hg as Node3D).visible != _fx_pool:
+			if (hg as Node3D).is_visible_in_tree():
+				fx_flashes += 1
+				if fx_flash_where == "":
+					fx_flash_where = "held pool"
+			(hg as Node3D).visible = _fx_pool
+			fx_corrections += 1
+	var pv := 0
+	if not _held_pool.is_empty():
+		var hg2 = _held_pool.get("glow")
+		if is_instance_valid(hg2) and (hg2 as Node3D).is_visible_in_tree():
+			pv += 1
+	for L2 in _lights:
+		var g2 = L2.get("glow")
+		if is_instance_valid(g2) and (g2 as Node3D).is_visible_in_tree():
+			pv += 1
+	fx_ring.append({"pools_on_screen": pv,
+		"dark_new": is_instance_valid(_dark_new) and _dark_new.visible,
+		"dark_old": is_instance_valid(_dark_old) and _dark_old.visible,
+		"walk": snappedf(Vector2(_walk_off).length(), 0.01)})
+	if fx_ring.size() > 240:
+		fx_ring.pop_front()
 	var gmul := _glow_mul()      # daylight dimming, recomputed once per frame
 	var fmul := _flame_mul()
 	for L in _lights:
@@ -5459,19 +5734,45 @@ func _process(_dt: float) -> void:
 		var a: float = L["energy"]
 		# a fire's pool is darkness-gated (off by day); a torch's follows the general daylight fade
 		var g: float = _fire_glow_mul() if L.get("on_fire", false) else gmul
-		(L["glow"] as MeshInstance3D).transparency = clampf(1.0 - a * g * 0.6, 0.0, 1.0)
+		# THE GATE, RE-ASSERTED EVERY FRAME, exactly as pf.emitting is below.
+		#
+		# Setting `visible` once at birth and once more when the switch moves is not enough: the
+		# pool over the arc sconce came back visible with `floorglow` off, while being IN the
+		# fx_pool group — so something else re-shows these nodes after they are made (the floor
+		# pool recycles MeshInstance3Ds and sets visible=true on them, which is the shape of it).
+		# Daniel spent five rounds looking at that quad while every cell-level number said the
+		# light was off. A per-frame write costs one bool per fixture and cannot be undone by a
+		# writer that runs earlier in the same frame.
+		var gm := L["glow"] as MeshInstance3D
+		if gm.visible != _fx_pool:
+			# WAS IT ACTUALLY ON SCREEN? A correction to a node inside a bank nobody is looking at
+			# is free; a correction to one visible IN THE TREE is a frame of the wrong picture that
+			# the player saw. Counting them apart is the difference between "something re-shows
+			# these" and "Daniel sees a flash every step".
+			if gm.is_visible_in_tree():
+				fx_flashes += 1
+				if fx_flash_where == "":
+					var par := gm.get_parent()
+					fx_flash_where = String(par.name) if par != null else "(orphan)"
+			gm.visible = _fx_pool
+			fx_corrections += 1
+		gm.transparency = clampf(1.0 - a * g * 0.6, 0.0, 1.0)
 		var fs: float = 0.9 + a * 0.25
 		if L.get("particle_fire", false):
 			# particle fire flickers through emission: speed jitters with the
 			# energy, and daylight thins the tongue count (a campfire burns
 			# full day + night — it's the daytime fire cue).
 			var pf := L["flame"] as GPUParticles3D
+			if pf.visible != _fx_flame:
+				pf.visible = _fx_flame
 			pf.speed_scale = 0.85 + a * 0.35
 			var ratio: float = 1.0 if L.get("on_fire", false) else clampf(a * fmul, 0.0, 1.0)
 			pf.amount_ratio = ratio
-			pf.emitting = ratio > 0.03
+			pf.emitting = _fx_flame and ratio > 0.03
 		else:
 			var flame := L["flame"] as Sprite3D
+			if flame.visible != _fx_flame:
+				flame.visible = _fx_flame      # same re-assertion, for the drawn flame
 			flame.scale = Vector3(fs, fs * (0.95 + randf() * 0.2), fs)
 			# transparency, NOT modulate: modulate is ignored under material_override (which the
 			# flame has, for additive blend), so the flicker/daylight fade never reached the ball.
@@ -12388,7 +12689,17 @@ func _take_floor() -> MeshInstance3D:
 	return mi
 
 ## Queue a floor quad (its full transform) under its material for this build's batch.
+## The highest floor quad laid in each cell, for `control.py firedump`. The darkness film is a
+## quad at a FIXED height (DARK_FLOOR_Y), and floors stack upward by render layer — so "is the
+## film under the floor it is meant to cover" is a question about two numbers, and until now
+## neither of them was written down anywhere.
+var floor_top := {}
+
 func _floor_batch_add(mat: Material, xform: Transform3D) -> void:
+	var o := xform.origin
+	var fk := Vector2i(int(round(o.x)), int(round(o.z)))
+	if o.y > float(floor_top.get(fk, -99.0)):
+		floor_top[fk] = o.y
 	if not _floor_batch.has(mat):
 		_floor_batch[mat] = []
 	_floor_batch[mat].append(xform)

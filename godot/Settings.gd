@@ -99,6 +99,49 @@ const QOL_FEATURES := {
 	"tiles3d": ["3D tiles (voxel walls + upright sprites)", false],
 	"lighting": ["Day/night lighting (grade + sun/moon + fog)", false],
 	"particles": ["Smoke plumes (sconces & torches at night)", false],
+	# THE THREE PIECES OF A FIRE, each switchable on its own. Qud lights a cell; Raves builds a
+	# fixture out of three separate things over that cell, and until now only the smoke had a
+	# lever. Daniel asked what could turn the floor lighting off and the answer was nothing —
+	# _place_light was gated on 1:1 and the world map and on nothing else.
+	#
+	# ON by default, all three, because they are what a Raves fire already looks like; these
+	# exist to take pieces AWAY. 1:1 is untouched either way — qud_shape short-circuits there,
+	# and _place_light returns before any of it in parity mode regardless.
+	#
+	# WHAT `floorglow` IS NOT, and the label has to say so. Daniel, with it switched off:
+	# "Campfires and arc sconces still have the floor/walls lit." They do, and the switch is
+	# working — measured from one spot, toggling it moves the warm pixel COUNT barely at all
+	# (14,474 -> 14,772) and only shifts their colour (199,124,60 -> 203,149,70). The orange
+	# underneath is QUD'S LIGHT MAP: a lit cell is drawn at full colour while everything else is
+	# multiplied down toward the memory ghost, and this zone's rock is Qud's `&y`, a tan. Qud's
+	# own screen shows the same cells bright, its shale the same orange.
+	#
+	# It reads as a much bigger effect here than in Qud for a reason that is not lighting at all:
+	# Raves draws a FLOOR TILE where Qud draws nothing, so Qud's lit patch is a few wall glyphs
+	# over black and Raves' is a whole glowing floor. Asked whether "off" should dim or
+	# extinguish those cells, Daniel chose neither — Qud's lighting stays as Qud sends it, and
+	# the switch says plainly that it only removes the pool Raves adds on top.
+	"floorglow": ["Extra glow pool under torches, sconces & fires (not Qud's cell lighting)", true],
+	"flames": ["3D flames on torches, sconces & fires", true],
+	# SEPARATE FROM `particles`, which covers the night plumes on sconces and standing torches and
+	# is off by default. An on-fire object's smoke was deliberately exempt from that gate — "a real
+	# fire smokes whether or not the viewer opted into ambience" — so folding it in would have
+	# deleted campfire smoke for everyone who never turned `particles` on. It gets its own lever.
+	"firesmoke": ["Smoke from things that are on fire", true],
+	# ...AND THE CELLS THEMSELVES, which is what Daniel was actually after. The three above remove
+	# what Raves adds on top of a fire; this one takes away the light Qud's fire casts on the room.
+	# Switch it off and a campfire or arc sconce stops lighting the floor and walls around it —
+	# they fall back to the remembered ghost — while the light you are CARRYING still works, so
+	# you can see where you are going. See ZoneRenderer.mark_fire_lit for how a cell is attributed
+	# to a fire when Qud sends only one light byte and no account of what lit it.
+	"firecells": ["Campfires & sconces light the cells around them", true],
+	# THE OTHER HALF OF THE ANSWER. Standing beside a campfire with a lit torch, every cell around
+	# you is lit twice over, and switching the fires off changes nothing you can see there — which
+	# read as a broken switch three times before the two were told apart. Off, the ground you are
+	# carrying light over goes dark too; together they answer "is that the campfire or my torch?"
+	# by experiment instead of by argument. Turning BOTH off in an unlit room leaves you seeing
+	# nothing, which is what having no light means.
+	"carriedlight": ["Your carried light (torch, lantern) lights the cells around you", true],
 	"depthcue": ["Depth cue (farther is slightly darker)", false],
 	"cutaway": ["Wall cutaway (fade rock between camera and you)", false],
 	# ON by default, unlike its neighbours: Qud draws a tree in one cell because it has
@@ -125,6 +168,12 @@ const QOL_FEATURES := {
 	# Locations list and its horizon beacons are a RAVES navigation aid built on a 3D world Qud does
 	# not have, so parity mode must not grow a fifth panel Qud never draws.
 	"locations": ["Locations panel + horizon beacons", true],
+	# ON by default. The minimap had NO feature, which means clone_of_qud() answered for it — a
+	# constant true — so the panel was Qud's minimap in both modes and its own painted/structural
+	# maps were unreachable from anywhere. Daniel: "I think we did this before, but I forget."
+	# They were built; the parity policy had switched them off. This is the lever Settings.gd's own
+	# note points at: "what you actually want is a QoL feature."
+	"minimap": ["Minimap: Raves sources (painted / structural / top-down camera)", true],
 	# ON by default. Qud's own menus carry a per-row IRenderable (QudMenuItem.icon) and simply do
 	# not draw it — the points-of-interest list ships a real tile for every creature and object in
 	# it. Showing them is a divergence, so it is a feature: 1:1 keeps Qud's text-only rows.

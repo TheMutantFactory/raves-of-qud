@@ -25,12 +25,72 @@ var _rect: TextureRect
 var _map_margin: MarginContainer   # 1:1 left inset for the map image
 var _vbox: VBoxContainer
 var _tex: ImageTexture   # reused across snapshots; only reallocated when the zone size changes
+var last_image: Image    # the composite as built, for tests and `minimapdump` (see below)
 var _toggle: Button
 var _title: Label      # header — "Minimap" (user) or the zone name (1:1, Qud-style)
 var _mode := MODE_FULL
+## WHICH MAP. Daniel: "Let's have a Raves setting for minimap 1:1, or top-down camera. That should
+## help navigate in the underworld." Two of these already existed behind the panel's own toggle and
+## one is new; the setting names all four in one place so the choice is somewhere you can find it.
+##   full / minimal  the painted and structural client-side maps (the old toggle)
+##   qud             Qud's OWN minimap, which until now only parity mode could reach
+##   tiles           the zone composited from Qud's OWN tile art, one sprite per cell
+## -> MainFrame -> Main: the same two things a playfield click does, addressed by CELL. Daniel:
+## "let's add the ability to left and right click tiles on the minimap, just like the playfield.
+## This will help with the 3D view making some things harder to discern."
+signal tile_travel(cell: Vector2i)
+signal tile_interact(cell: Vector2i)
+
+const SRC_KEY := "minimap_source"
+const PAN_KEY := "minimap_pan_tool"
+const FOLLOW_KEY := "minimap_follow"
+const ZOOM_KEY := "minimap_zoom"
+const FOG_KEY := "minimap_fog"
+## How much of a REMEMBERED cell survives — one you have explored but cannot currently see. Qud
+## ghosts these rather than hiding them, and so does the 3D view; the map says the same thing with
+## a veil of its own background over the tile.
+const FOG_MEMORY := 0.62
+## THE TILE MAP'S CELL SIZE, in map pixels — Qud's own art size, so sprites keep their shape and
+## the TextureRect scales the whole thing nearest-neighbour like every other source here.
+const TILE_W := 16
+const TILE_H := 24
+## WRITE-THROUGH TO Settings, off in tests. The toggle saves, and a headless run that presses it
+## puts a fixture's choice into the developer's own settings.json — which this test did, once,
+## before this existed. The drone panel has the same flag for the same reason.
+var persist := true
+var world_ref: Node3D   # unused; kept so MainFrame's late-bind does not need unpicking
+var probe := {}         # last tile-map pass, for control.py minimapdump
+## The ink count is a per-turn 48k-pixel scan. Off by default; `minimapdump` is still useful
+## without it, and the one question it answered has been answered.
+var ink_probe := false
+var _view: Control      # the clipping box the map is panned inside
+var _grab: Control      # the draggable bottom border
+var _zoom := 1.0        # 1.0 = the whole zone fits
+var _pan := Vector2.ZERO
+var _panning := false
+var _drag_from := Vector2.ZERO
+var _pan_btn: Button
+var _center_btn: Button
+var _pan_tool := false
+var _follow := false
+var _fog := false
+var _fog_btn: Button
+var _veil: Image      # one cell of background at FOG_MEMORY alpha, built once
+var _press_at := Vector2.ZERO   # where a click started, so a drag is not mistaken for a click
+var _sizing := false
+var _size_from := 0.0
+var _map_h := MAP_H_USER
 var _last_data := {}   # last snapshot, so a mode toggle re-renders without waiting for a new one
 
 func _ready() -> void:
+	_map_h = clampf(float(Settings.get_value(MAP_H_KEY, MAP_H_USER)), MAP_H_MIN, MAP_H_MAX)
+	_pan_tool = bool(Settings.get_value(PAN_KEY, false))
+	_follow = bool(Settings.get_value(FOLLOW_KEY, false))
+	# CLAMPED ON LOAD, not trusted. A saved zoom outlives the code that wrote it: shrink ZOOM_MAX
+	# in a later build and an old settings file would otherwise restore a zoom the map can no
+	# longer reach, with no gesture that gets back to a legal one.
+	_zoom = clampf(float(Settings.get_value(ZOOM_KEY, ZOOM_MIN)), ZOOM_MIN, ZOOM_MAX)
+	_fog = bool(Settings.get_value(FOG_KEY, false))
 	_tiles = load("res://QudTiles.gd").new()
 	_apply_panel_box()
 
@@ -46,6 +106,38 @@ func _ready() -> void:
 	_title.add_theme_font_size_override("font_size", UiFont.px(get_viewport(), "title"))
 	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(_title)
+	# THE PAN TOOL, and a centre. Daniel: "add a pan icon to the minimap tiles titlebar. While the
+	# pan tool is enabled, the minimap pans ... Now that the clicks are free when the pan tool is
+	# disabled" — which is the whole point of making it a MODE rather than a modifier key: a drag
+	# and a click are the same gesture at different speeds, so one of them has to be claimed
+	# explicitly or the map would guess, and guess wrong on every hurried click.
+	# THE EYE: Qud's own line of sight, applied to the map. Off by default, because a map that
+	# hides what you have not seen is a different tool from one that shows the zone — and the
+	# reason this panel draws Qud's tiles at all was to see the layout.
+	_fog_btn = Button.new()
+	_fog_btn.toggle_mode = true
+	_fog_btn.focus_mode = Control.FOCUS_NONE
+	_fog_btn.button_pressed = _fog
+	_dress_icon(_fog_btn, "res://art/look.svg", "👁")
+	_fog_btn.toggled.connect(_set_fog)
+	head.add_child(_fog_btn)
+	_pan_btn = Button.new()
+	_pan_btn.text = "✥"
+	_pan_btn.toggle_mode = true
+	_pan_btn.focus_mode = Control.FOCUS_NONE
+	_pan_btn.button_pressed = _pan_tool
+	_pan_btn.toggled.connect(_set_pan_tool)
+	head.add_child(_pan_btn)
+	# A TOGGLE, not a one-shot. Daniel: "this should be a toggle that then makes the minimap update
+	# to center on character whenever the character moves." Held down, it is a follow mode; the
+	# single centring it used to do is what switching it on does first.
+	_center_btn = Button.new()
+	_center_btn.text = "◎"
+	_center_btn.toggle_mode = true
+	_center_btn.focus_mode = Control.FOCUS_NONE
+	_center_btn.button_pressed = _follow
+	_center_btn.toggled.connect(_set_follow)
+	head.add_child(_center_btn)
 	_toggle = Button.new()
 	_toggle.focus_mode = Control.FOCUS_NONE
 	_toggle.pressed.connect(_toggle_mode)
@@ -64,7 +156,33 @@ func _ready() -> void:
 	_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_rect.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_rect.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_map_margin.add_child(_rect)
+	# A CLIPPING BOX, and the map inside it. Zoom and pan are the map's size and offset within
+	# this, so the panel never grows to fit a magnified texture — it shows a window onto it.
+	_view = Control.new()
+	_view.clip_contents = true
+	_view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	# AT BUILD TIME, not only on a mode change. set_one_to_one returns early when the mode has not
+	# changed, and user mode is the DEFAULT — so on a normal launch nothing ever gave the map a
+	# height at all.
+	_view.custom_minimum_size = Vector2(0, _map_h)
+	_view.gui_input.connect(_on_map_input)
+	_view.resized.connect(_layout_map)
+	_map_margin.add_child(_view)
+	_rect.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	_rect.stretch_mode = TextureRect.STRETCH_SCALE   # we size it; it fills what we give it
+	_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE  # the box takes the wheel and the drag
+	_view.add_child(_rect)
+
+	# THE BOTTOM BORDER, draggable. Same shape as the message log's ||| bar: a thin hit strip that
+	# owns the resize cursor, so the rest of the panel keeps its own.
+	_grab = Control.new()
+	_grab.custom_minimum_size = Vector2(0, GRAB_H)
+	_grab.mouse_default_cursor_shape = Control.CURSOR_VSIZE
+	_grab.tooltip_text = "Drag to resize the minimap"
+	_grab.gui_input.connect(_on_grab_input)
+	v.add_child(_grab)
+
 
 ## MainFrame calls this each snapshot with the full data (needs cells + player + zone dims + palette).
 func set_snapshot(data: Dictionary) -> void:
@@ -73,6 +191,11 @@ func set_snapshot(data: Dictionary) -> void:
 	if not pal.is_empty():
 		_palette = pal
 	_tiles.palette = _palette
+	# ...AND WHERE THE ART LIVES. The painted map only ever asked QudTiles for COLOURS, which need
+	# no directory, so this line was never missed. texture_for does need it, and without it every
+	# lookup returns null and the tile map composites a blank image — which looks exactly like a
+	# camera pointed at nothing, the failure this replaced.
+	_tiles.tiles_dir = String(data.get("tilesDir", _tiles.tiles_dir))
 	if _one_to_one:
 		_update_title_1to1()   # Qud puts the zone name atop the minimap; keep it live as we travel
 	_rerender()
@@ -103,11 +226,36 @@ func set_one_to_one(on: bool) -> void:
 	# 1:1 is Qud's MEASURED rect: 240x104 (confirmed against the live RectTransform), which is aspect
 	# 2.31 while the texture is 80x50 = 1.60 — Qud STRETCHES the map, it does not fit it. Raves was
 	# aspect-fitting into 190x119, so every feature sat at the wrong scale.
-	if _rect != null:
-		_rect.custom_minimum_size = Vector2(MAP_W_1TO1, MAP_H_1TO1) if on else Vector2(0, 0)
-		_rect.stretch_mode = TextureRect.STRETCH_SCALE if on else TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		_rect.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN if on else Control.SIZE_EXPAND_FILL
-		_rect.size_flags_vertical = Control.SIZE_SHRINK_BEGIN if on else Control.SIZE_EXPAND_FILL
+	# THE BOX IS SIZED, NOT THE MAP. The map inside it is placed by _layout_map in both modes now,
+	# so setting the TextureRect's own flags here would fight that every frame.
+	#
+	# USER MODE NEEDS A HEIGHT TOO. This was (0, 0), which was harmless only because user mode never
+	# reached this panel: with no QoL feature the minimap was Qud's shape in BOTH modes, so the 1:1
+	# branch always won and always set a size. Giving the panel a feature made user mode reachable
+	# for the first time and the map area collapsed to nothing — a composite with 43,080 lit pixels
+	# in it, drawn into zero height.
+	if _view != null:
+		_view.custom_minimum_size = Vector2(MAP_W_1TO1, MAP_H_1TO1) if on else Vector2(0, _map_h)
+		_view.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN if on else Control.SIZE_EXPAND_FILL
+		_view.size_flags_vertical = Control.SIZE_SHRINK_BEGIN if on else Control.SIZE_EXPAND_FILL
+	if _grab != null:
+		# Qud has no resize handle on its sidebar map, so parity mode does not grow one.
+		_grab.visible = not on
+	# ...nor a pan tool, nor a centre button. Qud's sidebar map is a picture, not an instrument.
+	if _pan_btn != null:
+		_pan_btn.visible = not on
+	if _center_btn != null:
+		_center_btn.visible = not on
+		_refresh_center_btn()
+	if _fog_btn != null:
+		# 1:1 draws QUD's minimap, which already carries Qud's own fog — there is nothing here to
+		# switch.
+		_fog_btn.visible = not on
+	if on:
+		# ...and a magnified, panned map is not Qud's either: parity starts from fit, every time.
+		_zoom = 1.0
+		_pan = Vector2.ZERO
+	_layout_map()
 	if _map_margin != null:
 		_map_margin.add_theme_constant_override("margin_left", MAP_X_1TO1 if on else 0)
 	# Qud's header glyphs and ours land on the same rows, but its map starts 4px higher — the gap
@@ -160,6 +308,8 @@ func _render_qud_minimap(mm: Dictionary) -> bool:
 			continue
 		cols.append(Color8(("0x" + s.substr(0, 2)).hex_to_int(), ("0x" + s.substr(2, 2)).hex_to_int(),
 			("0x" + s.substr(4, 2)).hex_to_int(), ("0x" + s.substr(6, 2)).hex_to_int()))
+	_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	_rect.modulate = Color.WHITE
 	var img := Image.create(w, h * 2, false, Image.FORMAT_RGBA8)
 	for y in h:
 		for x in w:
@@ -172,15 +322,88 @@ func _render_qud_minimap(mm: Dictionary) -> bool:
 			var ty := y * 2
 			img.set_pixel(x, ty, c)
 			img.set_pixel(x, ty + 1, c)
+	# THE PICTURE WE ACTUALLY BUILT. ImageTexture.update() writes straight to the GPU, and under
+	# the headless renderer get_image() keeps handing back the texture's *creation* contents —
+	# so a test that read the texture after a same-size re-render was grading the previous
+	# frame. Everything that wants to inspect the composite reads this instead.
+	last_image = img
 	if _tex != null and _tex.get_width() == w and _tex.get_height() == h * 2:
 		_tex.update(img)
 	else:
 		_tex = ImageTexture.create_from_image(img)
 		_rect.texture = _tex
+	_layout_map()
 	return true
 
 ## Qud's minimap rect, measured off its live RectTransform + the rendered frame at 1080:
 ## 240x104 at x1658 (content origin 1641 -> 17 in), map top y114.
+## The map's height in user mode. Qud's own is 104 against its fixed sidebar; the Raves column is
+## wider and resizable, so this only sets a floor and the rect grows with the panel.
+## ── ZOOM, PAN AND THE RESIZE STRIP ──────────────────────────────────────────────────────────────
+##
+## Daniel: "Let's make the minimap bottom border draggable, to make more room. Let's add scroll-zoom
+## to the minimap, as well as a pan/drag."
+##
+## The map is a texture in a CLIPPING box now, sized and positioned by hand, rather than a
+## TextureRect told to fit itself. Zoom is the texture's size, pan is its offset, and both are
+## nothing but arithmetic — which is why the three functions below are static and tested, and why
+## the widgets underneath them are three lines each.
+const ZOOM_MIN := 1.0        # 1.0 is FIT: the whole zone in the panel. Below that is empty margin.
+const ZOOM_MAX := 8.0
+const ZOOM_STEP := 1.15      # per wheel notch, multiplicative — a fixed step crawls when zoomed in
+const MAP_H_MIN := 60.0
+const MAP_H_MAX := 600.0
+const GRAB_H := 6.0          # the bottom strip's hit height
+const CLICK_SLOP := 4.0      # px a press may wander and still count as a click, not a drag
+const MAP_H_KEY := "minimap_height"
+
+## One wheel notch. Multiplicative so a notch means the same PROPORTION at every zoom — an additive
+## step is a crawl when zoomed in and a leap when zoomed out.
+static func zoom_step(zoom: float, notches: float) -> float:
+	return clampf(zoom * pow(ZOOM_STEP, notches), ZOOM_MIN, ZOOM_MAX)
+
+
+## Keep the map covering the view. WITHOUT THIS you can throw the map off the edge and be left
+## looking at an empty panel with no way back except a mode toggle — the failure that makes a
+## pannable view feel broken rather than free.
+##
+## When the content is SMALLER than the view (fit zoom, or a wide map in a tall box) it is centred
+## on that axis instead: there is nothing to pan to, so pinning it to a corner would just look
+## broken in a different way.
+static func clamp_pan(pan: Vector2, content: Vector2, view: Vector2) -> Vector2:
+	var out := pan
+	if content.x <= view.x:
+		out.x = (view.x - content.x) * 0.5
+	else:
+		out.x = clampf(out.x, view.x - content.x, 0.0)
+	if content.y <= view.y:
+		out.y = (view.y - content.y) * 0.5
+	else:
+		out.y = clampf(out.y, view.y - content.y, 0.0)
+	return out
+
+
+## Zoom about a point, so the cell under the cursor stays under the cursor. Zooming about the
+## CENTRE instead is the version everyone writes first, and it walks whatever you were looking at
+## off the screen as you close in on it.
+static func zoom_about(pan: Vector2, focus: Vector2, old_z: float, new_z: float) -> Vector2:
+	if old_z <= 0.0:
+		return pan
+	var k := new_z / old_z
+	return focus - (focus - pan) * k
+
+
+## NO LIFT. Daniel: "Light the minimap full correctly. It looks like it has been bleached." It had
+## been: a flat 2.2x modulate multiplies every channel and CLIPS, so rock went to neon rust, water
+## to neon cyan, and anything already pale went to white — the colours stopped being Qud's, which
+## is the entire point of drawing its tiles.
+##
+## The composite needs no lift at all. texture_for hands back each object's FULL colour — the map
+## is already "fully lit" in the sense that matters, because it never applied the zone's darkness
+## in the first place. What made it look dim was measuring it wrong (a stddev crop that mostly
+## sampled panel background) and reading it at fit zoom on a dark panel.
+const TILE_LIFT := Color(1, 1, 1)
+const MAP_H_USER := 120.0
 const MAP_W_1TO1 := 240.0
 const MAP_H_1TO1 := 104.0
 const MAP_X_1TO1 := 17
@@ -228,16 +451,42 @@ func _rerender() -> void:
 	var data := _last_data
 	if data.is_empty():
 		return
+	# PARITY STILL WINS. In 1:1 the minimap is Qud's, whatever the user picked — the setting is a
+	# user-mode choice and 1:1 is the mode that has no choices.
+	var src := "qud" if _one_to_one else String(Settings.get_value(SRC_KEY, "full"))
+	# RECORDED ON EVERY PASS, not just inside the tile branch. The first version only wrote the
+	# probe once the tile path ran, so "never ran" and "ran with a different source" both read as
+	# an empty dict — the one distinction worth having.
+	probe = {"renders": int(probe.get("renders", 0)) + 1, "src": src, "one_to_one": _one_to_one,
+		"has_data": not data.is_empty(), "tiles_dir": _tiles.tiles_dir,
+		"zone_w": int(data.get("zone", {}).get("width", 0)),
+		"zone_h": int(data.get("zone", {}).get("height", 0)),
+		"cells": (data.get("cells", []) as Array).size()}
+	_refresh_toggle()   # Options can change this key too; the button must not disagree with it
 	# 1:1 renders QUD's map when the mod ships it; anything else falls back to the QoL map below.
-	if _one_to_one:
+	if src == "qud":
 		var mm: Variant = data.get("minimap", null)
 		if mm is Dictionary and _render_qud_minimap(mm):
+			return
+		# ...and if the mod shipped none, fall through to the client-side map rather than leaving
+		# the panel blank: a minimap that vanishes reads as broken, not as unavailable.
+	elif src == "minimal":
+		_mode = MODE_MINIMAL
+	elif src == "full":
+		_mode = MODE_FULL
+	if src == "tiles":
+		var zt: Dictionary = data.get("zone", {})
+		var tw := int(zt.get("width", 0))
+		var th := int(zt.get("height", 0))
+		if tw > 0 and th > 0 and _render_tiles(data, tw, th):
 			return
 	var z: Dictionary = data.get("zone", {})
 	var w := int(z.get("width", 0))
 	var h := int(z.get("height", 0))
 	if w <= 0 or h <= 0:
 		return
+	_rect.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST   # one pixel per cell: keep it crisp
+	_rect.modulate = Color.WHITE
 	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
 	img.fill(BG)
 	for cell in data.get("cells", []):
@@ -254,13 +503,392 @@ func _rerender() -> void:
 	# Reuse one texture: update its pixels in place, only reallocating if the zone size changed. This
 	# avoids a per-turn GPU texture alloc/free that would otherwise churn during the risky viewport
 	# enable window.
+	# THE PICTURE WE ACTUALLY BUILT. ImageTexture.update() writes straight to the GPU, and under
+	# the headless renderer get_image() keeps handing back the texture's *creation* contents —
+	# so a test that read the texture after a same-size re-render was grading the previous
+	# frame. Everything that wants to inspect the composite reads this instead.
+	last_image = img
 	if _tex != null and _tex.get_width() == w and _tex.get_height() == h:
 		_tex.update(img)
 	else:
 		_tex = ImageTexture.create_from_image(img)
 		_rect.texture = _tex
+	_layout_map()
 
 ## Colour of one cell, per mode.
+## THE ZONE IN QUD'S OWN TILES. Daniel: "is it possible to just load the zone tilesets from Qud?
+## That's what I would be looking at. No 'camera' needed."
+##
+## He was right, and it retires a camera that never drew anything. A top-down view of a 3D world
+## has to be aimed, framed, transformed out of cell space and told which layers to ignore — four
+## chances to be wrong, and I was wrong at least three times. The tiles are already loaded, already
+## recoloured per object, and already keyed by the same cell data this panel reads: the map is a
+## composite, not a render.
+##
+## THE SAME OBJECT THE PAINTED MAP PICKS, so the two sources agree about what is in a cell and
+## differ only in how much of it they show.
+func _render_tiles(data: Dictionary, w: int, h: int) -> bool:
+	# WHAT THIS PASS ACTUALLY SAW, for `control.py minimapdump`. Two blind fixes in a row failed
+	# here; every one of them would have been a one-line read with this.
+	probe["tile_pass"] = true
+	probe["rect_visible"] = _rect.visible
+	probe["with_objs"] = 0
+	probe["tex_ok"] = 0
+	probe["tex_null"] = 0
+	Profiler.begin("minimap.tiles")
+	var img := Image.create(w * TILE_W, h * TILE_H, false, Image.FORMAT_RGBA8)
+	img.fill(BG)
+	for cell in data.get("cells", []):
+		var x := int(cell.get("x", -1))
+		var y := int(cell.get("y", -1))
+		if x < 0 or y < 0 or x >= w or y >= h:
+			continue
+		var objs: Array = cell.get("objs", [])
+		if objs.is_empty():
+			continue
+		# QUD'S OWN PREDICATES, not a second opinion: unexplored cells are not drawn at all and
+		# remembered ones are veiled, which is what the 3D view does with the same two answers.
+		var veil := false
+		if _fog:
+			if not ZoneRenderer.cell_is_explored(cell):
+				continue
+			veil = not ZoneRenderer.cell_is_seen(cell)
+		probe["with_objs"] += 1
+		# THE IMAGE, NOT THE TEXTURE. get_image() on an ImageTexture can force a GPU readback, and
+		# doing it once per cell is what made this panel cost 545ms a turn — five times the whole
+		# live 3D render. QudTiles caches the recoloured Image now, so this is a dictionary hit.
+		var ti: Image = _tiles.image_for(objs[objs.size() - 1], true)
+		if ti == null:
+			probe["tex_null"] += 1
+			continue
+		probe["tex_ok"] += 1
+		# Idempotent, and cheap after the first: QudTiles builds RGBA8, but custom art is loaded
+		# from disk in whatever format it was authored in.
+		if ti.get_format() != Image.FORMAT_RGBA8:
+			ti.convert(Image.FORMAT_RGBA8)
+		# BLENDED, not blitted: the art is mostly transparent and a straight copy would punch the
+		# background out around every sprite, leaving each tile in its own black box.
+		img.blend_rect(ti, Rect2i(Vector2i.ZERO, ti.get_size()),
+			Vector2i(x * TILE_W, y * TILE_H))
+		if veil:
+			# A VEIL, NOT A RECOLOUR. Dimming the tile would mean touching every pixel of it in
+			# GDScript, per cell, per turn — the cost that made this panel unusable once already.
+			# One blend of a pre-built translucent square is the same picture for a hundredth of
+			# the work.
+			img.blend_rect(_fog_veil(), Rect2i(0, 0, TILE_W, TILE_H),
+				Vector2i(x * TILE_W, y * TILE_H))
+	var p: Dictionary = data.get("player", {})
+	var px := int(p.get("x", -1))
+	var py := int(p.get("y", -1))
+	if px >= 0 and py >= 0 and px < w and py < h:
+		# The player as a box rather than his own sprite: at this size the map is about WHERE he is,
+		# and his tile is one more sprite among two thousand.
+		_mark_player(img, px, py)
+	# WHAT ENDED UP IN THE PICTURE. tex_ok counts textures that RESOLVED, which says nothing about
+	# whether their pixels reached the map — the difference between a compositing failure and a
+	# display one, and the only thing three rebuilds have not been able to tell apart.
+	# THE INK COUNT WAS A DIAGNOSTIC AND IT STAYED IN. 48,000 get_pixel calls in GDScript, every
+	# turn, to answer a question that was answered once — is the composite blank. It is off unless
+	# asked for, because a probe that costs a frame is not free to leave lying around.
+	if ink_probe:
+		var ink := 0
+		for yy in range(0, img.get_height(), 4):
+			for xx in range(0, img.get_width(), 4):
+				var c := img.get_pixel(xx, yy)
+				if absf(c.r - BG.r) > 0.03 or absf(c.g - BG.g) > 0.03 or absf(c.b - BG.b) > 0.03:
+					ink += 1
+		probe["ink"] = ink
+		probe["sampled"] = int(img.get_height() / 4) * int(img.get_width() / 4)
+	# LINEAR, FOR THIS SOURCE ONLY. Every other map here is one pixel per cell and wants crisp
+	# nearest-neighbour; this one is 1280x600 of sprite art squeezed into a panel a quarter that
+	# wide, and NEAREST samples a single pixel per tile — usually one of the transparent ones,
+	# since tile art is mostly empty. That is what made a composite of 2000 successfully resolved
+	# tiles read as a blank panel: the pixels were there and the filter threw them away.
+	_rect.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	# LIFTED, because the art is dark and the panel is darker. Measured on a subterranean canyon:
+	# the composite drew correctly all along — 145 distinct colours, luminance 16 to 255 — and read
+	# as an empty panel because its median pixel sat at 51. The painted map already brightens for
+	# the same reason (WALL_LIFT); this does it with modulate so the composite stays honest.
+	_rect.modulate = TILE_LIFT
+	var want := Vector2i(w * TILE_W, h * TILE_H)
+	# THE PICTURE WE ACTUALLY BUILT. ImageTexture.update() writes straight to the GPU, and under
+	# the headless renderer get_image() keeps handing back the texture's *creation* contents —
+	# so a test that read the texture after a same-size re-render was grading the previous
+	# frame. Everything that wants to inspect the composite reads this instead.
+	last_image = img
+	if _tex != null and _tex.get_size() == Vector2(want):
+		_tex.update(img)
+	else:
+		_tex = ImageTexture.create_from_image(img)
+		_rect.texture = _tex
+	_layout_map()
+	# THE LAST GAP: a picture with ink in it, a visible rect, and still nothing on screen. These
+	# say whether the texture reached the control and whether the control has any room to draw it.
+	probe["follow"] = _follow
+	probe["player"] = [int(_last_data.get("player", {}).get("x", -1)),
+		int(_last_data.get("player", {}).get("y", -1))]
+	probe["zoom"] = _zoom
+	probe["pan"] = [_pan.x, _pan.y]
+	probe["panning"] = _panning
+	probe["btn_events"] = _dbg_btn
+	probe["motion_events"] = _dbg_motion
+	probe["pan_motion"] = _dbg_pan_motion
+	probe["view_size"] = [_view.size.x, _view.size.y] if _view != null else []
+	probe["rect_size"] = [_rect.size.x, _rect.size.y]
+	probe["rect_min"] = [_rect.custom_minimum_size.x, _rect.custom_minimum_size.y]
+	probe["margin_size"] = [_map_margin.size.x, _map_margin.size.y] if _map_margin != null else []
+	probe["tex_on_rect"] = _rect.texture != null
+	probe["tex_size"] = [_tex.get_width(), _tex.get_height()]
+	probe["panel_size"] = [size.x, size.y]
+	# FOLLOW, AND THE CLOSING TIMER — both of which spent a session in _render_qud_minimap, the
+	# 1:1 path, because their anchor matched there first. So following never ran in user mode (the
+	# only mode that has the button), and the profiler's begin and done sat in different functions.
+	# Neither showed up as an error; the map simply did not follow, and a timing number that
+	# looked plausible was measuring a mismatched pair.
+	if _follow:
+		center_on_player()
+	Profiler.done("minimap.tiles")
+	return true
+
+
+## Place the map inside its box: fit first, then zoom, then pan. Called whenever any of the three
+## change, and on resize — the fit depends on the box.
+func _layout_map() -> void:
+	if _view == null or _rect == null or _rect.texture == null:
+		return
+	var t: Vector2 = _rect.texture.get_size()
+	var vw: Vector2 = _view.size
+	if t.x <= 0.0 or t.y <= 0.0 or vw.x <= 0.0 or vw.y <= 0.0:
+		return
+	# FIT IS ZOOM 1. Contain, not cover: at rest the whole zone is in the panel, which is what a
+	# minimap is for, and zooming in is the deliberate act.
+	var fit: float = minf(vw.x / t.x, vw.y / t.y)
+	var content: Vector2 = t * fit * _zoom
+	_pan = clamp_pan(_pan, content, vw)
+	_rect.size = content
+	_rect.position = _pan
+
+
+## The wheel zooms about the pointer; a held left button pans.
+## The same eye the Locations panel wears, from the same file — one glyph for "what can be seen"
+## across the whole frame. Falls back to a character if the art is missing, so a lost asset costs
+## a nice icon and not a working button.
+func _dress_icon(b: Button, art: String, fallback: String) -> void:
+	var tex: Texture2D = load(art) if ResourceLoader.exists(art) else null
+	if tex != null:
+		b.icon = tex
+		b.expand_icon = true
+		b.custom_minimum_size = Vector2(22, 18)
+	else:
+		b.text = fallback
+
+
+## LINE OF SIGHT ON THE MAP.
+func _set_fog(on: bool) -> void:
+	_fog = on
+	Settings.set_value(FOG_KEY, on)
+	if persist:
+		Settings.save()
+	_refresh_fog_btn()
+	_rerender()
+
+
+func _refresh_fog_btn() -> void:
+	if _fog_btn == null:
+		return
+	_fog_btn.button_pressed = _fog
+	_fog_btn.tooltip_text = ("Line of sight ON — the map shows only what you have seen"
+		if _fog else "Line of sight off — the map shows the whole zone")
+
+
+## THE PAN TOOL. Persisted, because it is a working mode rather than a momentary state: a player
+## who reads the map by dragging wants it to still be dragging tomorrow.
+func _set_pan_tool(on: bool) -> void:
+	_pan_tool = on
+	_panning = false
+	Settings.set_value(PAN_KEY, on)
+	if persist:
+		Settings.save()
+	_refresh_pan_btn()
+
+
+func _refresh_pan_btn() -> void:
+	if _pan_btn == null:
+		return
+	_pan_btn.button_pressed = _pan_tool
+	_pan_btn.tooltip_text = ("Pan tool ON — drag to move the map, clicks do not reach the world"
+		if _pan_tool else "Pan tool off — click tiles as you would the playfield")
+
+
+## FOLLOW MODE. Switching it on centres at once — that single centring is what the button used to
+## do, and doing it here means the toggle never has a state where it is "on" but showing somewhere
+## else.
+func _set_follow(on: bool) -> void:
+	_follow = on
+	Settings.set_value(FOLLOW_KEY, on)
+	if persist:
+		Settings.save()
+	_refresh_center_btn()
+	if on:
+		center_on_player()
+
+
+func _refresh_center_btn() -> void:
+	if _center_btn == null:
+		return
+	_center_btn.button_pressed = _follow
+	_center_btn.tooltip_text = ("Following you — the map re-centres as you move"
+		if _follow else "Follow you: keep the map centred as you move")
+
+
+## Put the player back in the middle. THE OBVIOUS COMPANION TO PANNING: once a map can be dragged
+## anywhere, the way back to yourself has to be one button and not a hunt.
+func center_on_player() -> void:
+	if _view == null or _rect == null or _rect.texture == null:
+		return
+	var p: Dictionary = _last_data.get("player", {})
+	var px := int(p.get("x", -1))
+	var py := int(p.get("y", -1))
+	if px < 0 or py < 0:
+		return
+	var t: Vector2 = _rect.texture.get_size()
+	if t.x <= 0.0 or t.y <= 0.0:
+		return
+	var scale_now: Vector2 = _rect.size / t
+	# The player's cell in TEXTURE space, then at the map's current scale, then offset so it lands
+	# in the middle of the box.
+	var on_map := Vector2((float(px) + 0.5) * TILE_W, (float(py) + 0.5) * TILE_H) * scale_now
+	_pan = _view.size * 0.5 - on_map
+	_layout_map()
+
+
+## Which zone cell a point in the map box falls on, or (-1,-1) if it is off the map. The exact
+## inverse of the placement in _layout_map, and the only reason a click on the minimap can mean a
+## tile at all.
+func cell_at(pos: Vector2) -> Vector2i:
+	if _rect == null or _rect.texture == null or _rect.size.x <= 0.0 or _rect.size.y <= 0.0:
+		return Vector2i(-1, -1)
+	var t: Vector2 = _rect.texture.get_size()
+	var local := (pos - _rect.position) / _rect.size * t   # -> texture pixels
+	var c := Vector2i(int(floorf(local.x / float(TILE_W))), int(floorf(local.y / float(TILE_H))))
+	if c.x < 0 or c.y < 0 or c.x >= int(t.x / TILE_W) or c.y >= int(t.y / TILE_H):
+		return Vector2i(-1, -1)
+	return c
+
+
+## Counted, not inferred: "the drag does nothing" has two very different causes — the events never
+## arrive, or they arrive and the arithmetic discards them — and no screenshot can tell them apart.
+var _dbg_btn := 0
+var _dbg_motion := 0
+var _dbg_pan_motion := 0
+
+func _on_map_input(e: InputEvent) -> void:
+	if e is InputEventMouseButton:
+		_dbg_btn += 1
+	elif e is InputEventMouseMotion:
+		_dbg_motion += 1
+		if _panning:
+			_dbg_pan_motion += 1
+	if _one_to_one:
+		return   # 1:1 is Qud's sidebar; it has no zoomable map
+	if e is InputEventMouseButton:
+		if e.button_index == MOUSE_BUTTON_WHEEL_UP or e.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			if not e.pressed:
+				return
+			var dir := 1.0 if e.button_index == MOUSE_BUTTON_WHEEL_UP else -1.0
+			var old := _zoom
+			_zoom = zoom_step(_zoom, dir)
+			if not is_equal_approx(_zoom, old):
+				_pan = zoom_about(_pan, e.position, old, _zoom)
+				_layout_map()
+				# SAVED PER NOTCH. A notch is a discrete act, unlike the resize drag next door —
+				# which is dozens of motion events and so saves on release instead. A fast scroll
+				# is a handful of writes, not a stream.
+				Settings.set_value(ZOOM_KEY, _zoom)
+				if persist:
+					Settings.save()
+			accept_event()
+		elif e.button_index == MOUSE_BUTTON_LEFT or e.button_index == MOUSE_BUTTON_RIGHT:
+			if e.pressed:
+				_press_at = e.position
+				_panning = _pan_tool and e.button_index == MOUSE_BUTTON_LEFT
+				_drag_from = e.position
+			else:
+				_panning = false
+				# A CLICK, NOT A DRAG. Decided on release and only if the pointer barely moved —
+				# the same discipline the playfield uses, and for the same reason: a sloppy drag
+				# must not order a walk to wherever it happened to end.
+				if not _pan_tool and e.position.distance_to(_press_at) <= CLICK_SLOP:
+					var c := cell_at(e.position)
+					if c.x >= 0:
+						if e.button_index == MOUSE_BUTTON_LEFT:
+							tile_travel.emit(c)
+						else:
+							tile_interact.emit(c)
+			accept_event()
+	elif e is InputEventMouseMotion and _panning:
+		# FROM POSITIONS, NOT `relative`. Godot fills `relative` from real pointer deltas, so any
+		# input that WARPS the cursor — which is what the test harness does — delivers motion
+		# events with a relative of zero: the handler ran twelve times and moved the map nowhere,
+		# and nothing on screen or in the counters said why until the pan value was read across a
+		# drag. Positions are what the event always carries honestly.
+		# DRAGGING TAKES THE WHEEL BACK. With follow on, the next snapshot would re-centre and undo
+		# the drag — the map would fight the hand holding it. Panning is an explicit statement that
+		# you want to look somewhere else, so it turns following off rather than being overridden
+		# a fifth of a second later.
+		if _follow:
+			_set_follow(false)
+		_pan += e.position - _drag_from
+		_drag_from = e.position
+		_layout_map()
+		accept_event()
+
+
+## The bottom border. Dragging it changes the map's height and nothing else.
+func _on_grab_input(e: InputEvent) -> void:
+	if e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_LEFT:
+		_sizing = e.pressed
+		_size_from = e.global_position.y
+		if not e.pressed:
+			# SAVED ON RELEASE, not per motion event: a drag is dozens of events and each one
+			# would rewrite the settings file.
+			Settings.set_value(MAP_H_KEY, _map_h)
+			if persist:
+				Settings.save()
+		accept_event()
+	elif e is InputEventMouseMotion and _sizing:
+		# FROM POSITIONS, for the same reason the pan is — `relative` is zero for any input that
+		# warps the pointer, and the strip would swallow a whole drag without moving. GLOBAL
+		# position here, because the strip itself moves as the panel resizes: a local y would be
+		# measured against a ruler that is being stretched by the thing it is measuring.
+		_map_h = clampf(_map_h + (e.global_position.y - _size_from), MAP_H_MIN, MAP_H_MAX)
+		_size_from = e.global_position.y
+		if _view != null:
+			_view.custom_minimum_size = Vector2(0, _map_h)
+		_layout_map()
+		accept_event()
+
+
+## One cell of background at the memory alpha, built once and reused for every veiled cell.
+func _fog_veil() -> Image:
+	if _veil == null:
+		_veil = Image.create(TILE_W, TILE_H, false, Image.FORMAT_RGBA8)
+		_veil.fill(Color(BG.r, BG.g, BG.b, FOG_MEMORY))
+	return _veil
+
+
+## A hollow box around the player's cell — hollow so his own tile still reads inside it.
+func _mark_player(img: Image, px: int, py: int) -> void:
+	var x0 := px * TILE_W
+	var y0 := py * TILE_H
+	for i in TILE_W:
+		img.set_pixel(x0 + i, y0, PLAYER)
+		img.set_pixel(x0 + i, y0 + TILE_H - 1, PLAYER)
+	for j in TILE_H:
+		img.set_pixel(x0, y0 + j, PLAYER)
+		img.set_pixel(x0 + TILE_W - 1, y0 + j, PLAYER)
+
+
 func _cell_color(cell: Dictionary) -> Color:
 	var objs: Array = cell.get("objs", [])
 	if objs.is_empty():
@@ -277,17 +905,30 @@ func _cell_color_minimal(objs: Array) -> Color:
 			return _tiles.main_color(objs[i], BG).lerp(Color.WHITE, WALL_LIFT)
 	return BG.lerp(_tiles.main_color(objs[objs.size() - 1], BG), NONWALL_DIM)
 
+## THE BUTTON AND THE SETTING ARE THE SAME THING. This used to flip a local _mode, which the
+## setting would then overwrite on the next snapshot — the button would appear to work and undo
+## itself a fraction of a second later. It cycles the SOURCE now, so the panel and Options are two
+## views of one value.
+const SOURCES := ["full", "minimal", "qud", "tiles"]
+const SOURCE_LABEL := {"full": "full", "minimal": "minimal", "qud": "qud", "tiles": "tiles"}
+
 func _toggle_mode() -> void:
-	_mode = MODE_FULL if _mode == MODE_MINIMAL else MODE_MINIMAL
+	var i: int = SOURCES.find(String(Settings.get_value(SRC_KEY, "full")))
+	var nxt: String = SOURCES[(maxi(i, 0) + 1) % SOURCES.size()]
+	Settings.set_value(SRC_KEY, nxt)
+	if persist:
+		Settings.save()
 	_refresh_toggle()
 	_rerender()
 
 func _refresh_toggle() -> void:
 	if _toggle == null:
 		return
-	_toggle.text = "minimal" if _mode == MODE_MINIMAL else "full"
-	var other := "full" if _mode == MODE_MINIMAL else "minimal"
-	_toggle.tooltip_text = "Switch to %s mode" % other
+	var src := String(Settings.get_value(SRC_KEY, "full"))
+	_toggle.text = String(SOURCE_LABEL.get(src, src))
+	var i: int = SOURCES.find(src)
+	var nxt: String = SOURCES[(maxi(i, 0) + 1) % SOURCES.size()]
+	_toggle.tooltip_text = "Switch to the %s minimap" % String(SOURCE_LABEL.get(nxt, nxt))
 
 ## The strip MainFrame grabs to reorder this panel in the side column. The HEADING, because it is
 ## the one part of the panel that is not already something clickable, scrollable or drawn on.

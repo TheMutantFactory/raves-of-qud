@@ -29,6 +29,14 @@ const FRAME := Color8(0xB6, 0xA1, 0x63)
 const RAVES_ITEMS := [
 	{"key": "mode", "label": "Mode", "type": "choice",
 		"options": ["User", "1:1"], "values": ["user", "1to1"]},   # 1:1 overrides camera + panels
+	# WHAT THE MINIMAP DRAWS. Daniel: "Let's have a Raves setting for minimap 1:1, or top-down
+	# camera. That should help navigate in the underworld." The first two were already built and
+	# reachable only by the panel's own toggle; the third is new. Named "source" and not "mode"
+	# because the panel already has a mode (FULL/MINIMAL) and two words for one idea is how a
+	# setting ends up meaning neither.
+	{"key": "minimap_source", "label": "Minimap", "type": "choice",
+		"options": ["Painted", "Structural", "Qud (1:1)", "Qud tiles"],
+		"values": ["full", "minimal", "qud", "tiles"]},
 	{"key": "font_scale", "label": "Font scale", "type": "slider", "min": 0.7, "max": 1.5, "step": 0.05},
 	{"key": "fire_zone_radius", "label": "Lit fires: zone radius (0 = this zone only)",
 		"type": "slider", "min": 0, "max": 3, "step": 1},
@@ -347,8 +355,7 @@ func _populate_body() -> void:
 		if not Settings.one_to_one():
 			for fname in Settings.QOL_FEATURES:
 				var spec: Array = Settings.QOL_FEATURES[fname]
-				var qitem := {"key": "qol_" + str(fname), "type": "toggle",
-					"label": "QoL · " + str(spec[0])}
+				var qitem := _qol_item(str(fname))
 				var qrow := _build_raves_setting(qitem)
 				qrow.set_meta("feedback_label", "option · " + str(qitem["label"]))
 				qrow.set_meta("feedback_action", "load back the QoL feature: " + str(spec[0]))
@@ -542,14 +549,46 @@ func _raves_slider(item: Dictionary) -> Control:
 	row.add_child(h)
 	return row
 
+## A TOGGLE MUST ASK FOR THE RIGHT DEFAULT, and only the caller knows it. This read `false`
+## unconditionally, which is right for every plain setting and wrong for every QoL feature that
+## ships ON: with no key written yet, the box drew unchecked over a feature that was running, and
+## the first click "turned it on" to the value it already had — a control that visibly does
+## nothing the first time you use it. The nine default-on features already registered only ever
+## looked right because a preset or an earlier toggle had written their keys out.
+## One QoL feature's options row, as a spec. Its own function so the registry-to-row mapping can
+## be asked a question without building the whole options column: `default` is spec[1], the
+## feature's shipped value and the same one Settings.qol_on falls back to. Without it the switch
+## and the gate disagree about what "never written" means, and the switch is the one that is wrong.
+func _qol_item(fname: String) -> Dictionary:
+	var spec: Array = Settings.QOL_FEATURES[fname]
+	return {"key": "qol_" + fname, "type": "toggle",
+		"label": "QoL · " + str(spec[0]), "default": bool(spec[1])}
+
+
+## Called after a toggle that owns something already on screen — a QoL feature that shapes a panel,
+## or one of LIVE_KEYS — so the change reaches it now rather than at the next launch. Set by
+## MainFrame for the in-game overlay; unset (and harmlessly skipped) on the title-screen options.
+## Settings that own a LIVE SURFACE and are not qol_ features. Hand-listed because there is no way
+## to tell from a key's name that something on screen is already showing it; the audit
+## (tools/regression/settings_reach_audit.py) is what finds the candidates.
+const LIVE_KEYS := {"fx_scanlines": true, "fx_vignette": true}
+
+var apply_live_cb: Callable = Callable()
+
 func _raves_toggle(item: Dictionary) -> Control:
 	var b := _flat_button()
-	var on := bool(Settings.get_value(item["key"], false))
+	var dflt := bool(item.get("default", false))
+	var on := bool(Settings.get_value(item["key"], dflt))
 	b.text = _check(on) + str(item["label"])
 	b.pressed.connect(func():
-		var now := not bool(Settings.get_value(item["key"], false))
+		var now := not bool(Settings.get_value(item["key"], dflt))
 		Settings.set_value(item["key"], now); Settings.save()
-		b.text = _check(now) + str(item["label"]))
+		b.text = _check(now) + str(item["label"])
+		# A QoL FEATURE CAN OWN A PANEL'S SHAPE, and the panel is only re-shaped when something
+		# tells it to. Saving the key is not telling it.
+		if apply_live_cb.is_valid() and (str(item["key"]).begins_with("qol_")
+				or LIVE_KEYS.has(str(item["key"]))):
+			apply_live_cb.call())
 	return b
 
 func _raves_options(item: Dictionary) -> Control:

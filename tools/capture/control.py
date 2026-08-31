@@ -222,6 +222,18 @@ def main(argv):
     elif cmd == "camrot":
         godot("camrot " + argv[1])
         print("godot: camrot", argv[1])
+    elif cmd == "minimapdump":
+        godot("minimapdump")
+        print("godot: minimapdump -> minimapdump.json")
+    elif cmd == "profile":
+        godot("profile " + (argv[1] if len(argv) > 1 else ""))
+        print("godot: profile -> profile.txt")
+    elif cmd == "cellnodes":
+        godot("cellnodes")
+        print("godot: cellnodes -> cellnodes.json")
+    elif cmd == "firedump":
+        godot("firedump")
+        print("godot: firedump -> firedump.json")
     elif cmd == "walkdump":
         godot("walkdump")
         print("godot: walkdump -> walkdump.json")
