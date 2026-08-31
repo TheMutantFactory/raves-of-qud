@@ -952,6 +952,12 @@ func _exec_godot_cmd(cmd: String) -> void:
 				fd.store_string(JSON.stringify({
 					"near_player": rows,
 					"dark_floor_y": ZoneRenderer.DARK_FLOOR_Y,
+					"fx_corrections": renderer.fx_corrections,
+					"fx_flashes": renderer.fx_flashes,
+					"fx_ring": renderer.fx_ring,
+					"fx_walked": renderer.fx_walked,
+					"fx_lights": renderer.fx_lights,
+					"fx_flash_where": renderer.fx_flash_where,
 					# THE LAST LINK. The film is double-buffered — a new one is built hidden and
 					# swapped in when the player arrives — so "is it computed" and "is it on
 					# screen" are different questions, and every number above answers only the

@@ -642,8 +642,10 @@ func _refresh_fx_flags() -> bool:
 func _apply_fx_flags() -> void:
 	if not is_inside_tree():
 		return
+	fx_walked = 0
 	for n in get_tree().get_nodes_in_group(FX_POOL_GROUP):
 		(n as Node3D).visible = _fx_pool
+		fx_walked += 1
 	for n in get_tree().get_nodes_in_group(FX_FLAME_GROUP):
 		(n as Node3D).visible = _fx_flame
 	# Smoke is an EMITTER, not a visibility: hiding a GPUParticles3D leaves it simulating, and
@@ -1165,6 +1167,13 @@ func render_snapshot(data: Dictionary, neighbors: Array = []) -> void:
 	if _ray_bumped(data) and not _ray_path.is_empty():
 		flash_flames(_ray_path)
 		_ray_path = []
+	# THE SAME FRAME THE STEP IS BUILT IN, not the next one. Daniel: "whenever I take a step, the
+	# floor light I'm trying to turn off is on for a frame or two and then turns off." The driver
+	# in _process re-asserts these gates, but it runs AFTER this build — so every step showed one
+	# or two frames of the pool before the correction landed. The same lesson the pool's own birth
+	# fade carries three hundred lines up: anything corrected on the next frame is a frame of the
+	# wrong picture, and a build hitch holds it on screen long enough to be reported as a bug.
+	_apply_fx_flags()
 
 ## Build one zone's STATIC geometry (walls + non-creature nonwalls + lights) into the
 ## current bank, cells shifted by `offset`. `skip_creatures` drops mobile actors —
@@ -2192,6 +2201,20 @@ static var fire_dark := false
 ## the campfire or your torch?" turned out to be "your torch" often enough that Daniel and I
 ## disagreed about it three times running. Two switches settle it by experiment in five seconds.
 static var torch_dark := false
+## How many times the driver has had to put a fixture back the way its switch says. A number that
+## keeps climbing means something re-shows them every turn, and names the frame to look at.
+var fx_corrections := 0
+## ...of which this many were ON SCREEN when corrected, and where the first one lived.
+var fx_flashes := 0
+var fx_flash_where := ""
+## How many pool nodes the last group walk actually reached. If the driver keeps correcting
+## fixtures this says it walked, the walk is not the problem; if it walks none, the group lookup
+## is missing them and the gate never had a chance.
+var fx_walked := 0
+## ...and how many live fixtures the driver knows about, for the same comparison.
+var fx_lights := 0
+## The last 240 frames of what was on screen — see the note where it is filled.
+var fx_ring: Array = []
 
 ## The cell's light AFTER the switch. One answer, asked by the world and the map alike — the
 ## alternative is a map that disagrees with the room in front of you about whether you can see it.
@@ -4373,7 +4396,12 @@ func _place_light(cx: int, cy: int, radius: float, smokes := true, on_fire := fa
 	glow.position = Vector3(cx, FLOOR_Y + 0.01, cy)
 	glow.material_override = _fx_material(_pool_texture(n, mask), true)
 	glow.add_to_group(FX_POOL_GROUP)
-	glow.visible = _fx_pool
+	# ASK THE SETTING, NOT THE CACHE. The cached gates are filled in _ready and refreshed per
+	# frame, and the very first zone builds before that cache can be trusted: seven fixtures — one
+	# per light in the zone — were born visible and corrected a frame later, which is a frame of
+	# firelight nobody asked for on every startup. A dictionary lookup once per fixture per build
+	# is not a cost worth a frame of the wrong picture.
+	glow.visible = _fx_on("floorglow")
 	lp.add_child(glow)
 
 	# THE FLAME. Live zone: PARTICLE FIRE (Daniel: the drawn flame was "not
@@ -4410,7 +4438,7 @@ func _place_light(cx: int, cy: int, radius: float, smokes := true, on_fire := fa
 			var k: float = flame_h / (FIRE_RISE * FIRE_LIFETIME)
 			pf.scale = Vector3(k, k, k)
 		pf.add_to_group(FX_FLAME_GROUP)
-		pf.visible = _fx_flame
+		pf.visible = _fx_on("flames")
 		lp.add_child(pf)
 		flame = pf
 	else:
@@ -4433,7 +4461,7 @@ func _place_light(cx: int, cy: int, radius: float, smokes := true, on_fire := fa
 		else:
 			fsp.position = flame_at if flame_at != Vector3.INF else Vector3(cx, 0.55 if on_fire else 0.7, cy)
 		fsp.add_to_group(FX_FLAME_GROUP)
-		fsp.visible = _fx_flame
+		fsp.visible = _fx_on("flames")
 		lp.add_child(fsp)
 		flame = fsp
 
@@ -5665,6 +5693,39 @@ func _process(_dt: float) -> void:
 	# the scene, including the frozen banks the driver below never touches.
 	if _refresh_fx_flags():
 		_apply_fx_flags()
+	fx_lights = _lights.size()
+	# A FRAME RING, because the thing being reported lasts one or two frames and a screenshot
+	# takes six hundred milliseconds. Each entry is what the eye could actually have seen that
+	# frame: how many glow pools were on screen, which sight-area buffer was showing, and how far
+	# through a step we were.
+	# THE HELD POOL IS NOT IN _lights. _place_light returns early for a no_flame caller, and only
+	# appends under _live_build — so the light carried in your hand is rebuilt every turn and the
+	# per-frame re-assertion above never reaches it. Every turn is every step, which is the shape
+	# of what Daniel reported.
+	if not _held_pool.is_empty():
+		var hg = _held_pool.get("glow")
+		if is_instance_valid(hg) and (hg as Node3D).visible != _fx_pool:
+			if (hg as Node3D).is_visible_in_tree():
+				fx_flashes += 1
+				if fx_flash_where == "":
+					fx_flash_where = "held pool"
+			(hg as Node3D).visible = _fx_pool
+			fx_corrections += 1
+	var pv := 0
+	if not _held_pool.is_empty():
+		var hg2 = _held_pool.get("glow")
+		if is_instance_valid(hg2) and (hg2 as Node3D).is_visible_in_tree():
+			pv += 1
+	for L2 in _lights:
+		var g2 = L2.get("glow")
+		if is_instance_valid(g2) and (g2 as Node3D).is_visible_in_tree():
+			pv += 1
+	fx_ring.append({"pools_on_screen": pv,
+		"dark_new": is_instance_valid(_dark_new) and _dark_new.visible,
+		"dark_old": is_instance_valid(_dark_old) and _dark_old.visible,
+		"walk": snappedf(Vector2(_walk_off).length(), 0.01)})
+	if fx_ring.size() > 240:
+		fx_ring.pop_front()
 	var gmul := _glow_mul()      # daylight dimming, recomputed once per frame
 	var fmul := _flame_mul()
 	for L in _lights:
@@ -5684,7 +5745,17 @@ func _process(_dt: float) -> void:
 		# writer that runs earlier in the same frame.
 		var gm := L["glow"] as MeshInstance3D
 		if gm.visible != _fx_pool:
+			# WAS IT ACTUALLY ON SCREEN? A correction to a node inside a bank nobody is looking at
+			# is free; a correction to one visible IN THE TREE is a frame of the wrong picture that
+			# the player saw. Counting them apart is the difference between "something re-shows
+			# these" and "Daniel sees a flash every step".
+			if gm.is_visible_in_tree():
+				fx_flashes += 1
+				if fx_flash_where == "":
+					var par := gm.get_parent()
+					fx_flash_where = String(par.name) if par != null else "(orphan)"
 			gm.visible = _fx_pool
+			fx_corrections += 1
 		gm.transparency = clampf(1.0 - a * g * 0.6, 0.0, 1.0)
 		var fs: float = 0.9 + a * 0.25
 		if L.get("particle_fire", false):
