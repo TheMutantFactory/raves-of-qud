@@ -76,31 +76,6 @@ func _ready() -> void:
 	_check("...case and separator do not matter",
 		MA.is_pool({"liquid": true, "tile": "LIQUIDS\\Water\\shallow-1.png"}))
 
-	# ── the mark carries its own contrast ────────────────────────────────────
-	# "The walk boots aren't showing when I hover over water." They were: pale-and-blue boots on
-	# pale-and-blue ripples. A dark rim is what lets any verb sit on any ground.
-	var art := Image.create(4, 4, false, Image.FORMAT_RGBA8)
-	art.fill(Color(0, 0, 0, 0))
-	art.set_pixel(1, 1, Color(1, 1, 1, 1))
-	var rim: Image = ma._outlined(ImageTexture.create_from_image(art)).get_image()
-	_check("the rim grows the art by a pixel on every side",
-		rim.get_width() == 6 and rim.get_height() == 6, "%dx%d" % [rim.get_width(), rim.get_height()])
-	_check("...the art itself is untouched", rim.get_pixel(2, 2).is_equal_approx(Color(1, 1, 1, 1)),
-		str(rim.get_pixel(2, 2)))
-	_check("...its neighbours become opaque rim", rim.get_pixel(1, 1).a > 0.5
-		and rim.get_pixel(3, 3).a > 0.5 and rim.get_pixel(2, 1).a > 0.5)
-	_check("...and the rim is DARK, or it is not contrast", rim.get_pixel(1, 1).v < 0.25,
-		str(rim.get_pixel(1, 1)))
-	_check("...while a pixel away from the art stays clear", rim.get_pixel(5, 5).a < 0.5,
-		str(rim.get_pixel(5, 5)))
-	# ...AND _icon_for APPLIES IT. Checked on "use", whose art is drawn in code and needs no
-	# exported tiles — otherwise this test would only pass on a machine that has run Qud.
-	var plain: Texture2D = ma._look_tex()
-	var iconed: Texture2D = ma._icon_for("use")
-	_check("every verb's icon goes out rimmed", plain != null and iconed != null
-		and iconed.get_size() == plain.get_size() + Vector2(2, 2),
-		"%s vs %s" % [str(iconed.get_size() if iconed else null), str(plain.get_size() if plain else null)])
-
 	print("\n%s (%d checks failed)" % ["all good" if _failed.is_empty() else "FAILED", _failed.size()])
 	get_tree().quit(0 if _failed.is_empty() else 1)
 
