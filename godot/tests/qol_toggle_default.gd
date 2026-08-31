@@ -83,6 +83,29 @@ func _ready() -> void:
 		scn.free()
 		_restore(key, saved)
 
+	# ── a feature that owns a panel's shape must reach the panel NOW ─────────
+	# _set_panels_one_to_one runs on the master 1:1 switch and once at launch, and nothing else.
+	# So flipping the minimap feature saved the key and left the panel showing Qud's map until the
+	# next restart — a switch that does nothing, which is how it was reported.
+	var scn2 = scr.new()
+	var rang := [0]
+	scn2.apply_qol_cb = func() -> void: rang[0] += 1
+	var qrow = scn2._raves_toggle(scn2._qol_item("minimap"))
+	qrow.emit_signal("pressed")
+	_check("flipping a QoL feature tells the panels to re-shape", rang[0] == 1,
+		"%d calls" % rang[0])
+	# ...and a PLAIN setting does not: the callback re-runs a panel pass, and running it on every
+	# checkbox in the screen would be a cost with no reason.
+	var prow = scn2._raves_toggle({"key": "fullscreen", "label": "x", "type": "toggle"})
+	prow.emit_signal("pressed")
+	_check("...and a plain setting does not", rang[0] == 1, "%d calls" % rang[0])
+	# UNSET IS SAFE: the title-screen options have no panels and leave the callback empty.
+	var scn3 = scr.new()
+	var srow = scn3._raves_toggle(scn3._qol_item("minimap"))
+	srow.emit_signal("pressed")
+	_check("an unset callback is simply skipped", true)
+	qrow.free(); prow.free(); srow.free(); scn2.free(); scn3.free()
+
 	_write_settings(settings_text)
 	_report()
 

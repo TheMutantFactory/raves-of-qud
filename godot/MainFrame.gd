@@ -1319,6 +1319,13 @@ func _open_options_overlay() -> void:
 	scn.apply_camera_cb = func(m: int) -> void:
 		if _holo != null and _holo.has_method("set_camera_mode"):
 			_holo.set_camera_mode(m)
+	# ...and a QoL feature that owns a PANEL'S SHAPE has to reach the panel the moment it is
+	# flipped. _set_panels_one_to_one ran only on the master 1:1 switch and once at launch, so
+	# turning the minimap feature on left the panel showing Qud's map until the next restart —
+	# which reads as a switch that does nothing. Daniel found it as "let's get the minimap tiles
+	# working again", after a stray click of mine had turned the feature off.
+	scn.apply_qol_cb = func() -> void:
+		_set_panels_one_to_one(_panels_1to1)
 	_options.add_child(scn)
 	add_child(_options)
 	UiState.set_scene("options")
@@ -1462,7 +1469,13 @@ func _report_overflow() -> void:
 # The Holodeck owns the master switch + camera (hotkey / highvisor / preset flip it there and
 # emit one_to_one_changed); here we swap the side panels to their Qud-faithful variant and
 # persist the choice so the next launch (and presets) stick.
+## The master 1:1 state the panels were last shaped against. Kept so a QoL toggle can re-run that
+## same decision without inventing an answer for it — every panel's shape is `on and
+## qud_shape(feature)`, and only the second half is what a feature switch changes.
+var _panels_1to1 := true
+
 func _on_one_to_one_changed(on: bool, chosen: bool) -> void:
+	_panels_1to1 = on
 	_set_panels_one_to_one(on)
 	_apply_layout_mode(on)
 	# ONLY A CHOICE IS PERSISTED. Two ways this arrives: the viewer pressed Ctrl+M, or Raves simply
@@ -2081,6 +2094,7 @@ func _connect_holodeck() -> void:
 	# emits one_to_one_changed → _on_one_to_one_changed pushes the 1:1 variant to the panels too.
 	_holo.set_one_to_one(Settings.clone_of_qud())
 	if Settings.clone_of_qud():
+		_panels_1to1 = true
 		_set_panels_one_to_one(true)            # ensure panels match on a 1:1 launch
 		_apply_layout_mode(true)                # widen sidebar, compact menu, drop dev strip, recentre cam
 		_enable_viewport.call_deferred()        # 1:1 is a parity view — bring the 3D up automatically

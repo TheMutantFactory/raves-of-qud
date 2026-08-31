@@ -565,6 +565,11 @@ func _qol_item(fname: String) -> Dictionary:
 		"label": "QoL · " + str(spec[0]), "default": bool(spec[1])}
 
 
+## Called after any qol_* toggle is flipped, so a feature that owns a panel's shape reaches the
+## panel now rather than at the next launch. Set by MainFrame for the in-game overlay; unset (and
+## harmlessly skipped) on the title-screen options, where there are no panels to reshape.
+var apply_qol_cb: Callable = Callable()
+
 func _raves_toggle(item: Dictionary) -> Control:
 	var b := _flat_button()
 	var dflt := bool(item.get("default", false))
@@ -573,7 +578,11 @@ func _raves_toggle(item: Dictionary) -> Control:
 	b.pressed.connect(func():
 		var now := not bool(Settings.get_value(item["key"], dflt))
 		Settings.set_value(item["key"], now); Settings.save()
-		b.text = _check(now) + str(item["label"]))
+		b.text = _check(now) + str(item["label"])
+		# A QoL FEATURE CAN OWN A PANEL'S SHAPE, and the panel is only re-shaped when something
+		# tells it to. Saving the key is not telling it.
+		if apply_qol_cb.is_valid() and str(item["key"]).begins_with("qol_"):
+			apply_qol_cb.call())
 	return b
 
 func _raves_options(item: Dictionary) -> Control:
