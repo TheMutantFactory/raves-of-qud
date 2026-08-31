@@ -46,6 +46,10 @@ const PAN_KEY := "minimap_pan_tool"
 const FOLLOW_KEY := "minimap_follow"
 const ZOOM_KEY := "minimap_zoom"
 const FOG_KEY := "minimap_fog"
+## HOW FAR A REMEMBERED TILE IS PULLED TOWARD THE FIELD. Qud's remembered cell is nearly flat
+## field; ours draws the whole tile. 0 keeps the K/k recolour as it was, 1 makes the cell the field
+## colour outright. Measured against a live capture of Qud's own screen — see the commit.
+const FIELD_BLEND := 0.55
 ## How much of a REMEMBERED cell survives — one you have explored but cannot currently see. Qud
 ## ghosts these rather than hiding them, and so does the 3D view; the map says the same thing with
 ## THE TILE MAP'S CELL SIZE, in map pixels — Qud's own art size, so sprites keep their shape and
@@ -561,7 +565,13 @@ func _render_tiles(data: Dictionary, w: int, h: int) -> bool:
 		# while the world showed it TEAL — Daniel: "the minimap tiles currently show light/dark,
 		# but not the fog-of-war tint." Two answers to one question again; the map takes the
 		# world's now (QudTiles.MEMORY_TINT == ZoneRenderer's).
-		var ti: Image = _tiles.image_for(ZoneRenderer.cell_face(objs), true, veil)
+		# A REMEMBERED CELL GETS A FIELD, then the art over it — Qud's model, which the tile map
+		# had no equivalent of at all: its cells sat on the panel background, so a remembered floor
+		# read as art floating on black instead of as field with a glyph on it.
+		if veil:
+			img.fill_rect(Rect2i(x * TILE_W, y * TILE_H, TILE_W, TILE_H), _field_col())
+		var ti: Image = _tiles.image_for(ZoneRenderer.cell_face(objs), true, veil,
+			FIELD_BLEND if veil else 0.0)
 		if ti == null:
 			probe["tex_null"] += 1
 			continue
@@ -691,6 +701,15 @@ func refresh_fog_setting() -> void:
 	_fog = want
 	_refresh_fog_btn()
 	_rerender()
+
+
+## Qud's field colour, cached — the map's equivalent of the world's memory wash.
+var _field_cache := Color(0, 0, 0, 0)
+func _field_col() -> Color:
+	if _field_cache.a == 0.0:
+		_field_cache = _tiles.field_color() if _tiles != null else BG
+		_field_cache.a = 1.0
+	return _field_cache
 
 
 func _set_fog(on: bool) -> void:

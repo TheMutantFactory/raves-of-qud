@@ -102,8 +102,32 @@ func paint_obj(obj: Dictionary, ghost: bool) -> Dictionary:
 	return ZoneRenderer.ghost_obj(obj) if ghost else obj
 
 
-func image_for(obj: Dictionary, full: bool, ghost := false) -> Image:
+## The two colours a remembered tile is recoloured with, pulled toward the field. Its own function
+## so it can be asked directly: every minimap check stubs QudTiles, so a test that renders cannot
+## reach the arithmetic, and the blend could be dropped from image_for with the suite green.
+func ghost_colors(o: Dictionary, field_blend: float) -> Array:
+	var f := field_color()
+	return [main_color(o).lerp(f, field_blend), detail_color(o).lerp(f, field_blend)]
+
+
+## QUD'S FIELD COLOUR — the 'k' every cell is painted with before anything is drawn on it.
+func field_color() -> Color:
+	return color_of("k", Color(0.06, 0.23, 0.23))
+
+
+func image_for(obj: Dictionary, full: bool, ghost := false, field_blend := 0.0) -> Image:
 	var o: Dictionary = paint_obj(obj, ghost)
+	# TOWARD THE FIELD, BY COLOUR RATHER THAN BY PIXEL. A remembered cell in Qud is overwhelmingly
+	# field with a sparse glyph on it — a histogram of a remembered-only region of Qud's screen is
+	# FLAT field, its glyphs too sparse to reach the top five colours. Raves recolours the whole
+	# tile, so its remembered cell is a dense picture where Qud's is a nearly-flat square.
+	#
+	# The ghost is a FLAT two-colour recolour (main K, detail k), so pulling those two colours
+	# toward the field pulls the whole tile toward it — no per-pixel pass, and image() already
+	# caches by (tile, main, detail), so each blended variant is built once like any other.
+	if ghost and field_blend > 0.0:
+		var gc := ghost_colors(o, field_blend)
+		return image(String(o.get("tile", "")), gc[0], gc[1])
 	if not full and o.has("tileP"):
 		return image(String(o.get("tileP", "")),
 			color_of(String(o.get("colorP", ""))) if not ghost else main_color(o),
