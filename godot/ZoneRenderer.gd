@@ -10495,7 +10495,12 @@ func _rebuild_walls_body(wall_types: Dictionary) -> void:
 			# rules open, and a drawn model has no carve rules to open them.
 			var mv := _wall_vox_model(v)
 			if not mv.is_empty():
-				var vkey := "%s|%d%d%d%d" % [v, int(wn), int(ws), int(we), int(ww)]
+				# KEYED ON THE MODEL, NOT THE VARIANT. The mesh is a pure function of
+				# (model, 4 neighbour bits) — the comment on _vox_mesh_cache says so — and with
+				# the family fallback one model now serves 136 signatures. Keyed by variant that
+				# is 136 meshings of the same geometry at ~20ms each; keyed by source path it is
+				# at most 16, one per neighbour combination.
+				var vkey := "%s|%d%d%d%d" % [mv.get("src", v), int(wn), int(ws), int(we), int(ww)]
 				var vmesh: ArrayMesh = _vox_mesh_cache.get(vkey)
 				if vmesh == null:
 					vmesh = _wall_vox_mesh(mv, {"n": wn, "s": ws, "e": we, "w": ww})
@@ -10851,6 +10856,10 @@ func _wall_vox_declared(variant_tile: String) -> String:
 	if not _art_vox_listed:
 		_art_vox_listed = true
 		_art_vox_names = DirAccess.get_files_at(ART_VOX_DIR)
+		# SORTED, because the family fallback below picks the FIRST match and a directory
+		# listing is in whatever order the filesystem hands back. Unsorted, which model a
+		# signature borrows could differ between two runs of the same build.
+		_art_vox_names.sort()
 	var stem := variant_tile.get_file().get_basename()
 	if stem == "":
 		return ""
@@ -10864,6 +10873,28 @@ func _wall_vox_declared(variant_tile: String) -> String:
 			continue
 		for f in _art_vox_names:
 			if f.ends_with(".vox") and f.begins_with(want + "-model-"):
+				return ART_VOX_DIR.path_join(f)
+	# THEN THE FAMILY, because a wall's SHAPE does not come from its signature — it comes from
+	# the neighbour bits handed to the mesher, which drops the faces that abut a wall. The
+	# signature in a model's name says which cell it was drawn against, not which cells it can
+	# serve. Daniel drew ONE rock wall and Joppa's zone asks for sixteen cardinal signatures
+	# (136 diagonal-flavoured names); matching only the two exact steps above left one of them
+	# on his art and every other one silently on stock, which is exactly what he saw: "I only
+	# see one that has been replaced."
+	#
+	# SCOPED TO THE FAMILY AND TO SIGNED STEMS. `<family>-` cannot match a longer family name
+	# (wall_rock- does not prefix wall_rock_hewn-), and _family_stem returns "" unless the stem
+	# really ends in an 8-bit signature — so dropping a brinestalk model in here replaces
+	# brinestalk walls and nothing else, and a tile with no signature never borrows at all.
+	var fam := _family_stem(stem)
+	if fam != "":
+		for f in _art_vox_names:
+			if _family_match(f, fam):
+				# ONE LINE PER SIGNATURE, and it says BORROWED rather than reading like the
+				# signature had a model of its own. The stock fallback being invisible is what
+				# cost the metal family a session; a borrow that reports itself as a match would
+				# cost the next one the same way.
+				_wall_vox_files[stem] = "no model of its own -> BORROWED %s" % f
 				return ART_VOX_DIR.path_join(f)
 	return ""
 
@@ -10881,6 +10912,31 @@ static func _cardinal_stem(stem: String) -> String:
 	for i in 8:
 		card += bits[i] if i % 2 == 0 else "0"
 	return "" if card == bits else "%s-%s" % [stem.substr(0, dash), card]
+
+
+## Does .vox file `fname` declare a model for family `fam`? `<family>-<anything>-model-<...>.vox`.
+##
+## THE DASH IS THE FENCE, and it is doing more work than it looks. `begins_with(fam)` alone would
+## let `wall_rock` claim `wall_rockery`'s and `wall_rock_hewn`'s models — a family fallback that
+## reaches into a NEIGHBOURING family is worse than no fallback at all, because it puts the wrong
+## art on walls that have their own and says nothing.
+static func _family_match(fname: String, fam: String) -> bool:
+	return fname.ends_with(".vox") and fname.begins_with(fam + "-") and fname.contains("-model-")
+
+
+## `wall_rock-00100110` -> `wall_rock`. "" unless the stem really ends in an 8-bit signature,
+## which is what keeps the family fallback off tiles that are not signature-variant walls.
+static func _family_stem(stem: String) -> String:
+	var dash := stem.rfind("-")
+	if dash < 0:
+		return ""
+	var bits := stem.substr(dash + 1)
+	if bits.length() != 8:
+		return ""
+	for c in bits:
+		if c != "0" and c != "1":
+			return ""
+	return stem.substr(0, dash)
 
 
 func _wall_vox_model(variant_tile: String) -> Dictionary:
@@ -10957,7 +11013,8 @@ func _read_wall_vox(path: String, declared := false) -> Dictionary:
 			# WALL_H by d.z, so a 10-layer model simply stretches to the tile.
 			var ok := declared or d.z == WALL_VOX_LAYERS
 			if ok:
-				got = {"model": mirror_x(m), "palette": v.get("palette", PackedColorArray())}
+				got = {"model": mirror_x(m), "palette": v.get("palette", PackedColorArray()),
+					"src": path}
 			_wall_vox_files[path.get_file()] = "%dx%dx%d %s (%s indexing)" % [d.x, d.y, d.z,
 				("USED (declared)" if declared else "USED") if ok
 					else "ignored (not %d layers)" % WALL_VOX_LAYERS,

@@ -58,10 +58,58 @@ func _ready() -> void:
 	_check("...and a diagonal signature projects onto it",
 		r._wall_vox_declared("Assets_Content_Textures_Tiles_wall_rock-11000000.bmp") == found,
 		r._wall_vox_declared("Assets_Content_Textures_Tiles_wall_rock-11000000.bmp"))
-	# ...and a DIFFERENT cardinal must not borrow it, or one model silently becomes every wall.
-	_check("a different cardinal does not borrow it",
-		r._wall_vox_declared("Assets_Content_Textures_Tiles_wall_rock-01000000.bmp") == "",
-		r._wall_vox_declared("Assets_Content_Textures_Tiles_wall_rock-01000000.bmp"))
+	# ── every OTHER signature in the family borrows it ───────────────────────
+	# This check used to assert the opposite ("a different cardinal does not borrow it"), guarding
+	# against one model silently becoming every wall. Daniel asked for exactly that, and he is
+	# right that it is safe: a wall's shape comes from the NEIGHBOUR BITS handed to the mesher,
+	# which drops the faces that abut a wall. The signature in a model's name records which cell
+	# it was drawn against, not which cells it can serve. Joppa alone asks for 16 cardinal
+	# signatures under 136 diagonal-flavoured names; without this, one of them wore his art and
+	# 135 fell back to stock. "I only see one that has been replaced."
+	for sig in ["01000000", "00000000", "10101010", "00100010"]:
+		var tname := "Assets_Content_Textures_Tiles_wall_rock-%s.bmp" % sig
+		_check("signature %s borrows the family model" % sig,
+			r._wall_vox_declared(tname) == found, r._wall_vox_declared(tname))
+	# ...AND IT SAYS SO. A borrow reported as if the signature had a model of its own is how the
+	# stock fallback stayed invisible long enough to cost the metal family a session.
+	var note := String(r._wall_vox_files.get(
+		"Assets_Content_Textures_Tiles_wall_rock-00000000", ""))
+	_check("...and zonereport calls it a BORROW", note.contains("BORROWED"), note)
+	_check("...while the signature that owns the model is not called a borrow",
+		not String(r._wall_vox_files.get(TILE, "")).contains("BORROWED"),
+		String(r._wall_vox_files.get(TILE, "")))
+
+	# THE FAMILY IS THE FENCE. A rock model must not turn up on metal or brinestalk walls, and a
+	# tile with no signature at all must never borrow — otherwise dropping one model in res://art
+	# would replace every wall in the game, which is a much bigger claim than the one being made.
+	for outsider in ["Assets_Content_Textures_Tiles_wall_metal-01000000.bmp",
+			"Assets_Content_Textures_Tiles_wall_rock_hewn-01000000.bmp",
+			"Assets_Content_Textures_Tiles_wall_rockery-01000000.bmp",
+			"Terrain_sw_statue1.bmp", "Assets_Content_Textures_Tiles_wall_rock-notabits.bmp"]:
+		_check("%s does not borrow it" % outsider.get_basename(),
+			r._wall_vox_declared(outsider) == "", r._wall_vox_declared(outsider))
+
+	# ...and the fence itself, in the direction res://art cannot currently exercise: the outsiders
+	# above are all LONGER family names than the one file, so removing the dash from the match
+	# would not have shown up there. A shorter one claiming a longer one's model is the direction
+	# that actually bites.
+	var FAM := "Assets_Content_Textures_Tiles_wall_rock"
+	_check("the family match takes its own family's model",
+		Z._family_match(FAM + "-10000000-model-16x16x10.vox", FAM))
+	for stranger in [FAM + "ery-10000000-model-16x16x10.vox", FAM + "_hewn-00-model-x.vox"]:
+		_check("...and not %s" % stranger, not Z._family_match(stranger, FAM))
+	_check("...and not a file that declares no model at all",
+		not Z._family_match(FAM + "-10000000.vox", FAM))
+	_check("...and not a non-vox file", not Z._family_match(FAM + "-10000000-model-x.png", FAM))
+
+	# ...and the two signatures land on the SAME model, which is what lets one mesh serve both.
+	# The mesh cache keys on the model's source path for this reason: keyed by variant, 136
+	# signatures would each re-mesh identical geometry at ~20ms.
+	var a: Dictionary = r._wall_vox_model(TILE + ".bmp")
+	var b: Dictionary = r._wall_vox_model("Assets_Content_Textures_Tiles_wall_rock-00000000.bmp")
+	_check("two signatures resolve to one model, by source path",
+		not a.is_empty() and a.get("src", "") == b.get("src", "?") and a.get("src", "") == found,
+		"%s vs %s" % [a.get("src", "none"), b.get("src", "none")])
 
 	# ...AND THE WALL PATH ACTUALLY ASKS. Everything above calls the lookup directly, so cutting
 	# _wall_vox_model's use of it changed nothing and the wall would quietly render stock art —
