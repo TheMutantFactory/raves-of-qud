@@ -10999,6 +10999,75 @@ static func mirror_x(m: Dictionary) -> Dictionary:
 	return mm
 
 
+## CONTINUE THE WALL BODY THROUGH A WALL-TO-WALL EDGE, so adjacent cells read as one mass.
+##
+## A drawn wall carries a one-voxel RING of edge decoration around a 14x14 body — the roof
+## invariant the art path already runs on. That ring is right where the wall ENDS and wrong where
+## it does not: two rock cells side by side put ring against ring, a two-voxel band of border
+## colour straight down the seam, and the body pattern restarts in every cell. Daniel, on the vox
+## walls: "bridge adjacent blocks... basically, the checker pattern repeats."
+##
+## THE RULE IS THE ONE THE CAP BAND ALREADY USES, and it is worth saying why it is not the obvious
+## one. Clamping (ring <- the FIRST body row) duplicates that row's parity and lays two identical
+## rows against each other — a period-2 pattern dies at every seam, which is exactly the bug
+## _cap_az was written to fix. REFLECTING about the first body row sends ring 0 to body row 2,
+## which continues the alternation instead of stalling it, and stays local for art that is not a
+## checker at all.
+##
+## AND IT COMES OUT GLOBALLY CONTINUOUS, which is the whole point rather than a happy accident: a
+## cell is an even 16 voxels across, so local (x+y) parity IS global (X+Y) parity, and every cell
+## reflecting its own ring outward lands on one unbroken pattern across a whole wall run.
+##
+## Only edges with a wall neighbour are touched; an exposed edge keeps the border it was drawn
+## with. `nb` is the mesher's own n/s/e/w dictionary, and the mesh cache already keys on it.
+static func bridge_edges(m: Dictionary, nb: Dictionary) -> Dictionary:
+	var d: Vector3i = m["dims"]
+	# 5 is the smallest grid where a ring, a first body row and its reflection are distinct cells.
+	if d.x < 5 or d.y < 5:
+		return m
+	var w := bool(nb.get("w", false))
+	var e := bool(nb.get("e", false))
+	var n := bool(nb.get("n", false))
+	var sth := bool(nb.get("s", false))
+	if not (w or e or n or sth):
+		return m
+	var by := {}
+	for ent in m["vox"]:
+		by[ent[0] as Vector3i] = ent[1]
+	var out: Array = []
+	for ent in m["vox"]:
+		var q: Vector3i = ent[0]
+		# A REMAPPED COLUMN IS REBUILT FROM ITS SOURCE, NOT EDITED IN PLACE. Its voxels are
+		# dropped here and re-emitted below from the body column, because the two columns do not
+		# hold the same CELLS — the ring is solid and the body is a relief, so keeping this
+		# entry would leave the ring's extra voxels standing under the new pattern.
+		if _reflect_in(q.x, d.x, w, e) == q.x and _reflect_in(q.y, d.y, n, sth) == q.y:
+			out.append(ent)
+	for x in d.x:
+		var rx := _reflect_in(x, d.x, w, e)
+		for y in d.y:
+			var ry := _reflect_in(y, d.y, n, sth)
+			if rx == x and ry == y:
+				continue
+			for z in d.z:
+				var k := Vector3i(rx, ry, z)
+				if by.has(k):
+					out.append([Vector3i(x, y, z), by[k]])
+	var mm := m.duplicate()
+	mm["vox"] = out
+	return mm
+
+
+## Ring index -> the body cell it reflects onto, about the first (or last) body row. `lo`/`hi` say
+## whether that side abuts a wall; a side that does not keeps the edge it was drawn with.
+static func _reflect_in(i: int, n: int, lo: bool, hi: bool) -> int:
+	if i == 0 and lo:
+		return 2
+	if i == n - 1 and hi:
+		return n - 3
+	return i
+
+
 ## Read one wall .vox, honouring the layer-count opt-in. {} when absent or not a wall model.
 func _read_wall_vox(path: String, declared := false) -> Dictionary:
 	var got := {}
@@ -11032,7 +11101,12 @@ func _read_wall_vox(path: String, declared := false) -> Dictionary:
 ## the edge you will see the gap, and that is the model's to fix, not this function's.
 func _wall_vox_mesh(mv: Dictionary, nb: Dictionary) -> ArrayMesh:
 	Profiler.begin("zb.wallvox")
-	var __r := _wall_vox_mesh_body(mv, nb)
+	# The edge ring is bridged HERE rather than in the mesher, which is written in terms of the
+	# model it is handed and should stay that way. The mesh cache keys on nb already, so a cell
+	# with different neighbours gets its own bridged mesh and nothing is re-derived per cell.
+	var bridged := mv.duplicate()
+	bridged["model"] = bridge_edges(mv["model"], nb)
+	var __r := _wall_vox_mesh_body(bridged, nb)
 	Profiler.done("zb.wallvox")
 	return __r
 
