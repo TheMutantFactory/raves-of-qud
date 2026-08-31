@@ -56,6 +56,46 @@ func _ready() -> void:
 		Z.COVER_NONE != Z.COVER_MEMORY and Z.COVER_MEMORY != Z.COVER_FULL
 			and Z.COVER_NONE != Z.COVER_FULL)
 
+	# ── a remembered WALL is flat K, like a remembered sprite ────────────────
+	# The sprite path was corrected to flat K long ago and said why; the wall path kept scaling K
+	# by each vertex's own brightness, so a wall made of dark rock stayed dark — measured on screen
+	# at (4,25,26) lum 18.8 against a field of 41.4 and Qud's K of 64.3.
+	var r = Z.new()
+	add_child(r)
+	var src := ArrayMesh.new()
+	var verts := PackedVector3Array([Vector3.ZERO, Vector3.RIGHT, Vector3.UP])
+	# a bright face and a dark one, as a real wall mesh has
+	# ONE VERTEX IS NOT OPAQUE, or "alpha is preserved" cannot fail: every alpha was 1.0 and
+	# hard-coding 1.0 passed it.
+	var cols := PackedColorArray([Color(0.8, 0.7, 0.6, 0.5), Color(0.2, 0.18, 0.15),
+		Color(0.5, 0.45, 0.4)])
+	var arr := []
+	arr.resize(Mesh.ARRAY_MAX)
+	arr[Mesh.ARRAY_VERTEX] = verts
+	arr[Mesh.ARRAY_COLOR] = cols
+	src.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	var ghost: ArrayMesh = r._ghost_wall_mesh(src)
+	var g: PackedColorArray = ghost.surface_get_arrays(0)[Mesh.ARRAY_COLOR]
+	var k: Color = r._qud_color("K")
+	_check("every vertex of a remembered wall is the SAME colour",
+		absf(g[0].g - g[1].g) < 0.01 and absf(g[1].g - g[2].g) < 0.01,
+		"%s %s %s" % [g[0], g[1], g[2]])
+	# TOLERANCE, because a mesh's colour array does not store what you handed it exactly — the
+	# first version compared for equality and failed on a 0.002 rounding, which says nothing about
+	# the rule under test.
+	_check("...and that colour is Qud's K",
+		absf(g[0].r - k.r) < 0.01 and absf(g[0].g - k.g) < 0.01 and absf(g[0].b - k.b) < 0.01,
+		"%s vs K %s" % [g[0], k])
+	# THE DARK FACE IS THE ONE THAT MATTERED: under the old rule it came back at a fifth of K.
+	_check("a dark face is no darker than a bright one", g[1].g >= g[0].g * 0.999,
+		"dark %s bright %s" % [g[1], g[0]])
+	# ...and alpha still rides through, or the silhouette is lost. COMPARED AGAINST THE SOURCE AS
+	# THE MESH GIVES IT BACK, not against what was handed in: a colour array does not round-trip
+	# alpha unchanged, so comparing to the input failed on correct code.
+	var src_back: PackedColorArray = src.surface_get_arrays(0)[Mesh.ARRAY_COLOR]
+	_check("alpha is carried through from the source", absf(g[0].a - src_back[0].a) < 0.01,
+		"ghost %.3f source %.3f" % [g[0].a, src_back[0].a])
+
 	_report()
 
 

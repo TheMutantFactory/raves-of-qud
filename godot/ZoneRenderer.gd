@@ -2045,16 +2045,23 @@ func _ghost_wall_mesh_body(src: Mesh) -> ArrayMesh:
 		if cols.is_empty():
 			out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
 			continue
-		var vmax := 0.0
-		for c in cols:
-			vmax = maxf(vmax, maxf(c.r, maxf(c.g, c.b)))
-		if vmax <= 0.0:
-			vmax = 1.0
+		# FLAT K, NOT K SCALED BY THE VERTEX. The sprite path reached this conclusion first and
+		# said why: Qud does not lerp or scale a remembered thing, it draws the glyph in K on a
+		# field of k, one flat colour each, and the ratio between those two IS the look.
+		#
+		# Scaling K by each vertex's own brightness keeps a wall's baked face shades (1.00 broad /
+		# 0.92 top / 0.72 rim) and, worse, keeps how dark the ROCK was: remembered walls measured
+		# (4,25,26), lum 18.8, against a field of 41.4 and Qud's K of 64.3 — 0.29 of where Qud
+		# puts them, and dark where Qud is bright. Daniel: "the sprites outside of the line of
+		# sight are too dark. The floor is the correct color." The floor had just been fixed; this
+		# is the other half of the same mistake, in the path the sprite fix did not touch.
+		#
+		# The faces going flat is the point, not a cost — a remembered wall in Qud is a flat glyph,
+		# and the field behind it supplies the contrast.
 		var ng := PackedColorArray()
 		ng.resize(cols.size())
 		for i in cols.size():
-			var v: float = maxf(cols[i].r, maxf(cols[i].g, cols[i].b)) / vmax
-			ng[i] = Color(gc.r * v, gc.g * v, gc.b * v, cols[i].a)
+			ng[i] = Color(gc.r, gc.g, gc.b, cols[i].a)
 		arr[Mesh.ARRAY_COLOR] = ng
 		out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
 	return out

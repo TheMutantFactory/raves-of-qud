@@ -127,31 +127,48 @@ func image_for(obj: Dictionary, full: bool, ghost := false, field_blend := 0.0) 
 	# caches by (tile, main, detail), so each blended variant is built once like any other.
 	if ghost and field_blend > 0.0:
 		var gc := ghost_colors(o, field_blend)
-		return image(String(o.get("tile", "")), gc[0], gc[1])
+		return image(String(o.get("tile", "")), gc[0], gc[1], true)
 	if not full and o.has("tileP"):
 		return image(String(o.get("tileP", "")),
 			color_of(String(o.get("colorP", ""))) if not ghost else main_color(o),
-			color_of(String(o.get("detailP", ""))) if not ghost else detail_color(o))
-	return image(String(o.get("tile", "")), main_color(o), detail_color(o))
+			color_of(String(o.get("detailP", ""))) if not ghost else detail_color(o), ghost)
+	return image(String(o.get("tile", "")), main_color(o), detail_color(o), ghost)
 
 
 
 
-func image(tile: String, main: Color, detail: Color) -> Image:
+## `recolor_custom` — repaint a REPLACEMENT tile too, instead of drawing it as authored.
+##
+## A custom tile is your own art and is normally shown exactly as you drew it, colours and all.
+## That is right while you can SEE it and wrong the moment you cannot: Qud's memory is a palette
+## swap applied to everything in the cell, so a remembered thing is K/k whatever it is made of.
+## Without this a replacement tile never ghosted at all — it kept its authored colours out of line
+## of sight, and 48 of them in this save (the fattrees, every metal wall) sat dark on a field that
+## had just been corrected to Qud's. Daniel: "the sprites outside of the line of sight are too
+## dark. The floor is the correct color."
+##
+## The remap is the ordinary one, with the custom art as its own mask: relative brightness is
+## preserved and the two colours become K and k, which is the same rule _ghost_wall_mesh follows
+## for vertex-coloured walls.
+func image(tile: String, main: Color, detail: Color, recolor_custom := false) -> Image:
 	if tile == "":
 		return null
 	var fname := tile.replace("/", "_").replace("\\", "_").replace(":", "_")
-	var key := "%s|%s|%s" % [fname, main.to_html(), detail.to_html()]
+	var key := "%s|%s|%s|%s" % [fname, main.to_html(), detail.to_html(), recolor_custom]
 	if _img_cache.has(key):
 		return _img_cache[key]
+	var mask: Image = null
 	var custom := _custom_path(fname)
 	if custom != "":
 		var cimg := _load_image(custom)
 		if cimg != null:
-			_bound(_img_cache)
-			_img_cache[key] = cimg
-			return cimg
-	var mask := _mask(fname)
+			if not recolor_custom:
+				_bound(_img_cache)
+				_img_cache[key] = cimg
+				return cimg
+			mask = cimg
+	if mask == null:
+		mask = _mask(fname)
 	if mask == null:
 		return null
 	var w := mask.get_width()
