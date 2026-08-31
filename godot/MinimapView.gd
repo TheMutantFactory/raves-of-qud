@@ -557,7 +557,9 @@ func _render_tiles(data: Dictionary, w: int, h: int) -> bool:
 		# THE IMAGE, NOT THE TEXTURE. get_image() on an ImageTexture can force a GPU readback, and
 		# doing it once per cell is what made this panel cost 545ms a turn — five times the whole
 		# live 3D render. QudTiles caches the recoloured Image now, so this is a dictionary hit.
-		var ti: Image = _tiles.image_for(objs[objs.size() - 1], true)
+		# THE CELL'S FACE, not the last thing in the array — see ZoneRenderer.cell_face. The wire
+		# order is the cell stack, so a puddle arriving after the player drew over him.
+		var ti: Image = _tiles.image_for(ZoneRenderer.cell_face(objs), true)
 		if ti == null:
 			probe["tex_null"] += 1
 			continue
@@ -895,7 +897,7 @@ func _cell_color(cell: Dictionary) -> Color:
 		return BG
 	if _mode == MODE_MINIMAL:
 		return _cell_color_minimal(objs)
-	return _tiles.main_color(objs[objs.size() - 1], BG)   # FULL: top of the stack
+	return _tiles.main_color(ZoneRenderer.cell_face(objs), BG)   # FULL: the cell's face
 
 ## MINIMAL: a wall in the cell wins and is lifted toward white (pronounced, Qud-style); otherwise the
 ## topmost object is dimmed to a faint structural hint. (BG is the fallback so colourless cells recede.)
@@ -903,7 +905,7 @@ func _cell_color_minimal(objs: Array) -> Color:
 	for i in range(objs.size() - 1, -1, -1):
 		if bool(objs[i].get("wall", false)):
 			return _tiles.main_color(objs[i], BG).lerp(Color.WHITE, WALL_LIFT)
-	return BG.lerp(_tiles.main_color(objs[objs.size() - 1], BG), NONWALL_DIM)
+	return BG.lerp(_tiles.main_color(ZoneRenderer.cell_face(objs), BG), NONWALL_DIM)
 
 ## THE BUTTON AND THE SETTING ARE THE SAME THING. This used to flip a local _mode, which the
 ## setting would then overwrite on the next snapshot — the button would appear to work and undo

@@ -36,7 +36,12 @@ class FakeTiles:
 		return fallback
 	## image_for, not texture_for: the composite takes PIXELS now, because get_image() per cell was
 	## a GPU readback and cost the panel 545ms a turn.
-	func image_for(_obj: Dictionary, _full: bool) -> Image:
+	## NO TILE, NO ART — which is what the real one does, and what lets a check tell WHICH object
+	## the map picked. Returning the same picture for every object made "the map draws the creature
+	## rather than the puddle over him" pass against code that still drew the puddle.
+	func image_for(obj: Dictionary, _full: bool) -> Image:
+		if String(obj.get("tile", "")) == "":
+			return null
 		var im := Image.create(16, 24, false, Image.FORMAT_RGBA8)
 		im.fill(Color(0, 0, 0, 0))
 		for y in range(6, 18):
@@ -277,6 +282,68 @@ func _ready() -> void:
 			or is_equal_approx(m._rect.position.x, m._view.size.x - m._rect.size.x)
 			or is_equal_approx(m._rect.position.y, m._view.size.y - m._rect.size.y),
 		"player %.0fpx off centre with the map at %s" % [after_d, m._rect.position])
+
+	# ── WHICH OBJECT A CELL SHOWS ─────────────────────────────────────────────
+	# Daniel: "NPCs + player should be shown when there are multiple objects on a tile. Right now I
+	# just see a puddle, not the player." His cell, read off the wire: Door(7), Humanoid(100,
+	# creature), Water(2) — in that order, and the map drew the last one.
+	var Zr = load("res://ZoneRenderer.gd")
+	var his_cell: Array = [
+		{"name": "Door", "tile": "door", "layer": 7},
+		{"name": "Humanoid", "tile": "player", "layer": 100, "creature": true, "sinks": true},
+		{"name": "Water", "tile": "puddle", "layer": 2, "liquid": true},
+	]
+	_check("a creature is its cell's face, whatever arrives after it",
+		String(Zr.cell_face(his_cell).get("name", "")) == "Humanoid",
+		str(Zr.cell_face(his_cell).get("name", "?")))
+	# A CREATURE OUTRANKS EVERY LAYER, not merely the layers Qud happens to use. Ranking on `layer`
+	# alone passes the check above by luck — creatures sit at 100 — and puts a high-layer prop over
+	# the player the first time one exists.
+	_check("...even under something with a higher layer",
+		String(Zr.cell_face([
+			{"name": "Humanoid", "tile": "p", "layer": 100, "creature": true},
+			{"name": "Banner", "tile": "b", "layer": 250},
+		]).get("name", "")) == "Humanoid")
+	# ...and with no creature, the highest RENDER LAYER wins, not the last arrival.
+	_check("with no creature, the top render layer wins",
+		String(Zr.cell_face([
+			{"name": "Door", "tile": "d", "layer": 7},
+			{"name": "Water", "tile": "w", "layer": 2},
+		]).get("name", "")) == "Door")
+	_check("...and equal layers keep the later object", String(Zr.cell_face([
+			{"name": "First", "tile": "a", "layer": 5},
+			{"name": "Second", "tile": "b", "layer": 5},
+		]).get("name", "")) == "Second")
+	_check("an empty cell has no face", Zr.cell_face([]).is_empty())
+	# A missing layer must not beat a real one: Qud omits the field on plenty of objects.
+	_check("an object with no layer does not outrank one with a layer",
+		String(Zr.cell_face([
+			{"name": "Wall", "tile": "w", "layer": 7},
+			{"name": "Dust", "tile": "d"},
+		]).get("name", "")) == "Wall")
+
+	# ...and the map actually draws it. THE PICTURE, not just the predicate: the three sources each
+	# had their own copy of "take the last object", and fixing the rule without fixing the callers
+	# would pass every check above while the map still showed a puddle.
+	var face_cells := {
+		"player": {"x": 9, "y": 9},
+		"zone": {"width": 2, "height": 1},
+		"cells": [
+			{"x": 0, "y": 0, "objs": [
+				{"tile": "t", "color": "&y", "layer": 100, "creature": true},
+				{"tile": "", "color": "&y", "layer": 2},
+			]},
+			{"x": 1, "y": 0, "objs": [{"tile": "t", "color": "&y", "layer": 2}]},
+		],
+	}
+	m._set_fog(false)
+	m._last_data = face_cells
+	m._rerender()
+	# The stub draws art only for tile "t"; the layer-2 object has no tile, so a cell that picked
+	# it would come out blank.
+	_check("the tile map draws the creature, not what arrived after it",
+		_non_bg_in(m.last_image, m.BG, 0, 0, m.TILE_W, m.TILE_H) > 0,
+		"the creature's cell is blank")
 
 	# ── line of sight on the map ──────────────────────────────────────────────
 	# Daniel: "add an icon to the minimap-tiles to toggle the Qud line-of-sight lighting/fog of war
