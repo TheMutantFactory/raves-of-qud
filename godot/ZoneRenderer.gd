@@ -2748,6 +2748,20 @@ func _build_darkness(cells: Array, parent: Node, frozen_off := NOT_FROZEN) -> vo
 					Color(_world_bg.r, _world_bg.g, _world_bg.b, REMEMBER_COVER))
 				any = true
 			var a := float(dark[k]) * amax
+			# NO FILM OVER THE WASH — the double-darkening this file already names for a departed
+			# zone ("any film laid over it double-darkens"), reached by the other road.
+			#
+			# The wash paints the cell with QUD'S OWN FIELD COLOUR, which is a complete answer to
+			# what a remembered cell looks like; laying the remembered-ground film over it then
+			# darkens a colour that was already correct. Measured against a live capture of Qud's
+			# screen, the same cell: Qud (15,59,58) lum 45.7, Raves (14,40,43) lum 32.5. Daniel,
+			# with the two side by side: "the floor in Qud looks... darker?" — it looks darker in
+			# RAVES, and this is the multiply doing it.
+			#
+			# The VEIL survives, because it answers the other question: how far past the edge of
+			# the visible the cell sits. That is not about what the cell is.
+			if wash.has(k):
+				a = float(veil.get(k, 0.0)) * amax
 			if penumbra_divisions > 1 and veil_kind.has(k):
 				# SUBDIVIDE ONLY A CELL THAT IS ACTUALLY A GRADIENT. Part of this cell's darkness is
 				# a DISTANCE, so it CAN be resampled inside the tile — but "can" is not "must", and
