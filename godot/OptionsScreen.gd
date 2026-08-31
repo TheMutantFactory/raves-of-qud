@@ -37,6 +37,13 @@ const RAVES_ITEMS := [
 	{"key": "minimap_source", "label": "Minimap", "type": "choice",
 		"options": ["Painted", "Structural", "Qud (1:1)", "Qud tiles"],
 		"values": ["full", "minimal", "qud", "tiles"]},
+	# THE SAME KEY THE EYE IN THE TITLEBAR WRITES, deliberately. The panel's own button was the
+	# only way to reach this, so the setting existed and Options did not mention it; two controls
+	# over one key is fine and two keys for one idea is not — the source picker above carries the
+	# same note for the same reason. Daniel: "let's make the minimap tiles have a setting to
+	# enable/disable Qud line-of-sight/fog-of-war."
+	{"key": "minimap_fog", "label": "Minimap: Qud line of sight (unseen cells fade to memory)",
+		"type": "toggle", "default": true},
 	{"key": "font_scale", "label": "Font scale", "type": "slider", "min": 0.7, "max": 1.5, "step": 0.05},
 	{"key": "fire_zone_radius", "label": "Lit fires: zone radius (0 = this zone only)",
 		"type": "slider", "min": 0, "max": 3, "step": 1},
@@ -571,7 +578,7 @@ func _qol_item(fname: String) -> Dictionary:
 ## Settings that own a LIVE SURFACE and are not qol_ features. Hand-listed because there is no way
 ## to tell from a key's name that something on screen is already showing it; the audit
 ## (tools/regression/settings_reach_audit.py) is what finds the candidates.
-const LIVE_KEYS := {"fx_scanlines": true, "fx_vignette": true}
+const LIVE_KEYS := {"fx_scanlines": true, "fx_vignette": true, "minimap_fog": true}
 
 var apply_live_cb: Callable = Callable()
 

@@ -90,11 +90,44 @@ func anim_step(phase: int) -> int:
 ## tiles a turn and needs PIXELS, not a GPU handle: it was calling get_image() on each returned
 ## texture — a readback per cell — and the panel cost 545ms a turn, five times the whole live 3D
 ## render. Images are CPU-side and free to hand out.
-func image_for(obj: Dictionary, full: bool) -> Image:
+func image_for(obj: Dictionary, full: bool, ghost := false) -> Image:
+	var im: Image
 	if not full and obj.has("tileP"):
-		return image(String(obj.get("tileP", "")),
+		im = image(String(obj.get("tileP", "")),
 			color_of(String(obj.get("colorP", ""))), color_of(String(obj.get("detailP", ""))))
-	return image(String(obj.get("tile", "")), main_color(obj), detail_color(obj))
+	else:
+		im = image(String(obj.get("tile", "")), main_color(obj), detail_color(obj))
+	return ghost_of(im) if ghost else im
+
+
+## QUD'S MEMORY OF A TILE — the flat K/k ghost, as a CACHED VARIANT rather than a tint.
+##
+## The 3D view reached this same conclusion twice (see _ghost_obj and _ghost_wall_mesh_cached):
+## memory is a PALETTE SWAP, so it is a different picture, and a different picture is built once
+## and kept. Multiplying every pixel of every remembered cell in GDScript per turn is the shape of
+## the cost that made this panel take 545ms a turn.
+##
+## FLAT, not scaled by the cell's light: what you remember is the map, not how lit it was — the
+## same reason _view_tint returns MEMORY_TINT without the light factor.
+const MEMORY_TINT := Color(0.32, 0.58, 0.55)
+
+func ghost_of(im: Image) -> Image:
+	if im == null:
+		return null
+	var key := "ghost|%d" % im.get_instance_id()
+	if _ghost_cache.has(key):
+		return _ghost_cache[key]
+	var g := Image.create(im.get_width(), im.get_height(), false, Image.FORMAT_RGBA8)
+	for y in im.get_height():
+		for x in im.get_width():
+			var c := im.get_pixel(x, y)
+			g.set_pixel(x, y, Color(c.r * MEMORY_TINT.r, c.g * MEMORY_TINT.g,
+				c.b * MEMORY_TINT.b, c.a))
+	_bound(_ghost_cache)
+	_ghost_cache[key] = g
+	return g
+
+var _ghost_cache := {}   # the remembered form of each tile, keyed off the live image it came from
 
 
 func image(tile: String, main: Color, detail: Color) -> Image:

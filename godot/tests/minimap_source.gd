@@ -39,7 +39,12 @@ class FakeTiles:
 	## NO TILE, NO ART — which is what the real one does, and what lets a check tell WHICH object
 	## the map picked. Returning the same picture for every object made "the map draws the creature
 	## rather than the puddle over him" pass against code that still drew the puddle.
-	func image_for(obj: Dictionary, _full: bool) -> Image:
+	## THE REAL ONE DOES THE GHOSTING. A stub that applied its own memory tint would be checking
+	## the stub — the whole point of the check is that the map wears the tint the shipped code
+	## makes, and that it is the same one the 3D view uses.
+	var _real = load("res://QudTiles.gd").new()
+	var MEMORY_TINT = _real.MEMORY_TINT
+	func image_for(obj: Dictionary, _full: bool, ghost := false) -> Image:
 		if String(obj.get("tile", "")) == "":
 			return null
 		var im := Image.create(16, 24, false, Image.FORMAT_RGBA8)
@@ -47,7 +52,7 @@ class FakeTiles:
 		for y in range(6, 18):
 			for x in range(4, 12):
 				im.set_pixel(x, y, ART)
-		return im
+		return _real.ghost_of(im) if ghost else im
 
 
 func _ready() -> void:
@@ -393,6 +398,20 @@ func _ready() -> void:
 	# view. A remembered cell that vanished would make the map lie about a room you have walked.
 	_check("...and a remembered cell is drawn, but dimmer", mem_px > 0 and mem_px <= seen_px,
 		"seen=%d remembered=%d" % [seen_px, mem_px])
+	# A TINT, NOT A DIM. Daniel: "the minimap tiles currently show light/dark, but not the
+	# fog-of-war tint." Qud's memory is a PALETTE SWAP — the flat K/k teal — so a remembered cell
+	# is a different COLOUR, not the same colour turned down. Darkening alone keeps every channel's
+	# ratio to every other, which is what the old near-black veil did, so ratios are the question
+	# and brightness is not: the checks below on luminance pass for a plain dim too.
+	var seen_rb := _chan_ratio_in(im2, 0, 0, m.TILE_W, m.TILE_H)
+	var mem_rb := _chan_ratio_in(im2, m.TILE_W, 0, m.TILE_W, m.TILE_H)
+	_check("a remembered cell is TINTED, not merely dimmed", absf(mem_rb - seen_rb) > 0.15,
+		"red:blue seen=%.2f remembered=%.2f" % [seen_rb, mem_rb])
+	# ...and the tint is the WORLD'S. Two answers to "what does remembered look like" is the bug
+	# this replaces, not a detail of it.
+	_check("...with the same memory tint the 3D view uses",
+		m._tiles.MEMORY_TINT == load("res://ZoneRenderer.gd").MEMORY_TINT,
+		"tiles %s vs world %s" % [m._tiles.MEMORY_TINT, load("res://ZoneRenderer.gd").MEMORY_TINT])
 	var seen_lum := _mean_lum_in(im2, 0, 0, m.TILE_W, m.TILE_H)
 	var mem_lum := _mean_lum_in(im2, m.TILE_W, 0, m.TILE_W, m.TILE_H)
 	# A MARGIN, NOT AN INEQUALITY. `mem_lum < seen_lum` is satisfied by a veil at alpha 0.02 —
@@ -582,6 +601,22 @@ static func _non_bg_in(im: Image, bg: Color, x0: int, y0: int, w: int, h: int) -
 			if absf(c.r - bg.r) > NEAR or absf(c.g - bg.g) > NEAR or absf(c.b - bg.b) > NEAR:
 				n += 1
 	return n
+
+
+## The red:blue ratio over a cell's ink. A DIM scales every channel together and leaves this
+## alone; a tint moves it. Sampling only ink, because the transparent margin would drag every
+## cell's ratio toward the background's and hide the difference being asked about.
+static func _chan_ratio_in(im: Image, x0: int, y0: int, w: int, h: int) -> float:
+	var r := 0.0
+	var b := 0.0
+	for y in range(y0, mini(y0 + h, im.get_height())):
+		for x in range(x0, mini(x0 + w, im.get_width())):
+			var c := im.get_pixel(x, y)
+			if c.r + c.g + c.b < 0.15:
+				continue
+			r += c.r
+			b += c.b
+	return (r / b) if b > 0.001 else -1.0
 
 
 static func _mean_lum_in(im: Image, x0: int, y0: int, w: int, h: int) -> float:
