@@ -39,26 +39,14 @@ class FakeTiles:
 	## NO TILE, NO ART — which is what the real one does, and what lets a check tell WHICH object
 	## the map picked. Returning the same picture for every object made "the map draws the creature
 	## rather than the puddle over him" pass against code that still drew the puddle.
-	## THE REAL RECIPE DECIDES THE GHOST. The stub draws the shape; which COLOURS a remembered cell
-	## is painted in comes from ZoneRenderer.ghost_obj, so what the check grades is the rule that
-	## ships rather than one the test invented.
-	const GHOST_ART := Color(0.13, 0.32, 0.32, 1)
-	const FIELD := Color(0.06, 0.23, 0.23, 1)
-	func field_color() -> Color:
-		return FIELD
-	func image_for(obj: Dictionary, _full: bool, ghost := false, field_blend := 0.0) -> Image:
+	func image_for(obj: Dictionary, _full: bool) -> Image:
 		if String(obj.get("tile", "")) == "":
 			return null
-		var g: Dictionary = load("res://ZoneRenderer.gd").ghost_obj(obj) if ghost else obj
 		var im := Image.create(16, 24, false, Image.FORMAT_RGBA8)
 		im.fill(Color(0, 0, 0, 0))
-		# the ghost's colour comes from the repainted object, exactly as the real path does
-		var col: Color = GHOST_ART if String(g.get("tilecolor", "")) == "&K" else ART
-		if ghost and field_blend > 0.0:
-			col = col.lerp(FIELD, field_blend)   # the real path blends the COLOURS, so does this
 		for y in range(6, 18):
 			for x in range(4, 12):
-				im.set_pixel(x, y, col)
+				im.set_pixel(x, y, ART)
 		return im
 
 
@@ -403,53 +391,15 @@ func _ready() -> void:
 	_check("...a seen cell is drawn", seen_px > 0, "%d px" % seen_px)
 	# VEILED, NOT HIDDEN: Qud ghosts what you remember rather than erasing it, and so does the 3D
 	# view. A remembered cell that vanished would make the map lie about a room you have walked.
-	_check("...and a remembered cell is drawn", mem_px > 0, "%d px" % mem_px)
-	# A TINT, NOT A DIM. Daniel: "the minimap tiles currently show light/dark, but not the
-	# fog-of-war tint." Qud's memory is a PALETTE SWAP — the flat K/k teal — so a remembered cell
-	# is a different COLOUR, not the same colour turned down. Darkening alone keeps every channel's
-	# ratio to every other, which is what the old near-black veil did, so ratios are the question
-	# and brightness is not: the checks below on luminance pass for a plain dim too.
-	var seen_rb := _chan_ratio_in(im2, 0, 0, m.TILE_W, m.TILE_H)
-	var mem_rb := _chan_ratio_in(im2, m.TILE_W, 0, m.TILE_W, m.TILE_H)
-	_check("a remembered cell is TINTED, not merely dimmed", absf(mem_rb - seen_rb) > 0.15,
-		"red:blue seen=%.2f remembered=%.2f" % [seen_rb, mem_rb])
-	# ...and the tint is the WORLD'S. Two answers to "what does remembered look like" is the bug
-	# this replaces, not a detail of it.
-	# THE MAP'S GHOST IS THE WORLD'S GHOST, by construction rather than by two constants kept in
-	# step. A remembered puddle drawn with the map's old tint came out a vivid blue BRIGHTER than
-	# Qud's entire field; repainted to K/k it is flat teal like everything else remembered.
-	var Zg = load("res://ZoneRenderer.gd")
-	var g: Dictionary = Zg.ghost_obj({"tile": "puddle", "color": "&B", "tilecolor": "&B",
-		"detail": "b", "fgHex": "#00a0ff"})
-	_check("a remembered object is REPAINTED to Qud's K/k", String(g.get("tilecolor", "")) == "&K"
-		and String(g.get("detail", "")) == "k", str(g))
-	# ...and the painted-colour overrides must go, or they beat the repaint in the recolour path
-	# and the puddle stays blue anyway.
-	_check("...with its colour overrides dropped", not g.has("fgHex") and not g.has("detailHex"),
-		str(g))
-	# ...and QudTiles actually ASKS for the repaint. Every check in this file stubs QudTiles, so
-	# nothing here reaches image_for — deleting the repaint from it broke nothing until this.
-	var qt = load("res://QudTiles.gd").new()
-	var live := {"tile": "puddle", "color": "&B", "tilecolor": "&B", "detail": "b"}
-	_check("QudTiles paints a remembered cell with the repaint",
-		String(qt.paint_obj(live, true).get("tilecolor", "")) == "&K",
-		str(qt.paint_obj(live, true)))
-	_check("...and a seen cell with the object's own colours",
-		String(qt.paint_obj(live, false).get("tilecolor", "")) == "&B",
-		str(qt.paint_obj(live, false)))
+	_check("...and a remembered cell is drawn, but dimmer", mem_px > 0 and mem_px <= seen_px,
+		"seen=%d remembered=%d" % [seen_px, mem_px])
 	var seen_lum := _mean_lum_in(im2, 0, 0, m.TILE_W, m.TILE_H)
 	var mem_lum := _mean_lum_in(im2, m.TILE_W, 0, m.TILE_W, m.TILE_H)
-	# FLATTER, NOT DIMMER — and the difference matters, because the old check was the other one.
-	#
-	# It asked for `mem_lum < seen_lum * 0.8`, which was right while a remembered cell was the live
-	# art under a near-black veil. Under Qud's model it is wrong: the cell is painted with the
-	# FIELD colour, and a field-coloured cell is easily brighter than a seen cell whose art is dark.
-	# What actually distinguishes them in Qud is CONTRAST — a remembered cell is nearly flat field
-	# with a sparse glyph, a seen one is full-colour art against the ground.
-	var seen_c := _contrast_in(im2, 0, 0, m.TILE_W, m.TILE_H)
-	var mem_c := _contrast_in(im2, m.TILE_W, 0, m.TILE_W, m.TILE_H)
-	_check("...and is FLATTER than a seen one, which is what memory looks like in Qud",
-		mem_c < seen_c * 0.8, "contrast seen=%.3f remembered=%.3f" % [seen_c, mem_c])
+	# A MARGIN, NOT AN INEQUALITY. `mem_lum < seen_lum` is satisfied by a veil at alpha 0.02 —
+	# arithmetically dimmer, indistinguishable on screen, and exactly the "fog that does nothing"
+	# this is here to rule out.
+	_check("...visibly dimmer, not merely different", mem_lum < seen_lum * 0.8,
+		"seen=%.3f remembered=%.3f" % [seen_lum, mem_lum])
 
 	# THE BUTTON IS THE STATE, not a second copy of it — a pressed eye over a full-bright map is
 	# the kind of lie a screenshot cannot catch.
@@ -466,46 +416,6 @@ func _ready() -> void:
 	_check("the eye is hidden in 1:1", not m._fog_btn.visible)
 	m.set_one_to_one(false)
 	_check("...and back in user mode", m._fog_btn.visible)
-
-	# ── a remembered cell sits on Qud's FIELD ────────────────────────────────
-	# Qud paints every cell with the field colour and draws the glyph on it; the tile map had no
-	# field at all, so a remembered floor read as art floating on the panel background. Daniel,
-	# with the two tiles side by side: "blend remembered art toward the field so it matches Qud."
-	m._set_fog(true)
-	m._last_data = fog_cells
-	m._rerender()
-	var fim: Image = m.last_image
-	var fld: Color = m._tiles.field_color()
-	var corner := fim.get_pixel(m.TILE_W + 1, 1)     # a remembered cell, away from its art
-	_check("a remembered cell is painted with the field, not the panel background",
-		absf(corner.r - fld.r) < 0.06 and absf(corner.g - fld.g) < 0.06, str(corner))
-	var seen_corner := fim.get_pixel(1, 1)
-	_check("...and a SEEN cell is not", absf(seen_corner.g - fld.g) > 0.05, str(seen_corner))
-	# ...and the art on it is pulled toward that field rather than left at full K.
-	# THE BLEND ITSELF, not just that a constant exists. Painting the field under the cell already
-	# lowers its contrast, so a contrast check passes with the blend deleted — this asks how far the
-	# remembered INK sits from the field it is drawn on.
-	var dev := _max_dev_from(fim, m.TILE_W, 0, m.TILE_W, m.TILE_H, fld)
-	_check("a remembered cell's art is pulled close to the field", dev < 0.06, "max deviation %.3f" % dev)
-	var seen_dev := _max_dev_from(fim, 0, 0, m.TILE_W, m.TILE_H, fld)
-	_check("...and a seen cell's art is not", seen_dev > dev * 1.5,
-		"seen %.3f vs remembered %.3f" % [seen_dev, dev])
-	# ...and the arithmetic, asked of the real QudTiles rather than the stub every render uses.
-	var qt2 = load("res://QudTiles.gd").new()
-	# QUD'S OWN PAIR, because a bare QudTiles has no palette in a headless run and color_of falls
-	# back to one grey for BOTH K and k — under which the blend is a no-op and the check below
-	# fails for a reason that has nothing to do with the code.
-	qt2.palette = {"K": "#155352", "k": "#0f3b3a"}
-	var go := {"tile": "t", "color": "&K", "tilecolor": "&K", "detail": "k"}
-	var c0: Array = qt2.ghost_colors(go, 0.0)
-	var c1: Array = qt2.ghost_colors(go, 0.55)
-	var f2: Color = qt2.field_color()
-	_check("blending pulls the ghost colours toward the field",
-		c1[0].g > minf(c0[0].g, f2.g) - 0.001 and absf(c1[0].g - f2.g) < absf(c0[0].g - f2.g),
-		"unblended %s blended %s field %s" % [c0[0], c1[0], f2])
-	_check("...and a blend of 0 leaves them alone", c0[0].is_equal_approx(qt2.main_color(go)),
-		str(c0[0]))
-	m._set_fog(false)
 
 	m._set_fog(false)
 	_check("the eye reads unpressed when the fog is off", not m._fog_btn.button_pressed)
@@ -672,48 +582,6 @@ static func _non_bg_in(im: Image, bg: Color, x0: int, y0: int, w: int, h: int) -
 			if absf(c.r - bg.r) > NEAR or absf(c.g - bg.g) > NEAR or absf(c.b - bg.b) > NEAR:
 				n += 1
 	return n
-
-
-## The red:blue ratio over a cell's ink. A DIM scales every channel together and leaves this
-## alone; a tint moves it. Sampling only ink, because the transparent margin would drag every
-## cell's ratio toward the background's and hide the difference being asked about.
-static func _chan_ratio_in(im: Image, x0: int, y0: int, w: int, h: int) -> float:
-	var r := 0.0
-	var b := 0.0
-	for y in range(y0, mini(y0 + h, im.get_height())):
-		for x in range(x0, mini(x0 + w, im.get_width())):
-			var c := im.get_pixel(x, y)
-			if c.r + c.g + c.b < 0.15:
-				continue
-			r += c.r
-			b += c.b
-	return (r / b) if b > 0.001 else -1.0
-
-
-## The luminance SPREAD across a cell — how much the art stands out from what it sits on. Qud's
-## remembered cell is nearly flat and its seen cell is not, and that is the difference a check
-## should ask about; brightness alone says the wrong thing once the cell is painted with the field.
-## How far the FURTHEST pixel in a cell sits from the field colour. A cell painted with the field
-## and drawn on with art pulled toward it stays close; one drawn at full K does not.
-static func _max_dev_from(im: Image, x0: int, y0: int, w: int, h: int, f: Color) -> float:
-	var d := 0.0
-	for y in range(y0, mini(y0 + h, im.get_height())):
-		for x in range(x0, mini(x0 + w, im.get_width())):
-			var c := im.get_pixel(x, y)
-			d = maxf(d, maxf(absf(c.r - f.r), maxf(absf(c.g - f.g), absf(c.b - f.b))))
-	return d
-
-
-static func _contrast_in(im: Image, x0: int, y0: int, w: int, h: int) -> float:
-	var lo := 9.0
-	var hi := -9.0
-	for y in range(y0, mini(y0 + h, im.get_height())):
-		for x in range(x0, mini(x0 + w, im.get_width())):
-			var c := im.get_pixel(x, y)
-			var l := c.r * 0.3 + c.g * 0.6 + c.b * 0.1
-			lo = minf(lo, l)
-			hi = maxf(hi, l)
-	return hi - lo
 
 
 static func _mean_lum_in(im: Image, x0: int, y0: int, w: int, h: int) -> float:

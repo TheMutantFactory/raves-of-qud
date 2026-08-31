@@ -1327,10 +1327,6 @@ func _open_options_overlay() -> void:
 	scn.apply_live_cb = func() -> void:
 		_set_panels_one_to_one(_panels_1to1)
 		_refresh_crt()
-		# The minimap's fog is written by two controls — the eye in its titlebar and the options
-		# row — so the panel has to be told when the one it does not own is the one that moved.
-		if _minimap != null and _minimap.has_method("refresh_fog_setting"):
-			_minimap.refresh_fog_setting()
 	_options.add_child(scn)
 	add_child(_options)
 	UiState.set_scene("options")

@@ -90,51 +90,11 @@ func anim_step(phase: int) -> int:
 ## tiles a turn and needs PIXELS, not a GPU handle: it was calling get_image() on each returned
 ## texture — a readback per cell — and the panel cost 545ms a turn, five times the whole live 3D
 ## render. Images are CPU-side and free to hand out.
-## WHICH OBJECT'S COLOURS THIS CELL IS PAINTED IN — itself, or its remembered repaint.
-##
-## Its own function because it is the whole of the decision, and because a test that stubs QudTiles
-## (which every minimap check does — there are no tile files under a headless run) never reaches
-## image_for at all: deleting the repaint from there broke nothing that was being checked.
-##
-## REMEMBERED IS A REPAINT, NOT A DIM, and the recipe is the world's rather than a second one
-## written here — see ZoneRenderer.ghost_obj.
-func paint_obj(obj: Dictionary, ghost: bool) -> Dictionary:
-	return ZoneRenderer.ghost_obj(obj) if ghost else obj
-
-
-## The two colours a remembered tile is recoloured with, pulled toward the field. Its own function
-## so it can be asked directly: every minimap check stubs QudTiles, so a test that renders cannot
-## reach the arithmetic, and the blend could be dropped from image_for with the suite green.
-func ghost_colors(o: Dictionary, field_blend: float) -> Array:
-	var f := field_color()
-	return [main_color(o).lerp(f, field_blend), detail_color(o).lerp(f, field_blend)]
-
-
-## QUD'S FIELD COLOUR — the 'k' every cell is painted with before anything is drawn on it.
-func field_color() -> Color:
-	return color_of("k", Color(0.06, 0.23, 0.23))
-
-
-func image_for(obj: Dictionary, full: bool, ghost := false, field_blend := 0.0) -> Image:
-	var o: Dictionary = paint_obj(obj, ghost)
-	# TOWARD THE FIELD, BY COLOUR RATHER THAN BY PIXEL. A remembered cell in Qud is overwhelmingly
-	# field with a sparse glyph on it — a histogram of a remembered-only region of Qud's screen is
-	# FLAT field, its glyphs too sparse to reach the top five colours. Raves recolours the whole
-	# tile, so its remembered cell is a dense picture where Qud's is a nearly-flat square.
-	#
-	# The ghost is a FLAT two-colour recolour (main K, detail k), so pulling those two colours
-	# toward the field pulls the whole tile toward it — no per-pixel pass, and image() already
-	# caches by (tile, main, detail), so each blended variant is built once like any other.
-	if ghost and field_blend > 0.0:
-		var gc := ghost_colors(o, field_blend)
-		return image(String(o.get("tile", "")), gc[0], gc[1])
-	if not full and o.has("tileP"):
-		return image(String(o.get("tileP", "")),
-			color_of(String(o.get("colorP", ""))) if not ghost else main_color(o),
-			color_of(String(o.get("detailP", ""))) if not ghost else detail_color(o))
-	return image(String(o.get("tile", "")), main_color(o), detail_color(o))
-
-
+func image_for(obj: Dictionary, full: bool) -> Image:
+	if not full and obj.has("tileP"):
+		return image(String(obj.get("tileP", "")),
+			color_of(String(obj.get("colorP", ""))), color_of(String(obj.get("detailP", ""))))
+	return image(String(obj.get("tile", "")), main_color(obj), detail_color(obj))
 
 
 func image(tile: String, main: Color, detail: Color) -> Image:

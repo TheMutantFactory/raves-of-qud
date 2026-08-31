@@ -46,12 +46,10 @@ const PAN_KEY := "minimap_pan_tool"
 const FOLLOW_KEY := "minimap_follow"
 const ZOOM_KEY := "minimap_zoom"
 const FOG_KEY := "minimap_fog"
-## HOW FAR A REMEMBERED TILE IS PULLED TOWARD THE FIELD. Qud's remembered cell is nearly flat
-## field; ours draws the whole tile. 0 keeps the K/k recolour as it was, 1 makes the cell the field
-## colour outright. Measured against a live capture of Qud's own screen — see the commit.
-const FIELD_BLEND := 0.55
 ## How much of a REMEMBERED cell survives — one you have explored but cannot currently see. Qud
 ## ghosts these rather than hiding them, and so does the 3D view; the map says the same thing with
+## a veil of its own background over the tile.
+const FOG_MEMORY := 0.62
 ## THE TILE MAP'S CELL SIZE, in map pixels — Qud's own art size, so sprites keep their shape and
 ## the TextureRect scales the whole thing nearest-neighbour like every other source here.
 const TILE_W := 16
@@ -77,6 +75,7 @@ var _pan_tool := false
 var _follow := false
 var _fog := false
 var _fog_btn: Button
+var _veil: Image      # one cell of background at FOG_MEMORY alpha, built once
 var _press_at := Vector2.ZERO   # where a click started, so a drag is not mistaken for a click
 var _sizing := false
 var _size_from := 0.0
@@ -560,18 +559,7 @@ func _render_tiles(data: Dictionary, w: int, h: int) -> bool:
 		# live 3D render. QudTiles caches the recoloured Image now, so this is a dictionary hit.
 		# THE CELL'S FACE, not the last thing in the array — see ZoneRenderer.cell_face. The wire
 		# order is the cell stack, so a puddle arriving after the player drew over him.
-		# THE REMEMBERED FORM IS A DIFFERENT PICTURE, not a wash over the live one. The veil this
-		# replaces blended near-black over the tile, so the map showed a remembered cell DARKER
-		# while the world showed it TEAL — Daniel: "the minimap tiles currently show light/dark,
-		# but not the fog-of-war tint." Two answers to one question again; the map takes the
-		# world's now (QudTiles.MEMORY_TINT == ZoneRenderer's).
-		# A REMEMBERED CELL GETS A FIELD, then the art over it — Qud's model, which the tile map
-		# had no equivalent of at all: its cells sat on the panel background, so a remembered floor
-		# read as art floating on black instead of as field with a glyph on it.
-		if veil:
-			img.fill_rect(Rect2i(x * TILE_W, y * TILE_H, TILE_W, TILE_H), _field_col())
-		var ti: Image = _tiles.image_for(ZoneRenderer.cell_face(objs), true, veil,
-			FIELD_BLEND if veil else 0.0)
+		var ti: Image = _tiles.image_for(ZoneRenderer.cell_face(objs), true)
 		if ti == null:
 			probe["tex_null"] += 1
 			continue
@@ -584,6 +572,13 @@ func _render_tiles(data: Dictionary, w: int, h: int) -> bool:
 		# background out around every sprite, leaving each tile in its own black box.
 		img.blend_rect(ti, Rect2i(Vector2i.ZERO, ti.get_size()),
 			Vector2i(x * TILE_W, y * TILE_H))
+		if veil:
+			# A VEIL, NOT A RECOLOUR. Dimming the tile would mean touching every pixel of it in
+			# GDScript, per cell, per turn — the cost that made this panel unusable once already.
+			# One blend of a pre-built translucent square is the same picture for a hundredth of
+			# the work.
+			img.blend_rect(_fog_veil(), Rect2i(0, 0, TILE_W, TILE_H),
+				Vector2i(x * TILE_W, y * TILE_H))
 	var p: Dictionary = data.get("player", {})
 	var px := int(p.get("x", -1))
 	var py := int(p.get("y", -1))
@@ -691,27 +686,6 @@ func _dress_icon(b: Button, art: String, fallback: String) -> void:
 
 
 ## LINE OF SIGHT ON THE MAP.
-## Re-read the fog setting after something ELSE wrote it — the options row shares this key with
-## the titlebar eye. Without this the two controls disagree until the next launch, which is the
-## whole family of bug this session has been chasing.
-func refresh_fog_setting() -> void:
-	var want := bool(Settings.get_value(FOG_KEY, false))
-	if want == _fog:
-		return
-	_fog = want
-	_refresh_fog_btn()
-	_rerender()
-
-
-## Qud's field colour, cached — the map's equivalent of the world's memory wash.
-var _field_cache := Color(0, 0, 0, 0)
-func _field_col() -> Color:
-	if _field_cache.a == 0.0:
-		_field_cache = _tiles.field_color() if _tiles != null else BG
-		_field_cache.a = 1.0
-	return _field_cache
-
-
 func _set_fog(on: bool) -> void:
 	_fog = on
 	Settings.set_value(FOG_KEY, on)
@@ -898,6 +872,11 @@ func _on_grab_input(e: InputEvent) -> void:
 
 
 ## One cell of background at the memory alpha, built once and reused for every veiled cell.
+func _fog_veil() -> Image:
+	if _veil == null:
+		_veil = Image.create(TILE_W, TILE_H, false, Image.FORMAT_RGBA8)
+		_veil.fill(Color(BG.r, BG.g, BG.b, FOG_MEMORY))
+	return _veil
 
 
 ## A hollow box around the player's cell — hollow so his own tile still reads inside it.

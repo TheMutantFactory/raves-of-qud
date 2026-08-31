@@ -46,7 +46,7 @@ GATE_FUNCS = {"qol_on", "qud_shape", "clone_of_qud", "_fx_on"}
 # which is how the three real ones would be missed again.
 ON_CHANGE_FUNCS = {"apply_global", "apply_cutaway", "_set_panels_one_to_one", "_rerender",
                    "_toggle_mode", "_refresh_toggle", "_walk_step", "_hold_step",
-                   "set_camera_mode", "_apply_flat_2d", "_relight_now", "_refresh_crt", "refresh_fog_setting"}
+                   "set_camera_mode", "_apply_flat_2d", "_relight_now", "_refresh_crt"}
 TURN_FUNCS = {"render_snapshot", "set_snapshot", "_on_snapshot", "_rebuild_dynamics",
               "_relight_static_sprites", "_relight_now", "_build_darkness", "_live_cell_tone",
               "_refresh_fx_flags", "_apply_fx_flags", "_shape_pools", "set_daylight"}
