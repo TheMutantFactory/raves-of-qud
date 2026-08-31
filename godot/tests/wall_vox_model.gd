@@ -73,6 +73,55 @@ func _ready() -> void:
 		and (picked["model"]["dims"] as Vector3i) == Vector3i(16, 16, 10),
 		str(picked.get("model", {}).get("dims", "none")))
 
+	# ── the model is not mirrored ────────────────────────────────────────────
+	# A voxel (vx,vy,vz) is placed at world (vx, vz, vy): two axes EXCHANGED, which flips
+	# handedness, so every model this project meshed came out mirrored. Nothing showed it until a
+	# wall with distinct sides. Daniel, with the file open in vengi: "the sides are flipped
+	# left-to-right."
+	var one := {"dims": Vector3i(4, 2, 2), "vox": [[Vector3i(0, 0, 0), 1], [Vector3i(3, 1, 1), 2]]}
+	var mir: Dictionary = Z.mirror_x(one)
+	_check("mirror_x sends x=0 to the far side", (mir["vox"][0][0] as Vector3i) == Vector3i(3, 0, 0),
+		str(mir["vox"][0][0]))
+	_check("...and x=max to the near side", (mir["vox"][1][0] as Vector3i) == Vector3i(0, 1, 1),
+		str(mir["vox"][1][0]))
+	_check("...leaving y and z alone, since north/south is already right",
+		(mir["vox"][1][0] as Vector3i).y == 1 and (mir["vox"][1][0] as Vector3i).z == 1)
+	_check("...and the palette index with its voxel", int(mir["vox"][0][1]) == 1
+		and int(mir["vox"][1][1]) == 2)
+	_check("...without disturbing the original", (one["vox"][0][0] as Vector3i) == Vector3i(0, 0, 0),
+		"mirror_x must not edit the model it was handed — it is cached and shared")
+	# TWICE IS THE IDENTITY, which is what makes it a mirror rather than a shuffle.
+	var back: Dictionary = Z.mirror_x(mir)
+	_check("mirroring twice returns the model", (back["vox"][0][0] as Vector3i) == Vector3i(0, 0, 0)
+		and (back["vox"][1][0] as Vector3i) == Vector3i(3, 1, 1))
+
+	# ...and the wall path applies it, so the model on screen is the one drawn in vengi.
+	# THE VOXEL SET, not its bounds. A 16-wide wall spans 0..15 either way, so comparing min/max x
+	# passed with the mirror deleted — the bounds are symmetric even when the model is not.
+	var raw: Dictionary = load("res://VoxFile.gd").read(found)["models"][0]
+	var loaded: Dictionary = r._read_wall_vox(found, true)
+	var W: int = (raw["dims"] as Vector3i).x
+	var raw_set := {}
+	var want := {}
+	for e in raw["vox"]:
+		var q: Vector3i = e[0]
+		raw_set[q] = true
+		want[Vector3i(W - 1 - q.x, q.y, q.z)] = true
+	var loaded_set := {}
+	for e in loaded["model"]["vox"]:
+		loaded_set[e[0] as Vector3i] = true
+	# ...and the model must actually BE asymmetric, or "mirrored" and "not mirrored" are the same
+	# picture and the check cannot fail.
+	var asym := false
+	for q in raw_set:
+		if not want.has(q):
+			asym = true
+			break
+	_check("the model is asymmetric, so a mirror is visible at all", asym,
+		"an x-symmetric model would make the check below vacuous")
+	_check("the wall reader hands back the mirrored voxel set", loaded_set == want,
+		"%d voxels loaded, %d expected" % [loaded_set.size(), want.size()])
+
 	# THE HEIGHT GATE IS LIFTED ONLY FOR A DECLARED FILE.
 	var got: Dictionary = r._read_wall_vox(found, true)
 	_check("a declared model is read at its own height", not got.is_empty(), str(got.keys()))

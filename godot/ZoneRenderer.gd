@@ -10917,6 +10917,32 @@ func _wall_vox_model(variant_tile: String) -> Dictionary:
 		_wall_vox_cache[path] = got
 	return _wall_vox_cache[path]
 
+## MIRROR THE MODEL ACROSS ITS X AXIS, because the way a .vox reaches world space is a REFLECTION.
+##
+## A voxel (vx, vy, vz) is placed at world (x=vx, z=vy, y=vz) — Z-up to Y-up by EXCHANGING two axes,
+## and exchanging two axes of a right-handed basis flips handedness. Every model this project has
+## meshed has therefore come out mirrored; nothing showed it until Daniel drew a wall with distinct
+## sides. "I loaded the voxel in vengi-voxedit and the sides are flipped left-to-right."
+##
+## X IS THE AXIS TO UNDO IT ON, not Y. Both restore handedness — they differ by a 180-degree turn —
+## but the north/south axis is already correct by construction: the face table calls the model's -Y
+## side "n" and maps it to the lower world z, which is Qud's north because cell y grows southward.
+## Turning the model 180 degrees would put a wall's join on the wrong side of it, which is a bug you
+## would only find later and further away.
+##
+## Done to the DATA, at read time, so the mesher, its face table and its neighbour culling are all
+## left alone — every one of them is written in terms of the model it is handed.
+static func mirror_x(m: Dictionary) -> Dictionary:
+	var d: Vector3i = m["dims"]
+	var out: Array = []
+	for e in m["vox"]:
+		var q: Vector3i = e[0]
+		out.append([Vector3i(d.x - 1 - q.x, q.y, q.z), e[1]])
+	var mm := m.duplicate()
+	mm["vox"] = out
+	return mm
+
+
 ## Read one wall .vox, honouring the layer-count opt-in. {} when absent or not a wall model.
 func _read_wall_vox(path: String, declared := false) -> Dictionary:
 	var got := {}
@@ -10931,7 +10957,7 @@ func _read_wall_vox(path: String, declared := false) -> Dictionary:
 			# WALL_H by d.z, so a 10-layer model simply stretches to the tile.
 			var ok := declared or d.z == WALL_VOX_LAYERS
 			if ok:
-				got = {"model": m, "palette": v.get("palette", PackedColorArray())}
+				got = {"model": mirror_x(m), "palette": v.get("palette", PackedColorArray())}
 			_wall_vox_files[path.get_file()] = "%dx%dx%d %s (%s indexing)" % [d.x, d.y, d.z,
 				("USED (declared)" if declared else "USED") if ok
 					else "ignored (not %d layers)" % WALL_VOX_LAYERS,
