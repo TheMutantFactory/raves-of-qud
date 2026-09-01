@@ -22,8 +22,13 @@
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
 
-    <!-- Default = the install discovered on this machine. Override with -p:CoQManaged=... -->
-    <CoQManaged Condition="'$(CoQManaged)' == ''">/Users/homefolder/Library/Application Support/Steam/steamapps/common/Caves of Qud/CoQ.app/Contents/Resources/Data/Managed</CoQManaged>
+    <!--
+      WHERE QUD'S ASSEMBLIES ARE. This defaulted to one absolute path under a home directory
+      that is not yours, so the README's own type-check command failed on every other machine.
+      Steam's default install per OS now, and -p:CoQManaged=... still wins over both.
+    -->
+    <CoQManaged Condition="'$(CoQManaged)' == '' AND '$([MSBuild]::IsOSPlatform(OSX))' == 'true'">$(HOME)/Library/Application Support/Steam/steamapps/common/Caves of Qud/CoQ.app/Contents/Resources/Data/Managed</CoQManaged>
+    <CoQManaged Condition="'$(CoQManaged)' == '' AND '$([MSBuild]::IsOSPlatform(Windows))' == 'true'">C:\Program Files (x86)\Steam\steamapps\common\Caves of Qud\CoQ_Data\Managed</CoQManaged>
   </PropertyGroup>
 
   <ItemGroup>

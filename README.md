@@ -34,8 +34,8 @@ Godot input → Qud command, and Qud zone state → 3D scene.
 | **Godot 4.7** | The tested version, Forward+ renderer. Other 4.x releases may work; 4.7 is the compatibility contract. Running from the editor needs nothing else. |
 | **Godot 4.7 export templates** | Only to build a standalone `.app`. Editor → *Editor* → *Manage Export Templates*, matching your Godot version exactly. |
 | **macOS or Windows** | Both run. macOS (Apple Silicon) is where the standalone `.app` is built and where most development happens; Windows runs on a dedicated test rig with its own harness backend. Qud compiles the C# mod in-process on either, so the mod itself never needs building. See [Windows](#windows) for what differs. |
-| **.NET SDK** *(optional)* | `dotnet build mod/RavesOfQudBridge.csproj` type-checks the mod against Qud's own `Assembly-CSharp.dll` before you restart the game. **Compile-check only — it deploys nothing.** |
-| **Python 3 + Pillow** *(optional)* | The `tools/` dev-loop scripts (drive the game headlessly, dump zone state, inspect tiles). Only the image tools need Pillow. |
+| **.NET SDK** *(optional)* | `dotnet build mod/RavesOfQudBridge.csproj` type-checks the mod against Qud's own `Assembly-CSharp.dll` — ~2s, and it catches API drift before a restart instead of at game launch. **Compile-check only: it deploys nothing, and you never ship the DLL it builds.** Add `-p:CoQManaged="/path/to/Managed"` for a non-default install. |
+| **Python 3** *(optional)* | The `tools/` dev-loop scripts. Every tool named in this README and in `CLAUDE.md` is standard library only; about a quarter of `tools/` — the image and voxel ones — also want **Pillow**. |
 
 Nothing here is fetched at build time: no package manager, no lockfile, no network.
 
