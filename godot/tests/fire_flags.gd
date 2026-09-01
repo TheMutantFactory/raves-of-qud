@@ -18,6 +18,15 @@ var _failed: Array[String] = []
 
 
 func _ready() -> void:
+	# USER MODE, PINNED — before the renderer is built, since its _ready re-reads these gates.
+	# They go through Settings.qud_shape(), which returns true UNCONDITIONALLY in 1:1, so on a
+	# machine whose settings.json says `"mode": "1to1"` no fixture is ever built and twelve of
+	# the checks below fail reporting `pools=0 flames=0 plumes=0` — a red SPOT run caused by the
+	# developer's own config rather than by the code. set_value is in-memory only (save() is what
+	# writes to disk), so pinning it here cannot disturb the real settings file.
+	Settings.one_to_one_only = false
+	Settings.set_value("mode", "user")
+
 	var r = load("res://ZoneRenderer.gd").new()
 	add_child(r)
 	r._light_root = Node3D.new()

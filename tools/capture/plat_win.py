@@ -20,8 +20,10 @@ against user32/kernel32 — no third-party deps, mirroring plat_mac.py's in-proc
 import csv
 import ctypes
 import ctypes.wintypes as wt
+import glob
 import io
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -339,6 +341,33 @@ def qud_install_dir():
     """
     return os.path.join("C:" + os.sep, "Program Files (x86)", "Steam", "steamapps",
                         "common", "Caves of Qud", "CoQ_Data")
+
+
+def godot_bin():
+    """Absolute path to the Godot 4.7 binary, or "" if none is installed here.
+
+    PREFERS THE `_console` BUILD, and that is not a nicety. winget ships two exes side by
+    side: the plain one detaches from the console on Windows, so `--headless --script` writes
+    NOTHING to a captured pipe. An audit that greps that output for "Parse Error" then finds
+    none and reports a clean pass -- a silent false PASS, which is strictly worse than the
+    crash this function was added to replace. Prefer the console wrapper and the output is
+    there on every spawn path.
+
+    Globbed rather than pinned so a version bump does not silently un-find Godot. Set
+    GODOT=C:\\path\\to\\Godot.exe to override, same env var tools/build_macos.sh already uses.
+    """
+    env = os.environ.get("GODOT", "")
+    if env and os.path.isfile(env):
+        return env
+    pkgs = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "WinGet", "Packages")
+    # console wrapper FIRST -- see the docstring; a silent pass is the failure mode here.
+    for pattern in ("Godot_v*_win64_console.exe", "Godot_v*_win64.exe"):
+        hits = sorted(glob.glob(os.path.join(pkgs, "GodotEngine.GodotEngine_*", pattern)))
+        if hits:
+            return hits[-1]
+    # NOT a bare "godot": PATHEXT makes that match a .bat/.cmd shim, and once the launcher dir
+    # is on PATH such a shim finds ITSELF and recurses to "Maximum setlocal recursion level".
+    return shutil.which("godot.exe") or ""
 
 
 # --- process / launch -----------------------------------------------------------

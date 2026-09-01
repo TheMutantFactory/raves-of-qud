@@ -176,13 +176,42 @@ something.
 ## Running SPOT on another machine
 
 Only the typing-guard audit is dependency-free (Python 3, stdlib only, no Godot, no Qud, no
-highvisor). The other three need the Godot binary and the .NET SDK at the paths in `CLAUDE.md`.
+highvisor). The others need the Godot binary and the .NET SDK.
 
 ```bash
 python3 tools/regression/typing_guard_audit.py
 ```
 
 Exit 0 clean, exit 1 with the offending files named and the fix spelled out.
+
+### A SPOT check may not depend on the machine it runs on (2026-09-01)
+
+SPOT's contract is "cannot go flaky", and four checks were quietly breaking it — each failing on a
+second machine for a reason that had nothing to do with the code. **The whole tier now passes on
+Windows** (48/48, first clean run there). What they were, since the shapes recur:
+
+- **A path hard-coded to one developer's home directory.** `parse_all_audit.py` carried a literal
+  macOS Godot path, so off that machine it raised `FileNotFoundError` and checked *nothing*.
+  Resolution moved behind the platform seam as **`plat.godot_bin()`** — override with `GODOT=`,
+  the same env var `tools/build_macos.sh` already used. On Windows it deliberately prefers Godot's
+  **`_console`** build: the plain exe detaches from the console and writes nothing to a captured
+  pipe, so an audit grepping that output for `Parse Error` would find none and report a **false
+  pass**, which is worse than the crash it replaced.
+- **Reading the developer's own config.** `fire_cells` / `fire_flags` go through
+  `Settings.qud_shape()`, which is unconditionally true in 1:1 — so on a machine whose
+  `settings.json` says `"mode": "1to1"` no fixture is ever built and 15 checks fail. Both now pin
+  `mode` to `user` in memory before building the renderer (`set_value` does not persist; `save()`
+  is what writes), so the real config is neither read nor disturbed.
+- **Confusing less data with different data.** `door_model_audit.py` skipped when the tile dir was
+  missing entirely but *failed* when the export was merely partial, reporting absent tiles as "no
+  longer falls back". It now judges only the tiles present and prints a NOTE naming what it could
+  not cover — a thinner export must not read as though it proved the same thing.
+- **A POSIX-only temp path.** `test_persist.gd` hard-coded `/tmp`, which Godot cannot create on
+  Windows; every assert then tripped on a store that had never written anything. Now
+  `OS.get_temp_dir()`.
+
+The tell for all four: **the failure says "less" rather than "different"** — zero counts, an empty
+capture, a missing file. Before believing a red SPOT run, check it fails for a reason in the diff.
 
 ## The checks are registered in the tree, and runnable from the panel (2026-08-07)
 

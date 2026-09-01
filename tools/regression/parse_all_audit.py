@@ -17,12 +17,23 @@ Godot's --check-only output has three distinct classes (docs/testing.md):
   "Failed to compile depended scripts"     -> cascade of the above, ignore
 We fail ONLY on the first. Exit 0 clean / 1 with the offending lines.
 """
+import os
 import pathlib
 import subprocess
 import sys
 
-GODOT = "/Users/homefolder/Downloads/Godot.app/Contents/MacOS/Godot"
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "capture"))
+import plat  # noqa: E402
+
+# Through the seam, not a literal. This line used to be one developer's home directory, so on
+# any other machine the audit did not report a parse error -- it raised FileNotFoundError and
+# checked NOTHING. Override with GODOT=/path/to/Godot.
+GODOT = plat.godot_bin()
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+
+if not GODOT:
+    print("parse_all: SKIP (no Godot binary found; set GODOT=/path/to/Godot to run this check)")
+    sys.exit(0)
 
 fails = []
 checked = 0
