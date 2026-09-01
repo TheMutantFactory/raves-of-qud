@@ -77,6 +77,16 @@ Needs both apps: `hv launch raves`, both in-game.
    on the wire at all, they live in the client's WorldStore. A corner is the case a there-and-back
    walk never reaches, which is why it goes around one. PROVEN TO FAIL: reinstating the bake-once
    guard makes it report 6 stale zones naming edge-vs-corner.
+   - **NEEDS USER MODE WITH `tiles3d` ON, and will now say so instead of passing.** The ramp only
+     exists on remembered neighbours, and `Main._neighbor_zones()` returns none while the view is
+     flat. 1:1 forces flat and locks the toggle; user mode alone is not enough either, because the
+     tile mode stays locked until the `tiles3d` QoL feature is loaded back (off by default). So in
+     the pair configuration this check has **nothing to look at**, and for months it reported PASS
+     over zero zones on every PC — three separate causes, one identical empty answer: a macOS-only
+     log path, a missing log returning `{}` rather than failing, and the flat-view gate. It now
+     fails when the whole walk observes no adjacent zone, and prints how many it actually checked.
+     A run that says `PASS (0 problem(s), 4 adjacent zone(s) actually checked)` has done the work;
+     one naming zero has not.
 5. **Mod round-trip.** Popups mirror and answer; `statustab`; the nav commands (autoexplore, POI,
    wait) each reach Qud.
 

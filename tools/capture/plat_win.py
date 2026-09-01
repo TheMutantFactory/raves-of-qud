@@ -343,6 +343,18 @@ def qud_install_dir():
                         "common", "Caves of Qud", "CoQ_Data")
 
 
+def godot_user_dir(project):
+    """Godot's `user://` for `project` -- %APPDATA%\\Godot\\app_userdata\\<name> on Windows.
+
+    Where the engine puts logs and anything a project writes to user://. NOT our support_dir():
+    that one is the mod's output (tiles, shots, state), and the two live nowhere near each other.
+    """
+    ad = os.environ.get("APPDATA", "")
+    if not ad:
+        ad = os.path.join(os.path.expanduser("~"), "AppData", "Roaming")
+    return os.path.join(ad, "Godot", "app_userdata", project)
+
+
 def godot_bin():
     """Absolute path to the Godot 4.7 binary, or "" if none is installed here.
 

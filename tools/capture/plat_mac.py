@@ -333,6 +333,16 @@ def qud_install_dir():
                         "Resources", "Data")
 
 
+def godot_user_dir(project):
+    """Godot's `user://` for `project` -- ~/Library/Application Support/Godot/app_userdata/<name>.
+
+    Where the engine puts logs and anything a project writes to user://. NOT support_dir(): that
+    one is the mod's output (tiles, shots, state), and the two live nowhere near each other.
+    """
+    return os.path.join(os.path.expanduser("~"), "Library", "Application Support",
+                        "Godot", "app_userdata", project)
+
+
 def godot_bin():
     """Absolute path to the Godot 4.7 binary, or "" if none is installed here.
 
