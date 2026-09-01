@@ -20,7 +20,7 @@ API terms — `get_viewport()`, `SubViewport`, "the Godot viewport" — stay as-
 │   Godot 4   │ ─────────────────────────────▶ │  Caves of Qud (real)   │
 │ 2.5D client │                                │  + Raves bridge mod    │
 │ = Holodeck  │ ◀───────────────────────────── │  = authoritative sim   │
-└─────────────┘   snapshot frames (per turn)    └────────────────────────┘
+└─────────────┘   snapshot frames (per turn)   └────────────────────────┘
 ```
 
 Qud owns worldgen, AI, combat, items, saves, tiles — everything. This repo owns two mappings:
@@ -33,7 +33,7 @@ Godot input → Qud command, and Qud zone state → 3D scene.
 | **Caves of Qud** | A paid, installed copy. Raves ships **no** game assets — tiles are extracted at runtime from your own install into a git-ignored folder. You must enable the mod **and** tick *allow local C# scripting mods* in-game. |
 | **Godot 4.7** | The tested version, Forward+ renderer. Other 4.x releases may work; 4.7 is the compatibility contract. Running from the editor needs nothing else. |
 | **Godot 4.7 export templates** | Only to build a standalone `.app`. Editor → *Editor* → *Manage Export Templates*, matching your Godot version exactly. |
-| **macOS** | The built and tested platform (Apple Silicon). Qud's own macOS build compiles the C# mod in-process, so there is no separate mod build step and no Windows machine needed. A Windows branch of the *client* exists but is not the tested path. |
+| **macOS or Windows** | Both run. macOS (Apple Silicon) is where the standalone `.app` is built and where most development happens; Windows runs on a dedicated test rig with its own harness backend. Qud compiles the C# mod in-process on either, so the mod itself never needs building. See [Windows](#windows) for what differs. |
 | **.NET SDK** *(optional)* | `dotnet build mod/RavesOfQudBridge.csproj` type-checks the mod against Qud's own `Assembly-CSharp.dll` before you restart the game. **Compile-check only — it deploys nothing.** |
 | **Python 3 + Pillow** *(optional)* | The `tools/` dev-loop scripts (drive the game headlessly, dump zone state, inspect tiles). Only the image tools need Pillow. |
 
@@ -68,14 +68,13 @@ order you start them in does not matter.
 GODOT=/path/to/Godot.app/Contents/MacOS/Godot tools/build_macos.sh
 ```
 
-**The mods folder** is Qud's Unity save directory plus `Mods/`. Only the macOS path below is
-one this project actually uses; the Windows one is what `docs/pc-test-rig.md` records from the
-PC rig. On any platform, Qud's own *Mods* screen prints the folder it is reading — trust that
-over this table.
+**The mods folder** is Qud's Unity save directory plus `Mods/`. Both of these are paths the
+project actually resolves — they are what `plat_mac.qud_data_dir()` and `plat_win.qud_data_dir()`
+return. If in doubt, Qud's own *Mods* screen prints the folder it is reading.
 
 | | |
 |---|---|
-| macOS *(tested)* | `~/Library/Application Support/com.FreeholdGames.CavesOfQud/Mods/` |
+| macOS | `~/Library/Application Support/com.FreeholdGames.CavesOfQud/Mods/` |
 | Windows | `%USERPROFILE%\AppData\LocalLow\Freehold Games\CavesOfQud\Mods\` |
 
 ### Check it works
@@ -108,9 +107,9 @@ Day/night, per-cell lighting, water/bridges, and the message/target/effects pane
 ## Limitations
 
 Single-player viewer of **your own** local game — multiplayer is a [proposal](docs/multiplayer.md), not
-implemented. macOS is the built/tested platform (a Windows branch exists). The bridge is **localhost-only
-with no authentication** — never expose port 48710. Dev-run Godot windows look soft on Retina; export a
-build for crisp text.
+implemented. Runs on macOS and Windows; only macOS has an export preset, so on Windows you run the
+client from the Godot editor. The bridge is **localhost-only with no authentication** — never expose
+port 48710. Dev-run Godot windows look soft on Retina; export a build for crisp text.
 
 ---
 
@@ -185,10 +184,11 @@ Exported tiles + `overrides.json` + `reports/` live **outside** the repo, under
 
 ## Running it
 
-### Environment (macOS, this is where it was built)
+### Environment (macOS paths; see [Windows](#windows) for that rig)
 - Game install: `~/Library/Application Support/Steam/steamapps/common/Caves of Qud/CoQ.app`
   (native macOS **IL2CPP** build). Runtime C# mods compile in-process via the game's bundled
-  Roslyn, so **no Windows/PC build is needed** — it all runs on the Mac.
+  Roslyn, so the **mod** never needs building on either platform — deploy the `.cs` files and
+  restart Qud.
 - Mods folder: `~/Library/Application Support/com.FreeholdGames.CavesOfQud/Mods/`
 - Assembly: `CoQ.app/Contents/Resources/Data/Managed/Assembly-CSharp.dll`
   (retains source-file path metadata → clean, navigable ILSpy).
@@ -230,6 +230,31 @@ build time**: a `.gd` change needs a rebuild to reach it, where a dev-run only n
 Raw `.vox` files have no `.import` sidecar, so `export_presets.cfg` carries an explicit
 `include_filter="*.vox"` — a model that works in a dev run would otherwise be missing from the
 shipped app.
+
+<a id="windows"></a>
+### Windows
+
+The PC is a real second rig, not an aspiration: `tools/capture/plat.py` dispatches by OS to a
+complete Windows backend (`plat_win.py`, pure ctypes against user32 — `SendInput` for input,
+`EnumWindows`/`GetWindowRect` for window bounds, `tasklist`/`taskkill` for processes, a `steam://`
+URL to launch), and the object-checker regression suite runs there.
+
+Everything above works the same. Four things differ:
+
+- **No export preset.** `export_presets.cfg` only defines macOS, so on Windows you run the client
+  from the Godot editor. `tools/build_macos.sh` is exactly what its name says.
+- **Mods folder** is `%USERPROFILE%\AppData\LocalLow\Freehold Games\CavesOfQud\Mods\`. Same
+  files, same full-Qud-restart rule.
+- **Exported tiles still land under `%USERPROFILE%\Library\Application Support\RavesOfQud\`** —
+  which looks like a mac path on a Windows box, and is. The mod builds it from
+  `SpecialFolder.UserProfile`, which resolves on both, so the shared mod file never had to fork.
+- **No Accessibility gate** — synthetic input needs no permission, unlike macOS. But UIPI blocks a
+  non-elevated process from sending input to an elevated window, so don't run Qud as admin.
+
+The rig's own operating plan, including the golden-save boot and the checker sweep, is
+[docs/pc-test-rig.md](docs/pc-test-rig.md). **Last recorded green run: 2026-08-11** on Qud v0.8.2 —
+Object Checker wire 2483/2483 PASS across all seven categories, zero new failures. That is what the
+repo records; it is not a claim about this week.
 
 ### The live loop
 Qud runs (backgrounded is fine) as the server. Godot is the only window you need to watch.
