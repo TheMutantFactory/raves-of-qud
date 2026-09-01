@@ -26,29 +26,74 @@ API terms — `get_viewport()`, `SubViewport`, "the Godot viewport" — stay as-
 Qud owns worldgen, AI, combat, items, saves, tiles — everything. This repo owns two mappings:
 Godot input → Qud command, and Qud zone state → 3D scene.
 
-## What you need
+## Build environment
 
-- A **paid, installed copy of [Caves of Qud](https://www.cavesofqud.com/)** with local C# scripting mods
-  allowed. Raves ships **no** game assets — tiles are extracted at runtime from your own install into a
-  git-ignored folder.
-- **Godot 4.7** — the tested path. Other Godot 4.x versions may work but are not the compatibility
-  contract. (Built and tested on macOS; the mod compiles in-process, so no Windows build is needed.)
-- Optional **.NET SDK** to type-check the mod against Qud's assembly before a restart.
+| | |
+|---|---|
+| **Caves of Qud** | A paid, installed copy. Raves ships **no** game assets — tiles are extracted at runtime from your own install into a git-ignored folder. You must enable the mod **and** tick *allow local C# scripting mods* in-game. |
+| **Godot 4.7** | The tested version, Forward+ renderer. Other 4.x releases may work; 4.7 is the compatibility contract. Running from the editor needs nothing else. |
+| **Godot 4.7 export templates** | Only to build a standalone `.app`. Editor → *Editor* → *Manage Export Templates*, matching your Godot version exactly. |
+| **macOS** | The built and tested platform (Apple Silicon). Qud's own macOS build compiles the C# mod in-process, so there is no separate mod build step and no Windows machine needed. A Windows branch of the *client* exists but is not the tested path. |
+| **.NET SDK** *(optional)* | `dotnet build mod/RavesOfQudBridge.csproj` type-checks the mod against Qud's own `Assembly-CSharp.dll` before you restart the game. **Compile-check only — it deploys nothing.** |
+| **Python 3 + Pillow** *(optional)* | The `tools/` dev-loop scripts (drive the game headlessly, dump zone state, inspect tiles). Only the image tools need Pillow. |
+
+Nothing here is fetched at build time: no package manager, no lockfile, no network.
 
 ## Quickstart
 
-**macOS quickstart** (the tested path; adjust the mod path on Windows):
+```bash
+# 1. Deploy the bridge mod. It compiles when QUD starts, so a mod change always needs a full
+#    Qud restart — this is the single most common way to be confused by a change that "did nothing".
+MODS=~/Library/Application\ Support/com.FreeholdGames.CavesOfQud/Mods
+mkdir -p "$MODS/RavesOfQudBridge"
+cp mod/*.cs mod/manifest.json "$MODS/RavesOfQudBridge/"
+
+# 2. Launch Qud. Enable the mod, tick "allow local C# scripting mods", load a save.
+#    The mod opens its socket on the first turn, so take a step before checking:
+nc -z 127.0.0.1 48710 && echo "bridge up"
+
+# 3a. Run the client from the editor — fastest loop, and a .gd change needs only a re-run:
+#     open godot/ in Godot 4.7 and press Play.
+# 3b. Or build a standalone app — crisp text on Retina, and what you want for actually playing:
+tools/build_macos.sh && open build/RavesOfQud.app
+```
+
+The client auto-connects to `127.0.0.1:48710` and retries once a second until Qud answers, so the
+order you start them in does not matter.
+
+**If `tools/build_macos.sh` cannot find Godot**, point it at yours — it checks `~/Downloads`,
+`/Applications`, `~/Applications` and `$PATH`:
 
 ```bash
-# 1. Deploy the bridge mod (it compiles at Qud startup — a mod change needs a full restart).
-mkdir -p ~/Library/Application\ Support/com.FreeholdGames.CavesOfQud/Mods/RavesOfQudBridge/
-cp mod/*.cs mod/manifest.json \
-  ~/Library/Application\ Support/com.FreeholdGames.CavesOfQud/Mods/RavesOfQudBridge/
-# 2. Launch Qud; enable the mod + "allow local C# scripting mods"; load a save.
-# 3. Verify the bridge is live (the mod opens the socket on the first turn):
-nc -z 127.0.0.1 48710 && echo "bridge up"
-# 4. Open godot/ in Godot 4.7 and press Play — it auto-connects to 127.0.0.1:48710 and retries until Qud answers.
+GODOT=/path/to/Godot.app/Contents/MacOS/Godot tools/build_macos.sh
 ```
+
+**The mods folder** is Qud's Unity save directory plus `Mods/`. Only the macOS path below is
+one this project actually uses; the Windows one is what `docs/pc-test-rig.md` records from the
+PC rig. On any platform, Qud's own *Mods* screen prints the folder it is reading — trust that
+over this table.
+
+| | |
+|---|---|
+| macOS *(tested)* | `~/Library/Application Support/com.FreeholdGames.CavesOfQud/Mods/` |
+| Windows | `%USERPROFILE%\AppData\LocalLow\Freehold Games\CavesOfQud\Mods\` |
+
+### Check it works
+
+The test scenes are headless: no window, no Qud, no save. They are the fastest way to tell a
+broken checkout from a broken setup.
+
+```bash
+GODOT=${GODOT:-$HOME/Downloads/Godot.app/Contents/MacOS/Godot}
+for t in godot/tests/*.tscn; do
+  echo "— $(basename "$t" .tscn)"
+  "$GODOT" --headless --path godot/ --quit-after 400 "res://$(basename "$(dirname "$t")")/$(basename "$t")"
+done
+```
+
+Every scene ends in `all good (0 checks failed)`, except `journal_carousel`, which prints
+`journal_carousel: OK`. **Close any running Raves window first** — it holds an instance lock, and a
+test that hits it exits early having printed nothing, which reads exactly like a test that passed.
 
 Environment paths and the dev loop: [Running it](#running-it) and `CLAUDE.md`.
 
@@ -164,8 +209,27 @@ In-game: enable the mod and **allow local C# scripting mods**. Qud auto-applies 
 Godot `.gd` only needs re-running the scene.
 
 ### Run the client
-Open `godot/` in Godot 4.x and press play. It auto-connects to `127.0.0.1:48710` and retries
+Open `godot/` in Godot 4.7 and press play. It auto-connects to `127.0.0.1:48710` and retries
 once a second until Qud is listening (the mod opens the socket on the first turn).
+
+### Build a standalone app
+```bash
+tools/build_macos.sh && open build/RavesOfQud.app
+```
+Two things this does that pressing Play does not, and both are the reason it exists:
+
+- **Crisp text.** Godot's dev-run gives a floating window a non-HiDPI backing on Retina, so macOS
+  upscales it 2x and every glyph looks soft. An exported `.app` sets `NSHighResolutionCapable` and
+  renders at native resolution.
+- **Re-signs ad-hoc.** Godot's own ad-hoc signature gets `SIGKILL`ed at launch on Apple Silicon
+  (*Launchd job spawn failed / 163*); re-signing afterwards is what the kernel accepts.
+
+Needs the **4.7 export templates** installed (Editor → *Manage Export Templates*), and a Godot
+binary it can find — see the quickstart for `GODOT=`. The exported app **freezes the scripts at
+build time**: a `.gd` change needs a rebuild to reach it, where a dev-run only needs a re-run.
+Raw `.vox` files have no `.import` sidecar, so `export_presets.cfg` carries an explicit
+`include_filter="*.vox"` — a model that works in a dev run would otherwise be missing from the
+shipped app.
 
 ### The live loop
 Qud runs (backgrounded is fine) as the server. Godot is the only window you need to watch.

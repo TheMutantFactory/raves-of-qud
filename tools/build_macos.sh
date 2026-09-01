@@ -14,7 +14,24 @@
 # Usage:  tools/build_macos.sh   then   open build/RavesOfQud.app
 set -euo pipefail
 
-GODOT="${GODOT:-/Users/homefolder/Downloads/Godot.app/Contents/MacOS/Godot}"
+# WHERE GODOT IS. The default used to be one hard-coded path under a home directory that is not
+# yours, so this script failed for every reader of the README that tells them to run it. Set
+# GODOT=/path/to/Godot to override; otherwise the first of these that exists wins.
+if [ -z "${GODOT:-}" ]; then
+  for g in \
+    "$HOME/Downloads/Godot.app/Contents/MacOS/Godot" \
+    "/Applications/Godot.app/Contents/MacOS/Godot" \
+    "$HOME/Applications/Godot.app/Contents/MacOS/Godot" \
+    "$(command -v godot || true)"
+  do
+    [ -n "$g" ] && [ -x "$g" ] && GODOT="$g" && break
+  done
+fi
+if [ -z "${GODOT:-}" ] || [ ! -x "$GODOT" ]; then
+  echo "error: no Godot 4.7 binary found." >&2
+  echo "  set it explicitly:  GODOT=/path/to/Godot.app/Contents/MacOS/Godot tools/build_macos.sh" >&2
+  exit 1
+fi
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$REPO/build/RavesOfQud.app"
 
