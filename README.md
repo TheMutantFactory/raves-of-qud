@@ -33,7 +33,7 @@ Godot input → Qud command, and Qud zone state → 3D scene.
 | **Caves of Qud** | A paid, installed copy. Raves ships **no** game assets — tiles are extracted at runtime from your own install into a git-ignored folder. You must enable the mod **and** tick *allow local C# scripting mods* in-game. |
 | **Godot 4.7** | The tested version, Forward+ renderer. Other 4.x releases may work; 4.7 is the compatibility contract. Running from the editor needs nothing else. |
 | **Godot 4.7 export templates** | Only to build a standalone `.app`. Editor → *Editor* → *Manage Export Templates*, matching your Godot version exactly. |
-| **macOS or Windows** | Both run. macOS (Apple Silicon) is where the standalone `.app` is built and where most development happens; Windows runs on a dedicated test rig with its own harness backend. Qud compiles the C# mod in-process on either, so the mod itself never needs building. See [Windows](#windows) for what differs. |
+| **macOS or Windows** | Both run, and the SPOT regression tier is green on both (Windows 48/48, 2026-09-01). macOS (Apple Silicon) is where the standalone `.app` is built and where most development happens; Windows runs on a dedicated test rig with its own harness backend. Qud compiles the C# mod in-process on either, so the mod itself never needs building. See [Windows](#windows) for what differs. |
 | **.NET SDK** *(optional)* | `dotnet build mod/RavesOfQudBridge.csproj` type-checks the mod against Qud's own `Assembly-CSharp.dll` — ~2s, and it catches API drift before a restart instead of at game launch. **Compile-check only: it deploys nothing, and you never ship the DLL it builds.** Add `-p:CoQManaged="/path/to/Managed"` for a non-default install. |
 | **Python 3** *(optional)* | The `tools/` dev-loop scripts. Every tool named in this README and in `CLAUDE.md` is standard library only; about a quarter of `tools/` — the image and voxel ones — also want **Pillow**. |
 
@@ -61,8 +61,10 @@ tools/build_macos.sh && open build/RavesOfQud.app
 The client auto-connects to `127.0.0.1:48710` and retries once a second until Qud answers, so the
 order you start them in does not matter.
 
-**If `tools/build_macos.sh` cannot find Godot**, point it at yours — it checks `~/Downloads`,
-`/Applications`, `~/Applications` and `$PATH`:
+**If anything cannot find Godot**, point it at yours with `GODOT=`. That is one convention, not
+two: `tools/build_macos.sh` and every Python tool (`plat.godot_bin()`) read the same variable and
+search the same candidates — `~/Downloads`, `/Applications`, `~/Applications`, then `PATH` on
+macOS; winget's package dir on Windows.
 
 ```bash
 GODOT=/path/to/Godot.app/Contents/MacOS/Godot tools/build_macos.sh
@@ -83,10 +85,12 @@ The test scenes are headless: no window, no Qud, no save. They are the fastest w
 broken checkout from a broken setup.
 
 ```bash
-GODOT=${GODOT:-$HOME/Downloads/Godot.app/Contents/MacOS/Godot}
+# plat.godot_bin() is the same resolver the tools use — it honours GODOT= and knows where
+# Godot lives on each OS, including which Windows build actually writes to a pipe.
+GODOT=$(python3 -c "import sys;sys.path.insert(0,'tools/capture');import plat;print(plat.godot_bin())")
 for t in godot/tests/*.tscn; do
   echo "— $(basename "$t" .tscn)"
-  "$GODOT" --headless --path godot/ --quit-after 400 "res://$(basename "$(dirname "$t")")/$(basename "$t")"
+  "$GODOT" --headless --path godot/ --quit-after 400 "res://tests/$(basename "$t")"
 done
 ```
 
@@ -239,10 +243,17 @@ complete Windows backend (`plat_win.py`, pure ctypes against user32 — `SendInp
 `EnumWindows`/`GetWindowRect` for window bounds, `tasklist`/`taskkill` for processes, a `steam://`
 URL to launch), and the object-checker regression suite runs there.
 
-Everything above works the same. Four things differ:
+Everything above works the same. Five things differ:
 
 - **No export preset.** `export_presets.cfg` only defines macOS, so on Windows you run the client
   from the Godot editor. `tools/build_macos.sh` is exactly what its name says.
+- **Use Godot's `_console` build for anything headless.** winget installs two executables side by
+  side, and the plain one *detaches from the console*: `--headless` then writes nothing to a
+  captured pipe, so a script grepping that output for `Parse Error` finds none and reports a clean
+  pass. A silent false pass is worse than a crash. `plat.godot_bin()` picks the console wrapper
+  under `%LOCALAPPDATA%\Microsoft\WinGet\Packages\GodotEngine.GodotEngine_*` for you, and
+  deliberately does not fall back to a bare `godot` on `PATH` — `PATHEXT` matches a `.bat` shim
+  that can find itself and recurse.
 - **Mods folder** is `%USERPROFILE%\AppData\LocalLow\Freehold Games\CavesOfQud\Mods\`. Same
   files, same full-Qud-restart rule.
 - **Exported tiles still land under `%USERPROFILE%\Library\Application Support\RavesOfQud\`** —
@@ -252,9 +263,25 @@ Everything above works the same. Four things differ:
   non-elevated process from sending input to an elevated window, so don't run Qud as admin.
 
 The rig's own operating plan, including the golden-save boot and the checker sweep, is
-[docs/pc-test-rig.md](docs/pc-test-rig.md). **Last recorded green run: 2026-08-11** on Qud v0.8.2 —
-Object Checker wire 2483/2483 PASS across all seven categories, zero new failures. That is what the
-repo records; it is not a claim about this week.
+[docs/pc-test-rig.md](docs/pc-test-rig.md); how the tiers are run is
+[docs/testing.md](docs/testing.md).
+
+**Green on Windows as of 2026-09-01: the SPOT tier passes 48/48 — the first clean run there.**
+Earlier, 2026-08-11 on Qud v0.8.2, the Object Checker wire sweep passed 2483/2483 across all seven
+categories.
+
+Getting there fixed four checks that were failing *for reasons that were not the code*, and the
+shapes are worth knowing because they recur: a Godot path hard-coded to one developer's home
+directory (now `plat.godot_bin()`); two tests reading the developer's own `settings.json`, which
+built no fixture at all on a box set to `"mode": "1to1"`; an audit that FAILED a partial tile export
+instead of naming what it could not cover; and a test hard-coding `/tmp`, which Godot cannot create
+on Windows. A fifth was a real product bug the PC found: the element-feedback form tested only
+`meta_pressed`, and meta is the **Windows key** — so `Ctrl`+Right-click, which the docs promise,
+did nothing on that platform.
+
+One thing on this page is still **not** verified on Windows: the `.NET SDK` row's default install
+path for `-p:CoQManaged`. That default landed after the 2026-09-01 run branched, so nobody has
+watched `dotnet build mod/RavesOfQudBridge.csproj` resolve Qud on its own there.
 
 ### The live loop
 Qud runs (backgrounded is fine) as the server. Godot is the only window you need to watch.
