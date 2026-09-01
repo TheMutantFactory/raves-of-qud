@@ -689,6 +689,10 @@ func _row_input(e: InputEvent, side: int, idx: int, sel: int, count: int) -> voi
 func _input(event: InputEvent) -> void:
 	if not visible:
 		return
+	# typing guard: this dispatch runs before the GUI pass, so a focused text field has
+	# not consumed the key yet — see TypingGuard
+	if TypingGuard.typing(get_viewport()):
+		return
 	var k := event as InputEventKey
 	if k == null or not k.pressed or k.echo:
 		return

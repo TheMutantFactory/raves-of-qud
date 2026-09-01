@@ -110,6 +110,10 @@ func hide_tombstone() -> void:
 func _unhandled_input(e: InputEvent) -> void:
 	if not visible:
 		return
+	# typing guard: this dispatch runs before the GUI pass, so a focused text field has
+	# not consumed the key yet — see TypingGuard
+	if TypingGuard.typing(get_viewport()):
+		return
 	if e is InputEventKey and e.pressed and not e.echo \
 		and (e.keycode == KEY_ESCAPE or e.keycode == KEY_SPACE or e.keycode == KEY_ENTER):
 		dismissed.emit()
