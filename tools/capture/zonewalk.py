@@ -43,9 +43,31 @@ import sys
 import threading
 import time
 
-LOG = os.path.expanduser(
-    "~/Library/Application Support/Godot/app_userdata/Raves of Mud/logs/raves.log")
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import plat  # noqa: E402
+
+
+def _project_name():
+    """godot/project.godot's config/name -- Godot derives user:// from it, so the log path moves
+    when the project is renamed. READ, not hard-coded: this project renamed once already
+    ("Raves of Qud" -> "Raves of Mud", 2026-08-25) and a literal here would have gone stale
+    silently, which is the same failure this file was just fixed for."""
+    pg = os.path.join(os.path.dirname(HERE), "..", "godot", "project.godot")
+    try:
+        with open(pg, encoding="utf-8", errors="ignore") as fh:
+            for line in fh:
+                if line.startswith("config/name="):
+                    return line.split("=", 1)[1].strip().strip('"')
+    except OSError:
+        pass
+    return "Raves of Mud"
+
+
+# THROUGH THE SEAM. This was one hard-coded macOS path, so on Windows it pointed at a file that
+# does not exist -- and `baked_offsets` answered {} for a missing log, which made every assertion
+# below vacuously true. The walk reported PASS having checked NOTHING, for months, on every PC.
+LOG = os.path.join(plat.godot_user_dir(_project_name()), "logs", "raves.log")
 FADE = re.compile(r"\[zonefade\] (\S+) off=\((-?\d+),(-?\d+)\)")
 
 
@@ -115,10 +137,19 @@ def snapshot(timeout=25.0, kick_first=True):
 
 
 def baked_offsets():
-    """zone id -> the offset its darkness was LAST baked for."""
+    """zone id -> the offset its darkness was LAST baked for.
+
+    A MISSING LOG IS A FAILURE, not an empty answer. Returning {} here is what let a wrong log
+    path report a clean walk over zero zones -- the check cannot distinguish "no zone is stale"
+    from "I could not see any zone", so it must refuse to guess.
+    """
     out = {}
     if not os.path.exists(LOG):
-        return out
+        sys.exit("zonewalk: no Godot log at %s\n"
+                 "  Raves writes it under Godot's user:// for the project named in "
+                 "godot/project.godot.\n"
+                 "  Without it this check can see no zones at all and would pass having "
+                 "verified nothing." % LOG)
     with open(LOG, errors="ignore") as fh:
         for line in fh:
             m = FADE.search(line)
@@ -206,8 +237,10 @@ def main(argv=None):
     # -- the transition the bake-once bug got wrong and a there-and-back walk never reaches.
     route = ["S", "E", "N", "W"]
     failures = 0
+    observed = 0          # the most adjacent zones seen at any one step -- see the guard below
     live, seen, problems = check(0)
     print("start: live=%s  adjacent zones baked=%s" % (live, seen))
+    observed = max(observed, seen or 0)
     for problem in problems:
         print("   FAIL %s" % problem)
     failures += len(problems)
@@ -227,8 +260,30 @@ def main(argv=None):
         if not problems:
             print("   ok   every adjacent zone wears the ramp for where it is now")
         failures += len(problems)
+        observed = max(observed, seen)
 
-    print("\n%s (%d problem(s))" % ("PASS" if failures == 0 else "FAIL", failures))
+    # A WALK THAT SAW NO ADJACENT ZONE HAS VERIFIED NOTHING, and must not say PASS. Every
+    # assertion above is a loop over the zones that were baked, so with none the whole check is
+    # vacuously true -- which is exactly how this reported a clean walk for months on Windows.
+    # Three separate things produced that same empty answer, so the guard is on the OBSERVATION,
+    # not on any one of them:
+    #   * the log path was macOS-only, so the file was never found (fixed);
+    #   * a missing log returned {} instead of failing (fixed);
+    #   * and 1:1 mode renders the world FLAT, where Main._neighbor_zones() returns [] by design
+    #     -- so no neighbour is ever built and none can ever be checked.
+    if observed == 0:
+        print("\nFAIL: not one adjacent zone was baked over the whole walk, so nothing was "
+              "checked.")
+        print("  The ramp only exists on REMEMBERED NEIGHBOURS, and Main._neighbor_zones() "
+              "returns none while the view is flat.")
+        print("  1:1 mode forces flat 2D (Main._apply_flat_2d(true) on entering, and the toggle "
+              "is locked while it is on),")
+        print("  so this check can only run in USER MODE with the 3D view. Switch modes and "
+              "walk again.")
+        return 1
+
+    print("\n%s (%d problem(s), %d adjacent zone(s) actually checked)"
+          % ("PASS" if failures == 0 else "FAIL", failures, observed))
     return 1 if failures else 0
 
 

@@ -2,12 +2,16 @@ extends SceneTree
 
 ## Headless check for WorldStore on-disk persistence. Run:
 ##   Godot --headless --path godot/ --script res://tests/test_persist.gd
-## Writes to a unique /tmp dir, so re-runs don't collide.
+## Writes to a unique dir under the OS temp dir, so re-runs don't collide.
+##
+## `/tmp` WAS HARD-CODED HERE and Windows has no such path, so every assert below tripped on a
+## store that had never written anything -- `Could not create directory: '/tmp'`, then "zone A
+## was not loaded from disk". OS.get_temp_dir() is the portable answer.
 
 const Store := preload("res://WorldStore.gd")
 
 func _init() -> void:
-	var base := "/tmp/rq_persist_%d" % Time.get_ticks_usec()
+	var base := OS.get_temp_dir().path_join("rq_persist_%d" % Time.get_ticks_usec())
 	var zoneA := {"id": "JoppaWorld.11.22.1.1.10", "wx": 11, "wy": 22, "zx": 1, "zy": 1,
 			"z": 10, "width": 80, "height": 25}
 	var zoneB := {"id": "JoppaWorld.11.22.0.1.10", "wx": 11, "wy": 22, "zx": 0, "zy": 1,

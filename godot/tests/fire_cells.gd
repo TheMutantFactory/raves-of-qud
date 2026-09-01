@@ -17,6 +17,14 @@ const Z = preload("res://ZoneRenderer.gd")
 
 
 func _ready() -> void:
+	# USER MODE, PINNED — and this must run before the renderer below is built. These gates go
+	# through Settings.qud_shape(), which returns true UNCONDITIONALLY in 1:1, so on a machine
+	# whose settings.json says `"mode": "1to1"` every fixture check here failed while the
+	# "1:1 builds nothing" checks passed — a red SPOT run that said nothing about the code.
+	# set_value is in-memory only (save() is what writes), so this cannot touch the real config.
+	Settings.one_to_one_only = false
+	Settings.set_value("mode", "user")
+
 	# BUILT FIRST, DELIBERATELY. ZoneRenderer._ready calls _refresh_fx_flags, which re-reads both
 	# gates from Settings — so a renderer instantiated part-way through this file silently resets
 	# the very statics the checks around it had just set, and the check after it reads the wrong

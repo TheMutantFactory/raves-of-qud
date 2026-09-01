@@ -64,12 +64,24 @@ for n in names:
                    "hinge belongs on the left" % n)
 
 now_fallback = set(fallback)
+# ONLY JUDGE THE TILES THIS MACHINE ACTUALLY EXPORTED. A tile export is per-machine and can be
+# partial -- Lumpy's had 626 tiles and none of the three names below -- and "absent" read as
+# "no longer falls back" made the audit fail for having less data rather than different data.
+# The guard above only catches a tile dir that is missing ENTIRELY, which is the easy case.
+present = set(names)
+expect_here = EXPECT_FALLBACK & present
+absent = EXPECT_FALLBACK - present
 new_fb = now_fallback - EXPECT_FALLBACK
-fixed_fb = EXPECT_FALLBACK - now_fallback
+fixed_fb = expect_here - now_fallback
 for n in sorted(new_fb):
     bad.append("%s NEWLY falls back to the slab: %s" % (n, fallback[n]))
 for n in sorted(fixed_fb):
     bad.append("%s no longer falls back -- update EXPECT_FALLBACK if that is intended" % n)
+# Said out loud rather than skipped quietly: a thinner export means thinner cover, and the run
+# should not read as though it proved the same thing a full export would.
+if absent:
+    print("door_model: NOTE -- %d expected-fallback tile(s) not in this export, not judged: %s"
+          % (len(absent), ", ".join(sorted(absent))))
 
 if bad:
     print("door_model: FAIL")

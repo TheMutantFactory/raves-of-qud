@@ -77,6 +77,16 @@ Needs both apps: `hv launch raves`, both in-game.
    on the wire at all, they live in the client's WorldStore. A corner is the case a there-and-back
    walk never reaches, which is why it goes around one. PROVEN TO FAIL: reinstating the bake-once
    guard makes it report 6 stale zones naming edge-vs-corner.
+   - **NEEDS USER MODE WITH `tiles3d` ON, and will now say so instead of passing.** The ramp only
+     exists on remembered neighbours, and `Main._neighbor_zones()` returns none while the view is
+     flat. 1:1 forces flat and locks the toggle; user mode alone is not enough either, because the
+     tile mode stays locked until the `tiles3d` QoL feature is loaded back (off by default). So in
+     the pair configuration this check has **nothing to look at**, and for months it reported PASS
+     over zero zones on every PC — three separate causes, one identical empty answer: a macOS-only
+     log path, a missing log returning `{}` rather than failing, and the flat-view gate. It now
+     fails when the whole walk observes no adjacent zone, and prints how many it actually checked.
+     A run that says `PASS (0 problem(s), 4 adjacent zone(s) actually checked)` has done the work;
+     one naming zero has not.
 5. **Mod round-trip.** Popups mirror and answer; `statustab`; the nav commands (autoexplore, POI,
    wait) each reach Qud.
 
@@ -176,13 +186,42 @@ something.
 ## Running SPOT on another machine
 
 Only the typing-guard audit is dependency-free (Python 3, stdlib only, no Godot, no Qud, no
-highvisor). The other three need the Godot binary and the .NET SDK at the paths in `CLAUDE.md`.
+highvisor). The others need the Godot binary and the .NET SDK.
 
 ```bash
 python3 tools/regression/typing_guard_audit.py
 ```
 
 Exit 0 clean, exit 1 with the offending files named and the fix spelled out.
+
+### A SPOT check may not depend on the machine it runs on (2026-09-01)
+
+SPOT's contract is "cannot go flaky", and four checks were quietly breaking it — each failing on a
+second machine for a reason that had nothing to do with the code. **The whole tier now passes on
+Windows** (48/48, first clean run there). What they were, since the shapes recur:
+
+- **A path hard-coded to one developer's home directory.** `parse_all_audit.py` carried a literal
+  macOS Godot path, so off that machine it raised `FileNotFoundError` and checked *nothing*.
+  Resolution moved behind the platform seam as **`plat.godot_bin()`** — override with `GODOT=`,
+  the same env var `tools/build_macos.sh` already used. On Windows it deliberately prefers Godot's
+  **`_console`** build: the plain exe detaches from the console and writes nothing to a captured
+  pipe, so an audit grepping that output for `Parse Error` would find none and report a **false
+  pass**, which is worse than the crash it replaced.
+- **Reading the developer's own config.** `fire_cells` / `fire_flags` go through
+  `Settings.qud_shape()`, which is unconditionally true in 1:1 — so on a machine whose
+  `settings.json` says `"mode": "1to1"` no fixture is ever built and 15 checks fail. Both now pin
+  `mode` to `user` in memory before building the renderer (`set_value` does not persist; `save()`
+  is what writes), so the real config is neither read nor disturbed.
+- **Confusing less data with different data.** `door_model_audit.py` skipped when the tile dir was
+  missing entirely but *failed* when the export was merely partial, reporting absent tiles as "no
+  longer falls back". It now judges only the tiles present and prints a NOTE naming what it could
+  not cover — a thinner export must not read as though it proved the same thing.
+- **A POSIX-only temp path.** `test_persist.gd` hard-coded `/tmp`, which Godot cannot create on
+  Windows; every assert then tripped on a store that had never written anything. Now
+  `OS.get_temp_dir()`.
+
+The tell for all four: **the failure says "less" rather than "different"** — zero counts, an empty
+capture, a missing file. Before believing a red SPOT run, check it fails for a reason in the diff.
 
 ## The checks are registered in the tree, and runnable from the panel (2026-08-07)
 
