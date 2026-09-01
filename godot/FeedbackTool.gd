@@ -90,7 +90,20 @@ func _input(event: InputEvent) -> void:
 	if not (event is InputEventMouseButton):
 		return
 	var mb := event as InputEventMouseButton
-	if not mb.pressed or mb.button_index != MOUSE_BUTTON_RIGHT or not mb.meta_pressed:
+	# CTRL **OR** META. meta alone is Cmd on macOS and the WINDOWS KEY on Windows, which the OS
+	# shell owns and no app can rely on receiving — so this gesture, and with it the whole
+	# element-feedback form, was unreachable on Windows. Found by running the FULL tier there
+	# 2026-09-01: Ctrl+Right-click on chrome did nothing at all, while the same gesture over the
+	# playfield opened the tile report, because Main's inspector already tests both (Main.gd:
+	# `event.ctrl_pressed or event.meta_pressed`). The docs say "Ctrl/Cmd+Right-click any
+	# element"; this is the line that made the Ctrl half a lie. `_close`'s own submit chord one
+	# screen up already accepts either, so the file was inconsistent with itself.
+	#
+	# This does NOT collide with the tile inspector: the two are separated by POSITION, not by
+	# modifier -- claims() is false over the playfield (feedback_skip on the hole) and Main
+	# returns early wherever claims() is true.
+	if not mb.pressed or mb.button_index != MOUSE_BUTTON_RIGHT \
+			or not (mb.meta_pressed or mb.ctrl_pressed):
 		return
 	var hit := _deepest_control_at(mb.position)
 	if hit == null:
