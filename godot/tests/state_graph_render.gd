@@ -22,7 +22,38 @@ extends SceneTree
 ## highvisor checkout may not exist). When highvisor IS next door, its REAL gametree.json is
 ## exercised too — that is the input that actually ships, and it is the one that would drift.
 
-const HV_TREE := "/Users/homefolder/personal-git/highvisor/highvisor/gametree.json"
+## WHERE HIGHVISOR'S REAL TREE IS, if it is here at all.
+##
+## This was one absolute path under one developer's home directory, so on any other machine the
+## file was simply absent and the half of this test that exercises the SHIPPING input printed
+## "SKIPPED" and passed. Daniel's PC run found it: a check that cannot run is not a check that
+## passed, and this one hid on the box most likely to drift.
+##
+## Set HV_TREE to point at it; otherwise the usual siblings are tried, since the two repos are
+## checked out beside each other on both machines. It still SKIPS when there is genuinely no
+## highvisor here — that part was always right — but it now says where it looked.
+static func hv_tree_candidates() -> PackedStringArray:
+	var out := PackedStringArray()
+	var env := OS.get_environment("HV_TREE")
+	if env != "":
+		out.append(env)
+	var home := OS.get_environment("HOME")
+	if home == "":
+		home = OS.get_environment("USERPROFILE")
+	if home != "":
+		for base in ["personal-git", "git", "src", "Documents"]:
+			out.append("%s/%s/highvisor/highvisor/gametree.json" % [home, base])
+	# ...and beside this checkout, whatever it is called and wherever it lives.
+	var here := ProjectSettings.globalize_path("res://").get_base_dir().get_base_dir()
+	out.append(here.path_join("highvisor/highvisor/gametree.json"))
+	return out
+
+
+static func hv_tree() -> String:
+	for p in hv_tree_candidates():
+		if p != "" and FileAccess.file_exists(p):
+			return p
+	return ""
 
 var _failed: Array[String] = []
 
@@ -317,11 +348,13 @@ func _slice3(sgp) -> void:
 
 
 func _real(sgp) -> void:
-	if not FileAccess.file_exists(HV_TREE):
-		print("\nreal gametree.json — SKIPPED (no highvisor checkout at %s)" % HV_TREE)
+	var tree_path := hv_tree()
+	if tree_path == "":
+		print("\nreal gametree.json — SKIPPED (no highvisor checkout; looked in %s)"
+			% ", ".join(hv_tree_candidates()))
 		return
 	print("\nreal gametree.json")
-	var f := FileAccess.open(HV_TREE, FileAccess.READ)
+	var f := FileAccess.open(tree_path, FileAccess.READ)
 	var parsed = JSON.parse_string(f.get_as_text())
 	_check("parses", parsed is Dictionary)
 	if not (parsed is Dictionary):

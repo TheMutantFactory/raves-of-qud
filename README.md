@@ -81,22 +81,32 @@ return. If in doubt, Qud's own *Mods* screen prints the folder it is reading.
 
 ### Check it works
 
-The test scenes are headless: no window, no Qud, no save. They are the fastest way to tell a
-broken checkout from a broken setup.
+The tests are headless: no window, no Qud, no save. They are the fastest way to tell a broken
+checkout from a broken setup.
 
 ```bash
-# plat.godot_bin() is the same resolver the tools use — it honours GODOT= and knows where
-# Godot lives on each OS, including which Windows build actually writes to a pipe.
-GODOT=$(python3 -c "import sys;sys.path.insert(0,'tools/capture');import plat;print(plat.godot_bin())")
-for t in godot/tests/*.tscn; do
-  echo "— $(basename "$t" .tscn)"
-  "$GODOT" --headless --path godot/ --quit-after 400 "res://tests/$(basename "$t")"
-done
+tools/run_tests.sh
 ```
 
-Every scene ends in `all good (0 checks failed)`, except `journal_carousel`, which prints
-`journal_carousel: OK`. **Close any running Raves window first** — it holds an instance lock, and a
-test that hits it exits early having printed nothing, which reads exactly like a test that passed.
+It ends in `all good — 49 passed`, or names what failed and exits non-zero. `tools/run_tests.sh
+godot` and `tools/run_tests.sh audits` run half each.
+
+**Use the script rather than a loop of your own.** There are two runners and three success formats,
+and a hand-written sweep gets some of them wrong — the one that used to be printed here did:
+
+| | |
+|---|---|
+| scene tests | `godot/tests/<n>.tscn`, run as a scene, print `all good (0 checks failed)` |
+| script tests | `godot/tests/<n>.gd` with **no** `.tscn`, run with `--script`, print `<n> OK` |
+| audits | `tools/regression/*_audit.py`, plain exit code |
+
+A `for t in godot/tests/*.tscn` loop silently skips the four script tests and every audit — 17 of
+the 49 — and grades `journal_carousel` (which prints `journal_carousel: OK`) as a failure. **A new
+test should print `all good (0 checks failed)` and live in a `.tscn`**; the other shapes are
+grandfathered, not a menu.
+
+**Close any running Raves window first** — it holds an instance lock, and a test that hits it exits
+early having printed nothing, which reads exactly like a test that passed.
 
 Environment paths and the dev loop: [Running it](#running-it) and `CLAUDE.md`.
 

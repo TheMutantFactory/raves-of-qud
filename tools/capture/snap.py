@@ -24,6 +24,9 @@ import time
 from collections import Counter, defaultdict
 
 PORT = 48710
+## Frame types that ride the same socket and are NOT the zone snapshot — the mirror of
+## BridgeClient's own branch list. Anything else (including an older mod's untyped frame) is one.
+NOT_SNAPSHOT = {"popup", "picker", "cyber", "tutorial", "tombstone", "picktarget", "trade", "view"}
 
 
 def _recv(sock, n):
@@ -46,16 +49,37 @@ def grab(timeout=1800):
             time.sleep(1)
             continue
         try:
-            sock.settimeout(min(600, max(5, deadline - time.time())))
-            head = _recv(sock, 4)
-            if head is None:
-                time.sleep(1)
-                continue
-            body = _recv(sock, struct.unpack(">I", head)[0])
-            if body is None:
-                time.sleep(1)
-                continue
-            return json.loads(body.decode())
+            # KEEP READING THIS SOCKET UNTIL A ZONE FRAME ARRIVES. The mod shares it with
+            # popup / picker / cyber / tutorial / tombstone / picktarget / trade / view frames,
+            # and this used to take the first one off the wire whatever it was — so
+            # `snap.py summary` answered "zone None 0 cells" and `raw` printed
+            # {"type": "picktarget"}. Twice in one session that read as "the bridge is down"
+            # and a measurement was abandoned.
+            #
+            # BY EXCLUSION, THE WAY BridgeClient DOES IT, and not by "the zone frame has no
+            # type" — which is what I first wrote from reading the client, and the wire said
+            # otherwise: the zone frame is stamped {"type": "snapshot"}. The client's else-branch
+            # catches it because "snapshot" is not one of the names it tests for, so a filter
+            # written as "no type" skipped the very frame it was waiting for and blocked forever.
+            # Listing what a snapshot is NOT keeps the two in step and still accepts an older mod
+            # that stamps nothing.
+            #
+            # Skipped on the SAME connection rather than by reconnecting: a reconnect drops
+            # whatever the mod queued behind the frame we did not want, which on a busy socket
+            # can be the zone frame itself.
+            while time.time() < deadline:
+                sock.settimeout(min(600, max(5, deadline - time.time())))
+                head = _recv(sock, 4)
+                if head is None:
+                    break
+                body = _recv(sock, struct.unpack(">I", head)[0])
+                if body is None:
+                    break
+                frame = json.loads(body.decode())
+                if isinstance(frame, dict) and frame.get("type") in NOT_SNAPSHOT:
+                    continue                # someone else's frame — keep listening
+                return frame
+            time.sleep(1)
         except (OSError, ValueError):
             time.sleep(1)
         finally:
