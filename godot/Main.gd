@@ -1074,7 +1074,7 @@ func _exec_godot_cmd(cmd: String) -> void:
 							"firelit": bool(c.get("firelit", false)),
 							"torchlit": bool(c.get("torchlit", false)),
 							"off": ZoneRenderer.switched_off(c),
-							"tone": renderer._live_cell_tone(c, false),
+							"tone": renderer._live_cell_tone(c),
 							"objs": c.get("objs", []).size(),
 							"floor_y": renderer.floor_top.get(
 								Vector2i(int(c.get("x", 0)), int(c.get("y", 0))), -99.0),

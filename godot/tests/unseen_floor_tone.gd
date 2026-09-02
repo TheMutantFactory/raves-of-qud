@@ -4,13 +4,14 @@ extends Node
 ##
 ##   Godot --headless --path godot/ --quit-after 200 res://tests/unseen_floor_tone.tscn
 ##
-## Daniel, on the fog: "the floor in obscured tiles should be the same colour as the floor with
-## shown tiles. The obscured sprites are the correct colour." He said the opposite once before, and
-## the two verdicts are about different things — FOG (line of sight) and LIGHT (time of day). The
-## old `lit_floor` branch dropped both at once, which is why it read flat at night and was left off.
+## Daniel, twice: "the floor in obscured tiles should be the same colour as the floor with shown
+## tiles. The obscured sprites are the correct colour", then "you are currently adding a shadow onto
+## the floor tiles of blocked line-of-sight. Don't add that. Just have all the ground the same
+## colour. The sprite shading will do the work."
 ##
-## The rule now: an out-of-sight cell's ground takes the same tone a visible cell with the same
-## LIGHT would take. Same light, same floor, whether or not you can see it.
+## The rule: ground you cannot see takes NO film of any kind. Not the memory film, and not the
+## cell's light either — a blocked cell is usually unlit, so that reached the same shadow by
+## another route. Line of sight is carried entirely by the sprites.
 
 var _failed: Array[String] = []
 const Z = preload("res://ZoneRenderer.gd")
@@ -22,7 +23,6 @@ func _ready() -> void:
 
 	# `explored` and `visible` are the wire's own flag names — see ZoneRenderer.cell_is_*.
 	var lit_seen := {"explored": true, "visible": true, "light": 200}
-	var lit_unseen := {"explored": true, "visible": false, "light": 200}
 	var dim_seen := {"explored": true, "visible": true, "light": 100}
 
 	# ── the ask ──────────────────────────────────────────────────────────────
@@ -34,24 +34,25 @@ func _ready() -> void:
 		var c := {"explored": true, "visible": false,
 			"light": {"lit": 200, "dim": 100, "dark": 2}[name]}
 		_check("blocked line of sight puts NO film on %s ground" % name,
-			absf(r._live_cell_tone(c, true)) < 0.0001, "%.3f" % r._live_cell_tone(c, true))
+			absf(r._live_cell_tone(c)) < 0.0001, "%.3f" % r._live_cell_tone(c))
 	# ...and the ground you CAN see still answers to its light, or "all the same colour" would
 	# have meant deleting the lighting rather than the fog.
 	_check("ground you can see still darkens with its own light",
-		r._live_cell_tone(dim_seen, true) > r._live_cell_tone(lit_seen, true),
-		"dim %.3f vs lit %.3f" % [r._live_cell_tone(dim_seen, true),
-			r._live_cell_tone(lit_seen, true)])
+		r._live_cell_tone(dim_seen) > r._live_cell_tone(lit_seen),
+		"dim %.3f vs lit %.3f" % [r._live_cell_tone(dim_seen),
+			r._live_cell_tone(lit_seen)])
 	_check("...and a lit cell you can see takes no film either, so the two sides MATCH",
-		absf(r._live_cell_tone(lit_seen, true)) < 0.0001,
-		"%.3f" % r._live_cell_tone(lit_seen, true))
+		absf(r._live_cell_tone(lit_seen)) < 0.0001,
+		"%.3f" % r._live_cell_tone(lit_seen))
 
-	# ── the flag still buys the old behaviour back ───────────────────────────
-	_check("lit_floor off restores the memory film",
-		absf(r._live_cell_tone(lit_unseen, false) - (1.0 - r.MEMORY_GROUND)) < 0.0001,
-		"%.3f" % r._live_cell_tone(lit_unseen, false))
-	_check("...and it is ON by default now",
-		bool(Settings.DEFAULTS.get("lit_floor", false)),
-		str(Settings.DEFAULTS.get("lit_floor", "absent")))
+	# ── AND NO SETTING CAN PUT THE FILM BACK ─────────────────────────────────
+	# `lit_floor` used to gate this. It defaulted off, was not in the Options screen, and — since
+	# get_value reads the stored file BEFORE the default — a settings.json that already carried
+	# the key pinned it false forever. Two commits that "fixed" the floor were inert on Daniel's
+	# own machine for exactly that reason, and all he could see was "It looks the same". The check
+	# is that the key is gone, not that it defaults the right way.
+	_check("lit_floor is gone from the settings registry",
+		not Settings.DEFAULTS.has("lit_floor"), "still registered")
 
 	# ── nothing else moved ───────────────────────────────────────────────────
 	# A cell the firelight switch turned off is the deepest the live zone goes, seen or not, and a
@@ -64,12 +65,12 @@ func _ready() -> void:
 	var off := {"explored": true, "visible": false, "light": 200, "firelit": true}
 	_check("the fixture really is switched off, not merely dark", Z.switched_off(off))
 	_check("...and a switched-off cell still takes the deepest tone",
-		absf(r._live_cell_tone(off, true) - 1.0) < 0.0001, "%.3f" % r._live_cell_tone(off, true))
+		absf(r._live_cell_tone(off) - 1.0) < 0.0001, "%.3f" % r._live_cell_tone(off))
 	Z.fire_dark = false
 	var never := {"explored": false, "visible": false, "light": 200}
 	_check("an unexplored cell is still fog, not floor",
-		absf(r._live_cell_tone(never, true) - (1.0 - r.FOG_GROUND)) < 0.0001,
-		"%.3f" % r._live_cell_tone(never, true))
+		absf(r._live_cell_tone(never) - (1.0 - r.FOG_GROUND)) < 0.0001,
+		"%.3f" % r._live_cell_tone(never))
 
 	_report()
 

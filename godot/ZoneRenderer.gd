@@ -1847,7 +1847,7 @@ func _rebuild_dynamics(cells: Array) -> void:
 	# disappears. Outside the zone is always unvisited; it always needs its darkness.
 	# The band starts at the edge ring's own tone, so that has to be measured before it is built —
 	# and NOT inside _build_darkness, which is skipped entirely when the zone has nothing dark in it.
-	_tally_edge_tone(cells, bool(Settings.get_value("lit_floor", false)))
+	_tally_edge_tone(cells)
 	_build_unexplored(_dynamic_root)
 	if any_dark:
 		var dnode := _swap_dark()
@@ -2523,7 +2523,6 @@ func _build_darkness(cells: Array, parent: Node, frozen_off := NOT_FROZEN) -> vo
 	var frozen: bool = frozen_off != NOT_FROZEN
 	penumbra_radius = maxi(1, int(Settings.get_value("penumbra_radius", penumbra_radius)))
 	penumbra_divisions = clampi(int(Settings.get_value("penumbra_divisions", penumbra_divisions)), 1, 16)
-	var lit_floor: bool = bool(Settings.get_value("lit_floor", false))
 	# A ZONE WHOLLY PAST THE RAMP IS ONE RECTANGLE. Every cell in it is fully opaque, so the 2000
 	# per-cell quads (or, at divisions=16, the 512,000 sub-quads) all carry the same black. Emitting
 	# them was most of what made a zone crossing hitch: every neighbour re-bakes when its offset
@@ -2596,9 +2595,7 @@ func _build_darkness(cells: Array, parent: Node, frozen_off := NOT_FROZEN) -> vo
 			# The live zone's rule lives in _live_cell_tone, because the SURROUND BAND has to start
 			# at exactly this value and a second copy of it would drift. Only the wash bookkeeping
 			# stays here — that is pass 1's own, not part of the tone.
-			t = _live_cell_tone(cell, lit_floor)
-			if not _cell_seen(cell) and not lit_floor:
-				wash[k] = true
+			t = _live_cell_tone(cell)
 		else:
 			# REMEMBERED — a DEPARTED zone, every explored cell of it. (The live zone's own
 			# out-of-sight cells take the same value, one branch up, inside _live_cell_tone.)
@@ -2892,7 +2889,7 @@ func _frozen_tone(k: Vector2i, off: Vector2i) -> float:
 ## THE LIVE ZONE'S TONE RULE, alone, so the surround band can start its ramp at exactly the
 ## darkness of the cell it abuts. Pass 1 calls this; so does _tally_edge_tone. Two copies of it
 ## drifting apart is precisely how the old bib came to meet the zone at a different brightness.
-func _live_cell_tone(cell: Dictionary, lit_floor: bool) -> float:
+func _live_cell_tone(cell: Dictionary) -> float:
 	if not _cell_explored(cell):
 		return 1.0 - FOG_GROUND
 	# THE GROUND HAS TO GO DARK TOO, and MEMORY_GROUND will not take it there.
@@ -2911,41 +2908,30 @@ func _live_cell_tone(cell: Dictionary, lit_floor: bool) -> float:
 	if switched_off(cell):
 		return 1.0
 	if not _cell_seen(cell):
-		# THE FLOOR TAKES THE CELL'S OWN LIGHT, NOT A FOG FILM. Daniel: "the floor in obscured
+		# THE GROUND DOES NOT PARTICIPATE IN LINE OF SIGHT. Daniel, twice: "the floor in obscured
 		# tiles should be the same colour as the floor with shown tiles. The obscured sprites are
-		# the correct colour." He has now said this twice from opposite directions, and the two
-		# verdicts are not in conflict — they are about different things:
+		# the correct colour", then "you are currently adding a shadow onto the floor tiles of
+		# blocked line-of-sight. Don't add that. Just have all the ground the same colour. The
+		# sprite shading will do the work."
 		#
-		#   FOG    line of sight. Qud's memory of a cell is a palette swap on what STANDS there;
-		#          the ground under it is ~99.7% empty background, so it barely moves. Raves paints
-		#          a real floor tile in that cell, and 0.84 of a painted tan floor is visibly
-		#          browner — a step Qud never shows. That is the film he is pointing at.
-		#   LIGHT  time of day and lamps. This must still apply, and dropping it is what he
-		#          rejected the FIRST time (`lit_floor` used to return a flat 0.0 here): at night
-		#          an out-of-sight floor stayed at full daylight beside a dark one he could see,
-		#          and "the scene went flat".
+		# Qud's memory of a cell is a palette swap on what STANDS there. Its ground is ~99.7% empty
+		# background, so the swap has almost nothing to act on and the floor barely moves; Raves
+		# paints a real floor tile in that cell, where the same 0.84 ratio is a visibly browner
+		# step Qud never shows. The 0.84 constant's own note already conceded that — the ratio was
+		# measured off Qud and applied to a surface it was not measured on.
 		#
-		# Qud's own light byte answers for a cell whether or not you can see it — GetLight() is the
-		# cell's lighting, not its visibility — so asking it here is the same question the seen
-		# branch below asks, and gives the same answer in the same conditions. Outdoors by day both
-		# read 0.0 and the floor is continuous; at night both darken together.
+		# THERE WAS A `lit_floor` SETTING HERE AND REMOVING IT IS THE POINT. It defaulted off,
+		# was not in the Options screen, and — because get_value reads the stored file before the
+		# default — a developer's settings.json pinned it false forever. Two commits "fixing" this
+		# (e35d757, bfefb5e) were inert on Daniel's own machine for exactly that reason, and he
+		# reported the only thing he could see: "It looks the same." A flag whose off state
+		# resurrects a rejected look, that nothing can toggle, and that silently outranks the
+		# default, is worse than no flag.
 		#
-		# AND THE LIGHT TERM GOES TOO, on Daniel's instruction after seeing the above: "you are
-		# currently adding a shadow onto the floor tiles of blocked line-of-sight. Don't add that.
-		# Just have all the ground the same colour. The sprite shading will do the work."
-		#
-		# Keeping the light was my compromise and it was still a shadow: a blocked cell is usually
-		# UNLIT, so `1 - _light_frac` handed it the same film by another route. The rule he is
-		# asking for is simpler than either version — the ground does not participate in line of
-		# sight at all. What you cannot see is carried by the SPRITES, which already take Qud's
-		# memory palette, and that is the whole of the effect.
-		#
-		# The night case I raised against this stands, and is his call, made twice: an unlit cell
-		# you cannot see now sits at 0 film beside a visible one at up to 0.16. _light_frac floors
-		# at MEMORY_GROUND, so 0.16 is the entire range that can disagree.
-		#
-		# `lit_floor` stays as the one-line way back to the old memory film.
-		return 0.0 if lit_floor else 1.0 - MEMORY_GROUND
+		# The night case I argued for is his call, made twice. Its size: an unlit cell you cannot
+		# see sits at 0 film beside a visible one at up to 0.16, since _light_frac floors at
+		# MEMORY_GROUND. That 0.16 is the entire range that can disagree.
+		return 0.0
 	return 1.0 - _light_frac(cell)
 
 ## Is (cx,cy) on the live zone's OUTERMOST ring? Those are the only cells the band ever repeats:
@@ -2958,13 +2944,13 @@ func _on_edge_ring(cx: int, cy: int) -> bool:
 	return cx == 0 or cy == 0 or cx == w - 1 or cy == h - 1
 
 ## Remember the edge ring's tone for this turn. Cheap — the ring, not the zone.
-func _tally_edge_tone(cells: Array, lit_floor: bool) -> void:
+func _tally_edge_tone(cells: Array) -> void:
 	_edge_tone.clear()
 	var all_tones: Array = []
 	for cell in cells:
 		var cx := int(cell.get("x", 0))
 		var cy := int(cell.get("y", 0))
-		var t: float = _live_cell_tone(cell, lit_floor)
+		var t: float = _live_cell_tone(cell)
 		all_tones.append(t)
 		if _on_edge_ring(cx, cy):
 			_edge_tone[Vector2i(cx, cy)] = t

@@ -161,24 +161,31 @@ func _ready() -> void:
 	var unknown := {"x": 3, "y": 0, "light": 1, "explored": false, "visible": false, "objs": []}
 	Z.fire_dark = false
 	_check("switched on, a fire-lit floor is at full brightness",
-		is_equal_approx(rf._live_cell_tone(flit, false), 0.0), "%.3f" % rf._live_cell_tone(flit, false))
+		is_equal_approx(rf._live_cell_tone(flit), 0.0), "%.3f" % rf._live_cell_tone(flit))
 	Z.fire_dark = true
-	var t_off: float = rf._live_cell_tone(flit, false)
+	var t_off: float = rf._live_cell_tone(flit)
 	# THE NUMBER, not "darker than before": 0.16 is darker than 0.0 and is the thing that looked
 	# broken. The floor has to reach the deep end of the film, near the DARK_MAX cap.
 	_check("switched off, the floor goes properly dark", t_off > 0.9, "tone %.3f" % t_off)
 	_check("...much darker than merely out of sight", t_off > (1.0 - rf.MEMORY_GROUND) * 4.0,
 		"tone %.3f vs memory %.3f" % [t_off, 1.0 - rf.MEMORY_GROUND])
-	# ...and nothing else moved. The 0.84 is a measured parity constant; a fix that darkened all
-	# remembered ground would be a much bigger change wearing this one's clothes.
+	# ...and nothing else moved. The guard still matters — a fix that darkened all ground you
+	# cannot see would be a much bigger change wearing this one's clothes — but its OTHER half
+	# has been deliberately inverted since: remembered ground used to sit at MEMORY_GROUND, and
+	# Daniel asked twice for ground to stop reacting to line of sight at all ("just have all the
+	# ground the same colour. The sprite shading will do the work"). So the film is gone, and the
+	# thing this check now protects is that SWITCHED OFF is still distinguishable from merely
+	# out of sight — which is exactly what t_off above proves, from the other side.
 	_check("a lit floor with no fire is untouched",
-		is_equal_approx(rf._live_cell_tone(plain, false), 0.0), "%.3f" % rf._live_cell_tone(plain, false))
-	_check("remembered ground still sits at MEMORY_GROUND",
-		is_equal_approx(rf._live_cell_tone(unlit, false), 1.0 - rf.MEMORY_GROUND),
-		"%.3f" % rf._live_cell_tone(unlit, false))
+		is_equal_approx(rf._live_cell_tone(plain), 0.0), "%.3f" % rf._live_cell_tone(plain))
+	_check("ground you cannot see takes no film (see unseen_floor_tone)",
+		is_equal_approx(rf._live_cell_tone(unlit), 0.0), "%.3f" % rf._live_cell_tone(unlit))
+	_check("...so a switched-off floor is the ONLY dark one, by a wide margin",
+		t_off - rf._live_cell_tone(unlit) > 0.9,
+		"off %.3f vs unseen %.3f" % [t_off, rf._live_cell_tone(unlit)])
 	_check("unexplored ground still sits at FOG_GROUND",
-		is_equal_approx(rf._live_cell_tone(unknown, false), 1.0 - rf.FOG_GROUND),
-		"%.3f" % rf._live_cell_tone(unknown, false))
+		is_equal_approx(rf._live_cell_tone(unknown), 1.0 - rf.FOG_GROUND),
+		"%.3f" % rf._live_cell_tone(unknown))
 	Z.fire_dark = false
 
 	# ── the switch has to announce itself ────────────────────────────────────
@@ -257,7 +264,7 @@ func _tlit(data: Dictionary, x: int, y: int) -> bool:
 
 var _tone_r = null
 func _tone(cell: Dictionary) -> float:
-	return _tone_r._live_cell_tone(cell, false)
+	return _tone_r._live_cell_tone(cell)
 
 
 func _count(data: Dictionary) -> int:
