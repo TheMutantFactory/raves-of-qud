@@ -11140,8 +11140,31 @@ func _read_wall_vox(path: String, declared := false) -> Dictionary:
 			# WALL_H by d.z, so a 10-layer model simply stretches to the tile.
 			var ok := declared or d.z == WALL_VOX_LAYERS
 			if ok:
-				got = {"model": mirror_x(m), "palette": v.get("palette", PackedColorArray()),
-					"src": path}
+				# THE MIRROR IS FOR HAND-DRAWN MODELS ONLY, and this condition is the whole of
+				# the brinestalk corner bug. mirror_x was added for Daniel's vengi rock model —
+				# "I loaded the voxel in vengi-voxedit and the sides are flipped left-to-right" —
+				# and then applied to EVERY model, including the 16 brinestalk files
+				# derive_wallvox.py generates under <support>/vox.
+				#
+				# MEASURED, not guessed. Those files encode connectivity on their edges: a
+				# connected side carries the continued pattern (~5 of 16 voxels on the top row),
+				# an open side keeps its post (~12). Across twelve signatures that matches the
+				# name exactly — 10100000 has its N and E edges low, 00000010 only its W. So
+				# model x=15 is EAST in those files, mirror_x sends it to world WEST, and a N+E
+				# corner draws as N+W. Daniel, at (62,16): "the corners look rotated 90. The tile
+				# to the east looks rotated 180" — which is that same flip on a W-only end.
+				#
+				# The rusted-red walls he says are correct are wall_metal, which is hand-painted
+				# PNG in tiles_custom with no .vox at all, so nothing here touched them.
+				#
+				# WHY THE TWO SOURCES DISAGREE IS NOT ESTABLISHED — different editors, or
+				# derive_wallvox's own axis handling. The experiment that would settle it is to
+				# mirror <family>-platonic.vox, re-derive, and see whether the family then wants
+				# the same treatment as the rock. Until someone runs it, the rule is the one the
+				# evidence supports: mirror what was declared by name, leave the derived family
+				# as its generator wrote it.
+				got = {"model": mirror_x(m) if declared else m,
+					"palette": v.get("palette", PackedColorArray()), "src": path}
 			_wall_vox_files[path.get_file()] = "%dx%dx%d %s (%s indexing)" % [d.x, d.y, d.z,
 				("USED (declared)" if declared else "USED") if ok
 					else "ignored (not %d layers)" % WALL_VOX_LAYERS,

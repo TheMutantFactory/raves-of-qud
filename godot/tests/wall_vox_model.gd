@@ -170,6 +170,31 @@ func _ready() -> void:
 	_check("the wall reader hands back the mirrored voxel set", loaded_set == want,
 		"%d voxels loaded, %d expected" % [loaded_set.size(), want.size()])
 
+	# ── AND ONLY A DECLARED MODEL IS MIRRORED ────────────────────────────────
+	# mirror_x was added for the vengi rock model and applied to every model, including the 16
+	# brinestalk files derive_wallvox.py writes under <support>/vox — whose edges encode which
+	# sides connect, so flipping x turned a N+E corner into N+W. Daniel: "the corners look
+	# rotated 90. The tile to the east looks rotated 180."
+	const FIXTURE := "res://tests/fixtures/wall_fixture-00000000.vox"
+	var undeclared: Dictionary = r._read_wall_vox(FIXTURE, false)
+	_check("a 24-layer undeclared model is read at all", not undeclared.is_empty(),
+		"the fixture must clear the layer opt-in or this proves nothing")
+	if not undeclared.is_empty():
+		var raw2: Dictionary = load("res://VoxFile.gd").read(FIXTURE)["models"][0]
+		var fix_raw := {}
+		for e in raw2["vox"]:
+			fix_raw[[e[0], e[1]]] = true
+		var fix_got := {}
+		for e in undeclared["model"]["vox"]:
+			fix_got[[e[0], e[1]]] = true
+		_check("...and comes back EXACTLY as its generator wrote it", fix_got == fix_raw,
+			"%d voxels vs %d" % [fix_got.size(), fix_raw.size()])
+		# ...and the fixture is asymmetric, or "unmirrored" and "mirrored" are the same picture.
+		var fix_mir := {}
+		for e in (Z.mirror_x(raw2)["vox"] as Array):
+			fix_mir[[e[0], e[1]]] = true
+		_check("...on a fixture a mirror would visibly change", fix_mir != fix_raw)
+
 	# THE HEIGHT GATE IS LIFTED ONLY FOR A DECLARED FILE.
 	var got: Dictionary = r._read_wall_vox(found, true)
 	_check("a declared model is read at its own height", not got.is_empty(), str(got.keys()))
