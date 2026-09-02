@@ -113,6 +113,16 @@ const FROZEN_EDGE_DIM := 0.18   # alpha on the row touching the live zone — ju
 ## sub-quads rather than D squared. At D=16 that is 23k quads for a zone's band instead of 231k —
 ## the difference between a knob you can turn and the overdraw crash this file already documents.
 var penumbra_radius := 3
+
+## HOW MANY RINGS OF REMEMBERED ZONES RENDER FOR REAL. 1 is the 3x3 the renderer has always drawn;
+## 2 is the 5x5, and so on. Read from Settings each darkness bake (see _build_darkness) so the
+## slider takes effect on the next crossing rather than the next launch.
+##
+## IT COSTS WHAT IT SOUNDS LIKE. Ring 1 is at most 8 neighbours doing real work on a crossing; ring
+## 2 is up to 24, each baking its own darkness instead of the one flat rectangle the far path emits.
+## That growth is exactly what the far path was written to bound, so this is a knob with a real
+## price, defaulted to the value that keeps the old cost.
+var visible_zone_radius := 1
 var penumbra_divisions := 1
 ## ...and the LIVE zone fades toward its own edges, so the world does not simply stop at a hard
 ## line. Daniel: "the current zone should always fade out in all cardinal directions." The
@@ -2523,6 +2533,7 @@ func _build_darkness(cells: Array, parent: Node, frozen_off := NOT_FROZEN) -> vo
 	var frozen: bool = frozen_off != NOT_FROZEN
 	penumbra_radius = maxi(1, int(Settings.get_value("penumbra_radius", penumbra_radius)))
 	penumbra_divisions = clampi(int(Settings.get_value("penumbra_divisions", penumbra_divisions)), 1, 16)
+	visible_zone_radius = maxi(1, int(Settings.get_value("visible_zone_radius", visible_zone_radius)))
 	# A ZONE WHOLLY PAST THE RAMP IS ONE RECTANGLE. Every cell in it is fully opaque, so the 2000
 	# per-cell quads (or, at divisions=16, the 512,000 sub-quads) all carry the same black. Emitting
 	# them was most of what made a zone crossing hitch: every neighbour re-bakes when its offset
@@ -2809,20 +2820,29 @@ func _build_darkness(cells: Array, parent: Node, frozen_off := NOT_FROZEN) -> vo
 ## rectangle — no gradient anywhere in it, and nothing about that depends on WHICH direction or
 ## how far away it sits. Both facts are load-bearing: it collapses to one quad, and it never needs
 ## re-baking when the player moves (see _sync_neighbors).
+## WHICH RING OF THE ZONE GRID a neighbour sits in: 0 is the live zone, 1 the 3x3 around it,
+## 2 the 5x5, and so on. `off` is the neighbour's origin in CELLS relative to the live zone, so
+## this is just that distance divided by a zone.
+func _zone_ring(off: Vector2i) -> int:
+	return maxi(int(ceil(absf(float(off.x)) / maxf(float(_live_w), 1.0))),
+		int(ceil(absf(float(off.y)) / maxf(float(_live_h), 1.0))))
+
+
+## Is this neighbour too far out to render for real? THE ONE PREDICATE the whole far path turns
+## on — _sync_neighbors hides it, _build_darkness bakes it as a single flat rectangle instead of
+## 2000 per-cell quads, and the re-bake skip leaves it alone on a crossing. All four have to agree
+## or a zone renders under its own memory slab.
+##
+## IT USED TO BE A CELL DISTANCE and that is why it read as "the 3x3": it asked whether the nearest
+## cell of the neighbour was penumbra_radius+1 cells away, and the second ring starts a whole zone
+## width out (~80 cells), so every ramp value under 80 gave exactly ring 1. Daniel: "let's widen the
+## visible ring past the 3x3 and add that as a radius setting." Asking for the RING directly says
+## the same thing at the default and can actually be turned up.
+##
+## ONLY ZONES YOU HAVE BEEN TO. The neighbour set comes from the store, so this widens how much of
+## what you remember is drawn — it does not see into ground you have never walked.
 func _zone_beyond_ramp(off: Vector2i) -> bool:
-	var zw := int(_live_w)
-	var zh := int(_live_h)
-	var dx := 0
-	if off.x + zw - 1 < 0:
-		dx = -(off.x + zw - 1)          # entirely west: nearest cell is its east column
-	elif off.x > zw - 1:
-		dx = off.x - (zw - 1)           # entirely east: nearest is its west column
-	var dy := 0
-	if off.y + zh - 1 < 0:
-		dy = -(off.y + zh - 1)
-	elif off.y > zh - 1:
-		dy = off.y - (zh - 1)
-	return maxi(dx, dy) >= penumbra_radius + 1
+	return _zone_ring(off) > visible_zone_radius
 
 ## tiles, _live_edge_light spreads FROZEN_EDGE_DIM over penumbra_radius + 1.
 func _veil_step(frozen: bool) -> float:
@@ -3651,9 +3671,7 @@ func _sync_neighbors(neighbors: Array) -> void:
 				# everything and fail" end of the trade. Beyond the radius the subtree is
 				# FREED (the store keeps the data; walking back rebuilds it, which the mesh
 				# caches made cheap); within it, it stays banked and hidden, warm for return.
-				var roff := Vector2i(nb.get("offset", Vector2i.ZERO))
-				var rzd: int = maxi(int(ceil(absf(roff.x) / maxf(float(_live_w), 1.0))),
-					int(ceil(absf(roff.y) / maxf(float(_live_h), 1.0))))
+				var rzd := _zone_ring(Vector2i(nb.get("offset", Vector2i.ZERO)))
 				if rzd > int(Settings.get_value("remember_radius", 2)):
 					_static_zones[id].queue_free()
 					_static_zones.erase(id)

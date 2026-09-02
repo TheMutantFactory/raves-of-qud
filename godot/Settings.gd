@@ -33,6 +33,18 @@ const DEFAULTS := {
 	# burn (Daniel, from a zone south of Joppa: "there are flames on. They are out-zone").
 	# Evaluated when a remembered zone builds, so raising it takes effect on the next crossing.
 	"fire_zone_radius": 0,
+	# HOW MANY RINGS OF REMEMBERED ZONES ARE DRAWN. 1 is the 3x3 the renderer has always shown;
+	# 2 is the 5x5. Only zones you have BEEN to — the neighbour set comes from the store, so this
+	# widens how much of what you remember is visible, it does not see into unexplored ground.
+	#
+	# It costs what it sounds like: ring 1 is at most 8 neighbours doing real work on a crossing,
+	# ring 2 up to 24, each baking its own darkness instead of the single flat rectangle the far
+	# path emits. Bounding that growth is why the far path exists, so the default keeps it.
+	#
+	# Pairs with remember_radius below: this one says how far you SEE, that one how far a zone you
+	# can no longer see stays banked in memory. Set this above that and the seen ones simply never
+	# reach the freeing branch.
+	"visible_zone_radius": 1,
 	# HOW MUCH IS KEPT IN MEMORY, NOT HOW MUCH IS DRAWN. How many zones out a departed zone's
 	# BUILT GEOMETRY stays banked — every one of them HIDDEN, warm for a fast return. Beyond it
 	# the subtree is freed; the store keeps the data and walking back rebuilds it. 1 = just the

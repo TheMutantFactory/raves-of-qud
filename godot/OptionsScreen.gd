@@ -40,6 +40,8 @@ const RAVES_ITEMS := [
 	{"key": "font_scale", "label": "Font scale", "type": "slider", "min": 0.7, "max": 1.5, "step": 0.05},
 	{"key": "fire_zone_radius", "label": "Lit fires: zone radius (0 = this zone only)",
 		"type": "slider", "min": 0, "max": 3, "step": 1},
+	{"key": "visible_zone_radius", "label": "Visible zones: rings of remembered map drawn (1 = 3x3)",
+		"type": "slider", "min": 1, "max": 3, "step": 1},
 	# "Zones kept built while away" read as "zones you can see", and Daniel set it to 5 and asked
 	# why he was not seeing five zones out. Every zone this governs is `visible = false` — it is a
 	# memory/return-time knob, not a draw distance — so the label says which of the two it is.
