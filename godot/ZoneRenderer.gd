@@ -2911,7 +2911,28 @@ func _live_cell_tone(cell: Dictionary, lit_floor: bool) -> float:
 	if switched_off(cell):
 		return 1.0
 	if not _cell_seen(cell):
-		return 0.0 if lit_floor else 1.0 - MEMORY_GROUND
+		# THE FLOOR TAKES THE CELL'S OWN LIGHT, NOT A FOG FILM. Daniel: "the floor in obscured
+		# tiles should be the same colour as the floor with shown tiles. The obscured sprites are
+		# the correct colour." He has now said this twice from opposite directions, and the two
+		# verdicts are not in conflict — they are about different things:
+		#
+		#   FOG    line of sight. Qud's memory of a cell is a palette swap on what STANDS there;
+		#          the ground under it is ~99.7% empty background, so it barely moves. Raves paints
+		#          a real floor tile in that cell, and 0.84 of a painted tan floor is visibly
+		#          browner — a step Qud never shows. That is the film he is pointing at.
+		#   LIGHT  time of day and lamps. This must still apply, and dropping it is what he
+		#          rejected the FIRST time (`lit_floor` used to return a flat 0.0 here): at night
+		#          an out-of-sight floor stayed at full daylight beside a dark one he could see,
+		#          and "the scene went flat".
+		#
+		# Qud's own light byte answers for a cell whether or not you can see it — GetLight() is the
+		# cell's lighting, not its visibility — so asking it here is the same question the seen
+		# branch below asks, and gives the same answer in the same conditions. Outdoors by day both
+		# read 0.0 and the floor is continuous; at night both darken together.
+		#
+		# `lit_floor` stays as the way back to the old film, since this is the third pass over this
+		# surface and the flag costs one line.
+		return 1.0 - _light_frac(cell) if lit_floor else 1.0 - MEMORY_GROUND
 	return 1.0 - _light_frac(cell)
 
 ## Is (cx,cy) on the live zone's OUTERMOST ring? Those are the only cells the band ever repeats:

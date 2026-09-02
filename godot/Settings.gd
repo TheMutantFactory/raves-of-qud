@@ -53,11 +53,19 @@ const DEFAULTS := {
 	"auto_walk_rate": 6.0,
 	"cutaway_bubble_on": true,   # the master switch; the radius slider stays the size knob
 	"penumbra_divisions": 1,
-	# SHADOW SHOWS ON THE ART, NOT ON THE GROUND. With this on, a remembered cell's ground keeps
-	# its LIT colour and only the things standing on it carry the memory palette. Daniel, at night
-	# in Joppa: the brinestalk at (21,22) read correctly and the floor read the SAME colour, so the
-	# scene went flat. Off = Qud's own behaviour, where the field itself is the memory colour.
-	"lit_floor": false,
+	# SHADOW SHOWS ON THE ART, NOT ON THE GROUND. On (the default), a cell you cannot see keeps the
+	# ground colour its own LIGHT gives it, and only the things standing on it carry the memory
+	# palette — which is what Qud looks like, because Qud's ground is empty background and its
+	# memory swap has almost nothing to act on there, while Raves paints a real floor tile.
+	#
+	# IT USED TO MEAN SOMETHING SUBTLY DIFFERENT AND THAT IS WHY IT WAS OFF. The old branch
+	# returned a flat 0.0, dropping the cell's LIGHTING along with the fog film, so at night an
+	# out-of-sight floor sat at full daylight next to a dark one you could see. Daniel, in Joppa:
+	# the brinestalk at (21,22) read correctly and the floor read the SAME colour, "so the scene
+	# went flat". It now keeps the light and drops only the film — see _live_cell_tone.
+	#
+	# Off restores the old 0.16 memory film on out-of-sight ground.
+	"lit_floor": true,
 }
 
 ## True when Raves was launched with --one-to-one (or --1to1): 1:1 is LOCKED for this
