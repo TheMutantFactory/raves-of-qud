@@ -227,15 +227,26 @@ func _input(event: InputEvent) -> void:
 ## consuming a Cmd+Right-click: the scene gets _input BEFORE autoloads, so without the handoff the
 ## inspector claimed every such click window-wide and the form could never open in-game.
 func claims(p: Vector2) -> bool:
+	return claim_of(p)["claimed"]
+
+## WHO claims this point, and whether they claim it — in ONE tree walk.
+##
+## `claims()` and `_deepest_control_at()` each walk every Control under the root, so a caller that
+## wanted both (the assist sweep asks 1152 points, and for each chrome point wanted the name too)
+## paid for two full walks per point — about 2300 walks for one dump, on the frame it happens to
+## land on. Answering both from one walk halves that, and removes a real inconsistency besides: two
+## walks can disagree if a node appears or leaves between them, and the answer would then name a
+## control that did not make the decision.
+func claim_of(p: Vector2) -> Dictionary:
 	var hit := _deepest_control_at(p)
 	if hit == null:
-		return false
+		return {"claimed": false, "node": null}
 	var n: Node = hit
 	while n != null:
 		if n.has_meta("feedback_skip"):
-			return false
+			return {"claimed": false, "node": hit}
 		n = n.get_parent()
-	return true
+	return {"claimed": true, "node": hit}
 
 # --- element resolution --------------------------------------------------------------------------
 

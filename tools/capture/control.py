@@ -42,6 +42,7 @@ PORT = 48710
 DIRS = {"N", "S", "E", "W", "NE", "NW", "SE", "SW"}
 BASE = plat.support_dir()   # per-OS data dir the mod writes to (see plat.py)
 GODOT_CMD = os.path.join(BASE, "godot_cmd")
+ASSIST_DUMP = os.path.join(BASE, "assistdump.json")
 SHOT = os.path.join(BASE, "shot.png")          # Godot viewer's own screenshot
 QUD_SHOT = os.path.join(BASE, "qud_shot.png")  # Qud's own rendered screen (ScreenCapture)
 
@@ -236,8 +237,24 @@ def main(argv):
         godot("assistat " + argv[1] + " " + argv[2])
         print("godot: assistat", argv[1], argv[2])
     elif cmd == "assistdump":
-        godot("assistdump")
-        print("godot: assistdump -> assistdump.json")
+        # `assistdump sweep` adds the window map — expensive and, on this build, flaky.
+        godot("assistdump sweep" if len(argv) > 1 and argv[1] == "sweep" else "assistdump")
+        # SAY WHETHER IT LANDED. The viewer writes the dump asynchronously — we queue a command
+        # and it answers a frame or two later — so a caller that read the file immediately saw
+        # whatever was there before, and when the gather died mid-write it saw ZERO BYTES and a
+        # JSONDecodeError with nothing to point at. Wait for the mtime to move, then say so.
+        before = os.path.getmtime(ASSIST_DUMP) if os.path.exists(ASSIST_DUMP) else 0
+        deadline = time.time() + 10.0
+        while time.time() < deadline:
+            if os.path.exists(ASSIST_DUMP) and os.path.getmtime(ASSIST_DUMP) > before:
+                break
+            time.sleep(0.1)
+        if not os.path.exists(ASSIST_DUMP) or os.path.getmtime(ASSIST_DUMP) <= before:
+            print("godot: assistdump did NOT answer in 10s — is the viewer in-game and polling?")
+        elif os.path.getsize(ASSIST_DUMP) == 0:
+            print("godot: assistdump wrote an EMPTY file — the gather died; check the viewer's log")
+        else:
+            print("godot: assistdump -> assistdump.json (%d bytes)" % os.path.getsize(ASSIST_DUMP))
     elif cmd == "firedump":
         godot("firedump")
         print("godot: firedump -> firedump.json")

@@ -967,92 +967,82 @@ func _exec_godot_cmd(cmd: String) -> void:
 			# on the pointer, the chrome test, the modal test, the raycast, the verb, the two
 			# nodes and their visibility. This asks every link at once, for the pointer where it
 			# actually is.
-			var ad := FileAccess.open(_support_dir().path_join("assistdump.json"), FileAccess.WRITE)
+			# GATHERED FIRST, WRITTEN LAST, AND RENAMED INTO PLACE.
+			#
+			# This used to open the file at the top and write at the bottom, so every line between
+			# was inside a truncated file: one hard error anywhere in the gather — and GDScript has
+			# no way to catch one — left assistdump.json at ZERO BYTES, and the reader got a
+			# JSONDecodeError instead of a dump. Observed three times in one zone.
+			#
+			# Nothing here needs the file handle, so the whole report is built, then written to a
+			# .tmp, then renamed over the target. A crash mid-gather now leaves the PREVIOUS dump
+			# intact — stale, which an mtime shows, rather than empty, which looks like a crash in
+			# whatever read it. The rename also closes the reader's race: control.py writes its own
+			# command file the same way, for the same reason.
+			_dump_stage("start")
+			var mp: Vector2 = get_viewport().get_mouse_position()
+			var claimed := FeedbackTool.claims(mp)
+			var hit: Control = FeedbackTool._deepest_control_at(mp)
+			var cell = _playfield_cell(mp)
+			var rep := {
+				"pointer": [int(mp.x), int(mp.y)],
+				"assist_exists": _assist != null,
+				"enabled": _assist != null and _assist.enabled(),
+				"one_to_one": Settings.one_to_one(),
+				"qol_mouseassist": Settings.qol_on("mouseassist"),
+				"target_active": _target != null and _target.active,
+				"modal_owns_input": _modal_owns_input(),
+				"chrome_claims_pointer": claimed,
+				"control_under_pointer": (hit.get_path() as String) if hit != null else "",
+				"cell": ("%d,%d" % [cell.x, cell.y]) if cell != null else "(none)",
+				"verb": _assist.verb() if _assist != null else "",
+			}
+			if _assist != null:
+				rep["nodes"] = _assist.probe()
+			# A SWEEP, BECAUSE THE POINTER CANNOT BE DRIVEN FROM OUTSIDE. macOS refuses focus
+			# to a background process, so Godot never sees the mouse move and
+			# get_mouse_position() is frozen wherever the user last left it — asking about one
+			# point tells you about that point and nothing else. This walks a grid over the
+			# viewport and reports what the assist WOULD say at each, which is the question.
+			# A MAP, NOT A TALLY. Daniel: "when I hover the mouse, I don't see the boot icon.
+			# When I see you hover, I DO." He is pointing at the one thing assistat cannot
+			# test — it sets the cell DIRECTLY and skips _playfield_cell, which is the whole
+			# pointer path. Counts said 122 of 192 points were chrome and that number means
+			# nothing without knowing WHERE, so the sweep draws the window instead:
+			#   .  chrome claims it        x  no cell under it
+			#   -  a cell, but no verb     w/u/t/^/v  walk / use / talk / up / down
+			# THE WINDOW MAP IS OPT-IN — `assistdump sweep`. It is the expensive half and the flaky
+			# one; the chain and the zone tally below are what actually get read, they are cheap, and
+			# they now always land. See _sweep_into for what is known about the failure.
+			if parts.size() > 1 and parts[1] == "sweep":
+				_dump_stage("sweep")
+				_sweep_into(rep)
+			_dump_stage("zone")
+			var lv: Dictionary = store.live_snapshot()
+			var zc: Array = lv.get("cells", [])
+			var tally := {}
+			for c in zc:
+				var v2: String = _assist.verb_at(
+					Vector2i(int(c.get("x", 0)), int(c.get("y", 0)))) if _assist != null else ""
+				var k2: String = v2 if v2 != "" else "(none)"
+				tally[k2] = int(tally.get(k2, 0)) + 1
+			rep["zone"] = {
+				"cells_in_snapshot": zc.size(),
+				# GUARDED, because this is the line most likely to be the one that killed the
+				# gather: a dump asked for while the renderer is being rebuilt or before it
+				# exists reads _live_w off null and takes the whole command down with it.
+				"zone_size": ("%dx%d" % [int(renderer._live_w), int(renderer._live_h)]
+					if renderer != null else "(no renderer)"),
+				"verbs": tally,
+			}
+			var _dump_path: String = _support_dir().path_join("assistdump.json")
+			var ad := FileAccess.open(_dump_path + ".tmp", FileAccess.WRITE)
 			if ad != null:
-				var mp: Vector2 = get_viewport().get_mouse_position()
-				var claimed := FeedbackTool.claims(mp)
-				var hit: Control = FeedbackTool._deepest_control_at(mp)
-				var cell = _playfield_cell(mp)
-				var rep := {
-					"pointer": [int(mp.x), int(mp.y)],
-					"assist_exists": _assist != null,
-					"enabled": _assist != null and _assist.enabled(),
-					"one_to_one": Settings.one_to_one(),
-					"qol_mouseassist": Settings.qol_on("mouseassist"),
-					"target_active": _target != null and _target.active,
-					"modal_owns_input": _modal_owns_input(),
-					"chrome_claims_pointer": claimed,
-					"control_under_pointer": (hit.get_path() as String) if hit != null else "",
-					"cell": ("%d,%d" % [cell.x, cell.y]) if cell != null else "(none)",
-					"verb": _assist.verb() if _assist != null else "",
-				}
-				if _assist != null:
-					rep["nodes"] = _assist.probe()
-				# A SWEEP, BECAUSE THE POINTER CANNOT BE DRIVEN FROM OUTSIDE. macOS refuses focus
-				# to a background process, so Godot never sees the mouse move and
-				# get_mouse_position() is frozen wherever the user last left it — asking about one
-				# point tells you about that point and nothing else. This walks a grid over the
-				# viewport and reports what the assist WOULD say at each, which is the question.
-				# A MAP, NOT A TALLY. Daniel: "when I hover the mouse, I don't see the boot icon.
-				# When I see you hover, I DO." He is pointing at the one thing assistat cannot
-				# test — it sets the cell DIRECTLY and skips _playfield_cell, which is the whole
-				# pointer path. Counts said 122 of 192 points were chrome and that number means
-				# nothing without knowing WHERE, so the sweep draws the window instead:
-				#   .  chrome claims it        x  no cell under it
-				#   -  a cell, but no verb     w/u/t/^/v  walk / use / talk / up / down
-				var vs: Vector2 = get_viewport().get_visible_rect().size
-				var found := {}
-				var probed := 0
-				var chrome := 0
-				var nocell := 0
-				var rows: Array = []
-				var claimers := {}
-				for iy in 24:
-					var row := ""
-					for ix in 48:
-						var q := Vector2(vs.x * (float(ix) + 0.5) / 48.0,
-							vs.y * (float(iy) + 0.5) / 24.0)
-						probed += 1
-						if FeedbackTool.claims(q):
-							chrome += 1
-							row += "."
-							var hc: Control = FeedbackTool._deepest_control_at(q)
-							var nm: String = (hc.get_path() as String) if hc != null else "(null)"
-							claimers[nm] = int(claimers.get(nm, 0)) + 1
-							continue
-						var qc = _playfield_cell(q)
-						if qc == null:
-							nocell += 1
-							row += "x"
-							continue
-						var qv: String = _assist.verb_at(Vector2i(qc.x, qc.y)) if _assist != null else ""
-						var kk: String = qv if qv != "" else "(no verb — wall or nothing)"
-						found[kk] = int(found.get(kk, 0)) + 1
-						row += {"walk": "w", "use": "u", "talk": "t", "up": "^", "down": "v"}.get(qv, "-")
-					rows.append(row)
-				rep["sweep"] = {"points": probed, "chrome": chrome, "no_cell": nocell,
-					"verbs": found, "map": rows, "claimed_by": claimers}
-				# ...AND OVER THE WHOLE ZONE, not just the pixels that happen to be on screen. A
-				# screen sweep samples where the camera is pointing; if a verb is missing because
-				# of what the SNAPSHOT contains, only the zone tally shows it — 63 sampled points
-				# in a canyon are mostly wall either way, and "no boots anywhere" and "the camera
-				# is facing a cliff" look identical from the viewport.
-				var lv: Dictionary = store.live_snapshot()
-				var zc: Array = lv.get("cells", [])
-				var tally := {}
-				for c in zc:
-					var v2: String = _assist.verb_at(
-						Vector2i(int(c.get("x", 0)), int(c.get("y", 0)))) if _assist != null else ""
-					var k2: String = v2 if v2 != "" else "(none)"
-					tally[k2] = int(tally.get(k2, 0)) + 1
-				rep["zone"] = {
-					"cells_in_snapshot": zc.size(),
-					"zone_size": "%dx%d" % [int(renderer._live_w), int(renderer._live_h)],
-					"verbs": tally,
-				}
 				ad.store_string(JSON.stringify(rep, "  "))
 				ad.close()
-				print("[assistdump] ", JSON.stringify(rep))
+				DirAccess.rename_absolute(_dump_path + ".tmp", _dump_path)
+			_dump_stage("done")
+			print("[assistdump] ", JSON.stringify(rep))
 		"firedump":
 			# WHERE THE FIRELIGHT SWITCH STOPS. The chain is four links long — the setting, the
 			# static gate, the per-cell mark, and what the relight makes of it — and a picture
@@ -1365,6 +1355,70 @@ func _walk_log_frame() -> void:
 	if _walk_log.size() > WALK_LOG_N:
 		_walk_log.remove_at(0)
 	Profiler.done("walklog")
+
+
+
+## The window map the assist sweep draws — EXTRACTED AND OPT-IN. See its call site: it asks 1152
+## points and each walks the whole Control tree, and about two thirds of dumps died part way
+## through it. Bisected — removing _playfield_cell from the loop did not stop it, so the survivor
+## is _deepest_control_at at that volume. Kept because the picture answered a real question once
+## ("when I hover I do not see the boot icon"), fenced because the rest of the probe is cheap and
+## must not go down with it.
+func _sweep_into(rep: Dictionary) -> void:
+	var vs: Vector2 = get_viewport().get_visible_rect().size
+	var found := {}
+	var probed := 0
+	var chrome := 0
+	var nocell := 0
+	var rows: Array = []
+	var claimers := {}
+	for iy in 24:
+		var row := ""
+		for ix in 48:
+			var q := Vector2(vs.x * (float(ix) + 0.5) / 48.0,
+				vs.y * (float(iy) + 0.5) / 24.0)
+			probed += 1
+			# ONE TREE WALK PER POINT. This asked claims() and then _deepest_control_at()
+			# for the name, and each walks every Control under the root — 1152 points
+			# meant ~2300 full walks on a single frame, which is the shape of the dump
+			# that stopped landing (stage breadcrumb: "sweep").
+			var cl: Dictionary = FeedbackTool.claim_of(q)
+			if bool(cl["claimed"]):
+				chrome += 1
+				row += "."
+				var hc: Node = cl["node"]
+				var nm: String = (hc.get_path() as String) \
+					if (hc != null and is_instance_valid(hc) and hc.is_inside_tree()) \
+					else "(null)"
+				claimers[nm] = int(claimers.get(nm, 0)) + 1
+				continue
+			var qc = _playfield_cell(q)
+			if qc == null:
+				nocell += 1
+				row += "x"
+				continue
+			var qv: String = _assist.verb_at(Vector2i(qc.x, qc.y)) if _assist != null else ""
+			var kk: String = qv if qv != "" else "(no verb — wall or nothing)"
+			found[kk] = int(found.get(kk, 0)) + 1
+			row += {"walk": "w", "use": "u", "talk": "t", "up": "^", "down": "v"}.get(qv, "-")
+		rows.append(row)
+	rep["sweep"] = {"points": probed, "chrome": chrome, "no_cell": nocell,
+		"verbs": found, "map": rows, "claimed_by": claimers}
+	# ...AND OVER THE WHOLE ZONE, not just the pixels that happen to be on screen. A
+	# screen sweep samples where the camera is pointing; if a verb is missing because
+	# of what the SNAPSHOT contains, only the zone tally shows it — 63 sampled points
+	# in a canyon are mostly wall either way, and "no boots anywhere" and "the camera
+	# is facing a cliff" look identical from the viewport.
+
+## A BREADCRUMB FOR A GATHER THAT DIES. GDScript cannot catch a runtime error, so a probe that
+## crashes half way just stops — and with the write moved to the end (see assistdump) the only
+## symptom is a dump that never lands. One word per phase, overwritten, so the last word on disk
+## names the phase that did not finish. Debug only, and cheap: four writes of a handful of bytes.
+func _dump_stage(what: String) -> void:
+	var f := FileAccess.open(_support_dir().path_join("assistdump.stage"), FileAccess.WRITE)
+	if f != null:
+		f.store_string(what)
+		f.close()
 
 
 func _walk_step(dt: float) -> void:
