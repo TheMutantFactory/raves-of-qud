@@ -72,6 +72,10 @@ var _beacons                       # LocationBeacons (Node3D); created in _ready
 ## player is actually drawn, chasing it at a walking pace. See SmoothMove and _walk_step.
 var _walk_to := Vector2.ZERO
 var _walk_at := Vector2.ZERO
+## THE ROUTE THE DRAWN PLAYER STILL HAS TO WALK, oldest waypoint first, ending at _walk_to. Empty
+## means "already there". _walk_to stays QUD's cell whatever this holds — the sprite is seated on
+## that cell and set_walk_offset is measured from it — so this is only the path the eye takes.
+var _walk_path: Array = []
 var _walk_seeded := false
 const _SMOOTH := preload("res://SmoothMove.gd")
 var _target                        # TargetCursor: Qud's target picker, mirrored
@@ -792,11 +796,23 @@ func _on_snapshot(data: Dictionary) -> void:
 	# WHERE THE PLAYER IS is not where they are DRAWN — see _walk_step. The camera follows the
 	# walking position so it does not arrive a cell before its subject; the cell itself is recorded
 	# here as the target the walk is heading for.
+	# THE CELLS COALESCING DROPPED, IN ORDER, THEN THE ONE QUD IS ON. Daniel: "if you click on a
+	# tile that is on the other side of a wall, the Raves character moves in a direct line through
+	# the wall." Qud walked the route a cell at a time and published each step; BridgeClient
+	# coalesces those frames and used to discard everything but the last, leaving the walk with two
+	# endpoints and a straight line between them. Breadcrumbs from the SAME zone only — a crossing
+	# re-anchors the coordinates, and the branch below cuts for exactly that reason.
+	var crumbs: Array = []
+	for c in data.get("walkPath", []):
+		if String((c as Dictionary).get("zone", "")) == zid:
+			crumbs.append(Vector2(float(c["x"]), float(c["y"])))
 	_walk_to = Vector2(px, py)
+	_walk_path = _SMOOTH.extend_path(_walk_path, crumbs, _walk_to)
 	if crossed or not _walk_seeded:
 		# A CROSSING IS NOT A WALK. The coordinates re-anchor to the new zone's origin, so easing
 		# between them slides the player the width of a zone through whatever is in the way.
 		_walk_at = _walk_to
+		_walk_path.clear()
 		_walk_seeded = true
 	# ...AND PULL THE SPRITE BACK IN THIS SAME FRAME. Daniel, reading a video frame by frame: "the
 	# player is moved to the new tile. Then the player is moved back to the original tile. Then the
@@ -1355,8 +1371,12 @@ func _walk_step(dt: float) -> void:
 	if not _walk_seeded or _cam_rig == null:
 		return
 	var was := _walk_at
-	_walk_at = _SMOOTH.step(_walk_at, _walk_to, dt,
-		maxf(1.0, float(Settings.get_value("auto_walk_rate", 6.0))))
+	var speed: float = maxf(1.0, float(Settings.get_value("auto_walk_rate", 6.0)))
+	var r: Dictionary = _SMOOTH.advance(_walk_at, _walk_path, dt, speed)
+	_walk_at = r["pos"]
+	_walk_path = r["path"]
+	if _walk_path.is_empty():
+		_walk_at = _walk_to
 	if _walk_at == was:
 		return
 	_cam_rig.set_player(Vector3(_walk_at.x, 0, _walk_at.y), Vector2.ZERO, false)

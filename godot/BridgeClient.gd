@@ -88,6 +88,7 @@ func _drain() -> void:
 	var latest_picktarget: Variant = null
 	var latest_trade: Variant = null
 	var dropped := 0
+	var skipped: Array = []      # the player cells coalescing is about to discard — see below
 	while _buf.size() >= 4:
 		var frame_len := (_buf[0] << 24) | (_buf[1] << 16) | (_buf[2] << 8) | _buf[3]
 		if _buf.size() < 4 + frame_len:
@@ -120,10 +121,23 @@ func _drain() -> void:
 			else:
 				if latest != null:
 					dropped += 1
+					# KEEP THE STEP WE ARE ABOUT TO THROW AWAY. Coalescing is not optional — one
+					# zone rebuild per frame is what stops the Metal allocator crashing — but the
+					# player CELL in each dropped frame is the route Qud actually walked, and
+					# losing it is why a click past a wall drew a straight line through it.
+					# Cheap: two ints out of a frame that is already parsed.
+					var pl: Dictionary = latest.get("player", {})
+					if pl.has("x") and pl.has("y"):
+						skipped.append({"x": int(pl["x"]), "y": int(pl["y"]),
+							"zone": String((latest.get("zone", {}) as Dictionary).get("id", ""))})
 				latest = data
 	if latest != null:
 		if dropped > 0:
 			print("Raves: coalesced %d stale snapshot(s) this frame" % dropped)
+		# The route rides ON the frame that replaced it, so it cannot be read out of order or
+		# applied to the wrong snapshot. Absent when nothing was dropped, which is the common case.
+		if not skipped.is_empty():
+			latest["walkPath"] = skipped
 		snapshot.emit(latest)
 	if latest_popup != null:
 		popup.emit(latest_popup)

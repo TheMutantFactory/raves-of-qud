@@ -62,9 +62,101 @@ const SNAP_CELLS := 8.0
 ## Clamping to 1/30 costs a hitchy frame some ground, which the catch-up above then makes up.
 const MAX_DT := 1.0 / 30.0
 
+## THE PATH, NOT THE DESTINATION — the whole reason this file has a queue in it.
+##
+## Daniel: "if you click on a tile that is on the other side of a wall, the Raves character moves in
+## a direct line through the wall. We need to follow the actual path travelled by the main player in
+## Qud."
+##
+## Qud walks the route, one cell per turn, and publishes a snapshot for each. BridgeClient then
+## COALESCES them — one zone rebuild per frame, or the Metal allocator crashes — and everything but
+## the newest was thrown away. The walk was handed only the endpoints of a burst and eased between
+## them in a straight line, which is a straight line through whatever the route went around.
+##
+## The cells were never missing, only discarded. They are kept as breadcrumbs now and this queue
+## walks them in order, so the drawn player goes where the real one went.
+##
+## HOW MANY WAYPOINTS ARE WORTH KEEPING. A burst can be long — auto-explore resolves turns as fast
+## as Qud can — and following every cell at a walking pace would leave the sprite metres behind. Past
+## the cap the OLDEST waypoints are dropped, so the sprite jumps FORWARD ALONG THE ROUTE rather than
+## across it: still never through a wall, and the lag stays bounded. The catch-up speed below closes
+## what is left.
+const PATH_MAX := 24
+
+## Add a snapshot's worth of movement to the queue: the cells that were coalesced away, in order,
+## then the cell Qud is actually on. Pure, so the queue rule can be tested without a game.
+static func extend_path(path: Array, crumbs: Array, target: Vector2) -> Array:
+	var out: Array = path.duplicate()
+	for c in crumbs:
+		var v := c as Vector2
+		if out.is_empty() or not out[out.size() - 1].is_equal_approx(v):
+			out.append(v)
+	if out.is_empty() or not out[out.size() - 1].is_equal_approx(target):
+		out.append(target)
+	# DROPPED FROM THE FRONT, never the back: the back is where the player IS, and losing it would
+	# leave the sprite walking to a cell Qud has already left.
+	if out.size() > PATH_MAX:
+		out = out.slice(out.size() - PATH_MAX)
+	return out
+
+
+## How far the drawn player still has to walk: this leg plus every leg after it. The catch-up reads
+## THIS rather than the current leg, or a queue of one-cell hops would never exceed 1x and the
+## sprite would fall further behind for as long as a burst lasted.
+static func path_lag(from: Vector2, path: Array) -> float:
+	if path.is_empty():
+		return 0.0
+	var total: float = (path[0] as Vector2).distance_to(from)
+	for i in range(1, path.size()):
+		total += (path[i] as Vector2).distance_to(path[i - 1] as Vector2)
+	return total
+
+
+## ONE FRAME ALONG THE WHOLE QUEUE, with a single distance budget spent across it.
+##
+## The obvious loop — call step() per waypoint until one is not reached — hands every leg a FULL
+## frame of movement, so a frame that clears three waypoints moves three times as far as a frame
+## that clears none. The budget is computed once here and spent, which is what makes the pace the
+## same whether the route arrived as one snapshot or ten.
+##
+## Returns {pos, path}: the new drawn position and what is left of the queue.
+static func advance(from: Vector2, path: Array, dt: float, speed := DEFAULT_SPEED,
+		snap := SNAP_CELLS) -> Dictionary:
+	var out: Array = path.duplicate()
+	if out.is_empty() or dt <= 0.0:
+		return {"pos": from, "path": out}
+	var v: float = maxf(speed, 0.001) \
+		* minf(1.0 + CATCHUP * maxf(0.0, path_lag(from, out) - 1.0), MAX_FACTOR)
+	var budget: float = v * minf(dt, MAX_DT)
+	var pos := from
+	while not out.is_empty() and budget > 0.0:
+		var leg: Vector2 = out[0]
+		var d := leg - pos
+		var dist := d.length()
+		# NOT A WALK. A leg longer than the snap is a teleport or a re-anchor, not a step — cut to
+		# it and drop the budget, because easing across one is the slide through the wall this
+		# whole file exists to avoid.
+		if dist > snap:
+			pos = leg
+			out.pop_front()
+			break
+		if dist <= 0.0001:
+			out.pop_front()
+			continue
+		if budget >= dist:
+			pos = leg
+			budget -= dist
+			out.pop_front()
+		else:
+			pos += d / dist * budget
+			budget = 0.0
+	return {"pos": pos, "path": out}
+
+
 ## One frame of the walk. Pure: the caller keeps the position, this only says where it goes next.
+## `lag` is how far there is left to go along the whole path; -1 means "just the leg in front".
 static func step(from: Vector2, to: Vector2, dt: float, speed := DEFAULT_SPEED,
-		snap := SNAP_CELLS) -> Vector2:
+		snap := SNAP_CELLS, lag := -1.0) -> Vector2:
 	var d := to - from
 	var dist := d.length()
 	if dist <= 0.0001:
@@ -74,7 +166,8 @@ static func step(from: Vector2, to: Vector2, dt: float, speed := DEFAULT_SPEED,
 		return to
 	if dt <= 0.0:
 		return from
-	var v: float = maxf(speed, 0.001) * minf(1.0 + CATCHUP * maxf(0.0, dist - 1.0), MAX_FACTOR)
+	var behind: float = dist if lag < 0.0 else lag
+	var v: float = maxf(speed, 0.001) * minf(1.0 + CATCHUP * maxf(0.0, behind - 1.0), MAX_FACTOR)
 	var move: float = v * minf(dt, MAX_DT)
 	# NEVER OVERSHOOT. Landing past the cell and easing back is a visible wobble at every step, and
 	# at low frame rates the overshoot can exceed a whole cell.
