@@ -11157,12 +11157,24 @@ func _read_wall_vox(path: String, declared := false) -> Dictionary:
 				# The rusted-red walls he says are correct are wall_metal, which is hand-painted
 				# PNG in tiles_custom with no .vox at all, so nothing here touched them.
 				#
-				# WHY THE TWO SOURCES DISAGREE IS NOT ESTABLISHED — different editors, or
-				# derive_wallvox's own axis handling. The experiment that would settle it is to
-				# mirror <family>-platonic.vox, re-derive, and see whether the family then wants
-				# the same treatment as the rock. Until someone runs it, the rule is the one the
-				# evidence supports: mirror what was declared by name, leave the derived family
-				# as its generator wrote it.
+				# WHY THEY DISAGREE, SETTLED BY RUNNING IT (2026-09-02). The experiment was to
+				# mirror wall_brinestalk-platonic.vox on x, re-derive all sixteen, and see which
+				# way the family came out. It came out IDENTICAL in orientation: every model's
+				# connected edges still matched its own name, +x still east, eleven signatures
+				# checked, zero flipped.
+				#
+				# So derive_wallvox NORMALISES orientation. It finds the posts and periods and
+				# writes the connected and open edges from the SIGNATURE, so the platonic's
+				# handedness reaches the surface art and never the geometry. A derived family is
+				# therefore +x-east BY CONSTRUCTION, whatever anyone draws — it is not a file
+				# that happens to disagree with the rock, it is a file whose orientation is
+				# decided by a generator rather than by an editor, and no redraw can change that.
+				#
+				# That makes this condition the correct rule rather than a workaround: a hand
+				# model carries its editor's handedness and needs the mirror; a generated one
+				# carries the generator's and must not be touched. (The art DID change — the
+				# mirrored platonic derives a different slat chirality — so the files were
+				# restored byte-for-byte to the ones Daniel verified.)
 				got = {"model": mirror_x(m) if declared else m,
 					"palette": v.get("palette", PackedColorArray()), "src": path}
 			_wall_vox_files[path.get_file()] = "%dx%dx%d %s (%s indexing)" % [d.x, d.y, d.z,
