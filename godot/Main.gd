@@ -1011,9 +1011,10 @@ func _exec_godot_cmd(cmd: String) -> void:
 			# nothing without knowing WHERE, so the sweep draws the window instead:
 			#   .  chrome claims it        x  no cell under it
 			#   -  a cell, but no verb     w/u/t/^/v  walk / use / talk / up / down
-			# THE WINDOW MAP IS OPT-IN — `assistdump sweep`. It is the expensive half and the flaky
-			# one; the chain and the zone tally below are what actually get read, they are cheap, and
-			# they now always land. See _sweep_into for what is known about the failure.
+			# THE WINDOW MAP IS OPT-IN — `assistdump sweep`. It used to be the flaky half as well as
+			# the expensive one; it was neither, it was SLOW (22s against a 10s wait). Batched, it
+			# answers in one or two seconds — still enough to ask for deliberately rather than pay
+			# on every dump.
 			if parts.size() > 1 and parts[1] == "sweep":
 				_dump_stage("sweep")
 				_sweep_into(rep)
@@ -1358,13 +1359,23 @@ func _walk_log_frame() -> void:
 
 
 
-## The window map the assist sweep draws — EXTRACTED AND OPT-IN. See its call site: it asks 1152
-## points and each walks the whole Control tree, and about two thirds of dumps died part way
-## through it. Bisected — removing _playfield_cell from the loop did not stop it, so the survivor
-## is _deepest_control_at at that volume. Kept because the picture answered a real question once
-## ("when I hover I do not see the boot icon"), fenced because the rest of the probe is cheap and
-## must not go down with it.
+## The window map the assist sweep draws — EXTRACTED AND OPT-IN.
+##
+## IT WAS NEVER CRASHING. It asks 1152 points and each one used to walk the whole Control tree —
+## twice, since _playfield_cell asks claims() again — so a sweep took 22 SECONDS while the probe
+## waited 10 and reported "did NOT answer". I read that as a crash for a session: bisected it,
+## blamed _deepest_control_at, wrote it up as undiagnosed. The thing that settled it was the log,
+## which had NO error in it, and then simply waiting longer. A timeout is not a crash, and the
+## breadcrumb frozen at "sweep" meant "still sweeping".
+##
+## FeedbackTool.begin_batch() walks the tree once for the whole sweep — the tree cannot change
+## between two points of the same frame — and it answers in one or two seconds.
 func _sweep_into(rep: Dictionary) -> void:
+	# ONE TREE WALK FOR THE WHOLE SWEEP. Every point here asks FeedbackTool twice — once directly
+	# and once inside _playfield_cell — and each ask used to walk the entire Control tree, so 1152
+	# points took 22 SECONDS and the probe's 10s wait called it a crash. The tree cannot change
+	# between two points of the same frame, so it is walked once and every query reads that.
+	FeedbackTool.begin_batch()
 	var vs: Vector2 = get_viewport().get_visible_rect().size
 	var found := {}
 	var probed := 0
@@ -1404,6 +1415,7 @@ func _sweep_into(rep: Dictionary) -> void:
 		rows.append(row)
 	rep["sweep"] = {"points": probed, "chrome": chrome, "no_cell": nocell,
 		"verbs": found, "map": rows, "claimed_by": claimers}
+	FeedbackTool.end_batch()
 	# ...AND OVER THE WHOLE ZONE, not just the pixels that happen to be on screen. A
 	# screen sweep samples where the camera is pointing; if a verb is missing because
 	# of what the SNAPSHOT contains, only the zone tally shows it — 63 sampled points

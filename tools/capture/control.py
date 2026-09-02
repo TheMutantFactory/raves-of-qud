@@ -237,7 +237,7 @@ def main(argv):
         godot("assistat " + argv[1] + " " + argv[2])
         print("godot: assistat", argv[1], argv[2])
     elif cmd == "assistdump":
-        # `assistdump sweep` adds the window map — expensive and, on this build, flaky.
+        # `assistdump sweep` adds the window map: one extra second or two, not the 22 it was.
         godot("assistdump sweep" if len(argv) > 1 and argv[1] == "sweep" else "assistdump")
         # SAY WHETHER IT LANDED. The viewer writes the dump asynchronously — we queue a command
         # and it answers a frame or two later — so a caller that read the file immediately saw

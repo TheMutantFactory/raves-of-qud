@@ -238,15 +238,11 @@ func claims(p: Vector2) -> bool:
 ## walks can disagree if a node appears or leaves between them, and the answer would then name a
 ## control that did not make the decision.
 func claim_of(p: Vector2) -> Dictionary:
-	var hit := _deepest_control_at(p)
-	if hit == null:
+	var e := _best_entry(_entries(), p)
+	if e.is_empty():
 		return {"claimed": false, "node": null}
-	var n: Node = hit
-	while n != null:
-		if n.has_meta("feedback_skip"):
-			return {"claimed": false, "node": hit}
-		n = n.get_parent()
-	return {"claimed": true, "node": hit}
+	# `skipped` came down the walk with the node, so this no longer climbs the ancestors per query.
+	return {"claimed": not bool(e[5]), "node": e[4]}
 
 # --- element resolution --------------------------------------------------------------------------
 
@@ -264,10 +260,35 @@ func claim_of(p: Vector2) -> Dictionary:
 ## plain Rect2 rather than a null so the walk has one code path.
 const CLIP_ALL := Rect2(-1e7, -1e7, 2e7, 2e7)
 
-func _deepest_control_at(p: Vector2) -> Control:
-	var best: Control = null
-	var best_layer := -2147483648
-	var best_order := -1
+## PREPARED ONCE, ASKED MANY TIMES. The assist sweep asks 1152 points and every one of them used
+## to walk the entire Control tree — twice, since _playfield_cell asks claims() again — so a sweep
+## took 22 SECONDS. I read that as a crash for a whole session, because the probe's 10s wait gave
+## up first and the stage breadcrumb froze at "sweep": a timeout wearing a crash's clothes, and
+## there was never an error in the log to find.
+##
+## The tree cannot change between two points of the same frame, so between begin_batch() and
+## end_batch() every query answers from ONE walk. Outside a batch nothing changes — a single query
+## still walks, through the same code, so the two can never drift.
+var _batch: Array = []
+var _batching := false
+
+func begin_batch() -> void:
+	_batching = true
+	_batch = _collect()
+
+func end_batch() -> void:
+	_batching = false
+	_batch = []
+
+func _entries() -> Array:
+	return _batch if _batching else _collect()
+
+
+## Every Control the hit test may name, with what it takes to rank and test one:
+## [layer, order, global_rect, clip_rect, control, skipped]. `skipped` is feedback_skip on the
+## node or any ancestor — computed HERE, on the way down, because asking per query is another walk.
+func _collect() -> Array:
+	var out: Array = []
 	var order := 0
 	# THE CLIP RECT TRAVELS WITH THE WALK, because a Control's RECT is not what you can see of it.
 	#
@@ -281,13 +302,14 @@ func _deepest_control_at(p: Vector2) -> Control:
 	#
 	# A control can only be hit where an ancestor's clip_contents still lets it draw, so the
 	# intersection of every clipping ancestor rides down the stack with each node.
-	var stack: Array = [[get_tree().root, 0, CLIP_ALL]]
+	var stack: Array = [[get_tree().root, 0, CLIP_ALL, false]]
 	# document-order walk: push children reversed so the stack pops them first-to-last
 	while not stack.is_empty():
 		var top: Array = stack.pop_back()
 		var node: Node = top[0]
 		var layer: int = top[1]
 		var clip: Rect2 = top[2]
+		var skipped: bool = top[3] or node.has_meta("feedback_skip")
 		if node == self:
 			continue   # never name our own form
 		if node is CanvasLayer:
@@ -306,18 +328,30 @@ func _deepest_control_at(p: Vector2) -> Control:
 			# paint late and would shadow every real element under them; they are never what the
 			# user means, so they are transparent to the hit test (their subtree still walks).
 			if not c.has_meta("feedback_pass"):
-				var contains := c.get_global_rect().has_point(p) and clip.has_point(p)
-				var on_top := layer > best_layer or (layer == best_layer and order > best_order)
-				if contains and on_top:
-					best = c
-					best_layer = layer
-					best_order = order
-		if c != null and c.clip_contents:
-			clip = clip.intersection(c.get_global_rect())
+				out.append([layer, order, c.get_global_rect(), clip, c, skipped])
+			if c.clip_contents:
+				clip = clip.intersection(c.get_global_rect())
 		var kids := node.get_children()
 		for i in range(kids.size() - 1, -1, -1):
-			stack.push_back([kids[i], layer, clip])
+			stack.push_back([kids[i], layer, clip, skipped])
+	return out
+
+
+## The topmost entry containing `p`: higher CanvasLayer wins, then later document order.
+func _best_entry(entries: Array, p: Vector2) -> Array:
+	var best: Array = []
+	for e in entries:
+		if not ((e[2] as Rect2).has_point(p) and (e[3] as Rect2).has_point(p)):
+			continue
+		if best.is_empty() or e[0] > best[0] or (e[0] == best[0] and e[1] > best[1]):
+			best = e
 	return best
+
+
+func _deepest_control_at(p: Vector2) -> Control:
+	var e := _best_entry(_entries(), p)
+	return null if e.is_empty() else (e[4] as Control)
+
 
 ## The first TEXT anywhere in a node's subtree — a cell's caption, whatever leaf carries it.
 ## Breadth-first and bounded, so a click on a huge container cannot walk the world.
