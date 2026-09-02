@@ -2930,9 +2930,22 @@ func _live_cell_tone(cell: Dictionary, lit_floor: bool) -> float:
 		# branch below asks, and gives the same answer in the same conditions. Outdoors by day both
 		# read 0.0 and the floor is continuous; at night both darken together.
 		#
-		# `lit_floor` stays as the way back to the old film, since this is the third pass over this
-		# surface and the flag costs one line.
-		return 1.0 - _light_frac(cell) if lit_floor else 1.0 - MEMORY_GROUND
+		# AND THE LIGHT TERM GOES TOO, on Daniel's instruction after seeing the above: "you are
+		# currently adding a shadow onto the floor tiles of blocked line-of-sight. Don't add that.
+		# Just have all the ground the same colour. The sprite shading will do the work."
+		#
+		# Keeping the light was my compromise and it was still a shadow: a blocked cell is usually
+		# UNLIT, so `1 - _light_frac` handed it the same film by another route. The rule he is
+		# asking for is simpler than either version — the ground does not participate in line of
+		# sight at all. What you cannot see is carried by the SPRITES, which already take Qud's
+		# memory palette, and that is the whole of the effect.
+		#
+		# The night case I raised against this stands, and is his call, made twice: an unlit cell
+		# you cannot see now sits at 0 film beside a visible one at up to 0.16. _light_frac floors
+		# at MEMORY_GROUND, so 0.16 is the entire range that can disagree.
+		#
+		# `lit_floor` stays as the one-line way back to the old memory film.
+		return 0.0 if lit_floor else 1.0 - MEMORY_GROUND
 	return 1.0 - _light_frac(cell)
 
 ## Is (cx,cy) on the live zone's OUTERMOST ring? Those are the only cells the band ever repeats:

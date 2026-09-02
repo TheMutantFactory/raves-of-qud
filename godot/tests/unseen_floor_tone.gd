@@ -24,26 +24,26 @@ func _ready() -> void:
 	var lit_seen := {"explored": true, "visible": true, "light": 200}
 	var lit_unseen := {"explored": true, "visible": false, "light": 200}
 	var dim_seen := {"explored": true, "visible": true, "light": 100}
-	var dim_unseen := {"explored": true, "visible": false, "light": 100}
 
 	# ── the ask ──────────────────────────────────────────────────────────────
-	_check("a lit floor you cannot see matches one you can",
-		r._live_cell_tone(lit_unseen, true) == r._live_cell_tone(lit_seen, true),
-		"%.3f vs %.3f" % [r._live_cell_tone(lit_unseen, true), r._live_cell_tone(lit_seen, true)])
-	_check("...and that tone is NO film at all in full light",
-		absf(r._live_cell_tone(lit_unseen, true)) < 0.0001,
-		"%.3f" % r._live_cell_tone(lit_unseen, true))
-
-	# ── and the half he rejected the first time ──────────────────────────────
-	# A dim cell must still be dim out of sight. The old branch returned a flat 0.0 here, so an
-	# unlit floor you could not see sat at full daylight next to a dark one you could.
-	_check("a DIM floor you cannot see is still dim",
-		r._live_cell_tone(dim_unseen, true) == r._live_cell_tone(dim_seen, true),
-		"%.3f vs %.3f" % [r._live_cell_tone(dim_unseen, true), r._live_cell_tone(dim_seen, true)])
-	_check("...and dim really is darker than lit, or the checks above are free",
+	# "Don't add that. Just have all the ground the same colour. The sprite shading will do the
+	# work." No film of any kind on ground you cannot see — not the memory film, and not the
+	# light term either, which was my compromise and reached the same shadow by another route
+	# (a blocked cell is usually unlit, so `1 - _light_frac` darkened it anyway).
+	for name in ["lit", "dim", "dark"]:
+		var c := {"explored": true, "visible": false,
+			"light": {"lit": 200, "dim": 100, "dark": 2}[name]}
+		_check("blocked line of sight puts NO film on %s ground" % name,
+			absf(r._live_cell_tone(c, true)) < 0.0001, "%.3f" % r._live_cell_tone(c, true))
+	# ...and the ground you CAN see still answers to its light, or "all the same colour" would
+	# have meant deleting the lighting rather than the fog.
+	_check("ground you can see still darkens with its own light",
 		r._live_cell_tone(dim_seen, true) > r._live_cell_tone(lit_seen, true),
 		"dim %.3f vs lit %.3f" % [r._live_cell_tone(dim_seen, true),
 			r._live_cell_tone(lit_seen, true)])
+	_check("...and a lit cell you can see takes no film either, so the two sides MATCH",
+		absf(r._live_cell_tone(lit_seen, true)) < 0.0001,
+		"%.3f" % r._live_cell_tone(lit_seen, true))
 
 	# ── the flag still buys the old behaviour back ───────────────────────────
 	_check("lit_floor off restores the memory film",
@@ -56,9 +56,16 @@ func _ready() -> void:
 	# ── nothing else moved ───────────────────────────────────────────────────
 	# A cell the firelight switch turned off is the deepest the live zone goes, seen or not, and a
 	# never-explored cell is fog — neither is a floor question.
-	var off := {"explored": true, "visible": false, "light": 0, "lit": 200}
-	_check("a switched-off cell still takes the deepest tone",
+	# A REAL switched-off fixture: Qud lit it (raw light 200) and the firelight FEATURE turned it
+	# off, so cell_light() reads NONE. My first version set light 0 outright, which is not
+	# "switched off" at all — it is an unlit cell, and it passed for the wrong reason under the
+	# previous rule. Both flags are needed, and the check is worthless without the precondition.
+	Z.fire_dark = true
+	var off := {"explored": true, "visible": false, "light": 200, "firelit": true}
+	_check("the fixture really is switched off, not merely dark", Z.switched_off(off))
+	_check("...and a switched-off cell still takes the deepest tone",
 		absf(r._live_cell_tone(off, true) - 1.0) < 0.0001, "%.3f" % r._live_cell_tone(off, true))
+	Z.fire_dark = false
 	var never := {"explored": false, "visible": false, "light": 200}
 	_check("an unexplored cell is still fog, not floor",
 		absf(r._live_cell_tone(never, true) - (1.0 - r.FOG_GROUND)) < 0.0001,
