@@ -33,9 +33,16 @@ const DEFAULTS := {
 	# burn (Daniel, from a zone south of Joppa: "there are flames on. They are out-zone").
 	# Evaluated when a remembered zone builds, so raising it takes effect on the next crossing.
 	"fire_zone_radius": 0,
-	# How many zones out a departed zone's BUILT GEOMETRY stays banked (hidden, warm for
-	# return). Beyond it the subtree is freed — the store keeps the data and walking back
-	# rebuilds it. 1 = just the 3x3 ring; higher trades memory for fewer rebuilds.
+	# HOW MUCH IS KEPT IN MEMORY, NOT HOW MUCH IS DRAWN. How many zones out a departed zone's
+	# BUILT GEOMETRY stays banked — every one of them HIDDEN, warm for a fast return. Beyond it
+	# the subtree is freed; the store keeps the data and walking back rebuilds it. 1 = just the
+	# 3x3 ring; higher trades memory for fewer rebuilds and changes nothing you can see.
+	#
+	# WHAT YOU CAN SEE IS THE 3x3 RING, and no setting widens it. _zone_beyond_ramp hides any
+	# zone whose nearest cell is penumbra_radius+1 or more away, and a second ring starts a whole
+	# zone-width out (~80 cells), so the ramp slider cannot reach it either — past the ring,
+	# _build_unexplored's far frame covers the ground edge to edge instead. Daniel set this to 5
+	# and asked why he was not seeing five zones out; the answer is that it never meant that.
 	"remember_radius": 2,
 	# ADVENTURE camera (mode 8), Daniel's crane spec: horizontal ground distance back,
 	# vertical height up, and a FREE pitch angle. Defaults equal COMPASS at its default
