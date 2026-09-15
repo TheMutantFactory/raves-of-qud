@@ -8,6 +8,7 @@ start Qud, load the save, keep testing. This automates that. Also handy for huma
   qud.py quit                   # graceful quit -> terminate -> force
   qud.py start                  # launch via Steam, wait for the window
   qud.py load                   # from the main menu, resume the latest save (presses C, then Return)
+  qud.py load <save name>       # load THAT save through the bridge's loadsave (no keypresses, no focus)
   qud.py restart                # quit + start + load — the full loop
 
 Platform specifics (launch/quit/process/input/paths) come from plat.py (per-OS backend).
@@ -82,12 +83,50 @@ def start(wait_window=120):
     return "FAILED: no window within %ds" % wait_window
 
 
+def in_game(timeout=20):
+    """True once the bridge publishes a snapshot with a zone: the listener is up PRE-GAME
+    on current builds (StartupHook), so bridge_up() alone no longer means in-game."""
+    try:
+        import control
+        b = control.Bridge(timeout=5)
+        try:
+            b.send("wait")
+            snap = b.read_frame("snapshot", timeout=timeout)
+            return bool(snap and snap.get("zone", {}).get("id"))
+        finally:
+            b.close()
+    except (OSError, ValueError):
+        return False
+
+
+def load_save(name, wait_ingame=150):
+    """Load a save BY NAME through the bridge's `loadsave` (Qud's own picker flow, no
+    keypresses, no focus): the first-party path, and the one a bake or a rig should use."""
+    import control
+    import saves
+    s = saves.find_save(name)
+    if s is None:
+        return "FAILED: no save named %r (saves.py list)" % name
+    if not _wait(bridge_up, 120):
+        return "FAILED: no bridge listener (mod not loaded?)"
+    if in_game(timeout=8):
+        return "already in-game"
+    b = control.Bridge(timeout=10)
+    try:
+        b.send("loadsave", id=s["guid"])
+    finally:
+        b.close()
+    if _wait(lambda: in_game(timeout=8), wait_ingame, step=0.5):
+        return "loaded %s (in-game)" % s["name"]
+    return "FAILED: %s not in-game within %ds" % (s["name"], wait_ingame)
+
+
 def load(wait_ingame=150):
     # Main-menu load: press "C" (the Continue shortcut, position independent) which opens
     # the save picker with the most-recent save PRE-SELECTED, then "Return" to load it.
     if not plat.check():
         return "FAILED: load needs input permission (%s)" % plat.PERM_HINT
-    if bridge_up():
+    if in_game(timeout=5):
         return "already in-game"
     plat.activate("Qud"); time.sleep(1.5)
     plat.key("c"); time.sleep(1.8)
@@ -115,7 +154,7 @@ def main(argv):
     elif cmd == "start":
         print(start())
     elif cmd == "load":
-        print(load())
+        print(load_save(argv[1]) if len(argv) > 1 else load())
     elif cmd == "restart":
         restart()
     else:

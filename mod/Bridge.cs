@@ -2023,6 +2023,13 @@ namespace RavesOfQud
                 case "shot":
                     QueueScreenshot();
                     break;
+                case "bake":
+                    // Build zones by id WITHOUT moving the player and write each as a compact
+                    // chunk for 2Caves2Qud's overland mode (BakeExporter.cs). Main thread like
+                    // `zonetp`: GetZone runs the zone builders. Paced by the caller: one request,
+                    // a few zones, the files are the confirmation.
+                    BakeExporter.Run(f, player);
+                    break;
                 case "zoo":
                     // Build a debug showcase into the current zone. MAIN-THREAD ONLY:
                     // creates GameObjects and mutates cells, so it must run here (drained

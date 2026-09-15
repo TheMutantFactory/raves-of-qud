@@ -143,7 +143,7 @@ namespace RavesOfQud
         ///
         /// Falls back to the field, so anything that doesn't paint is unaffected.
         /// </summary>
-        private static string ResolvedTile(GameObject go, Render r, out bool painted)
+        internal static string ResolvedTile(GameObject go, Render r, out bool painted)
         {
             painted = false;
 
@@ -183,7 +183,7 @@ namespace RavesOfQud
         /// An object with both fields empty was dropped entirely, which made its
         /// whole cell report as EMPTY.
         /// </summary>
-        private static string ResolvedGlyph(Render r)
+        internal static string ResolvedGlyph(Render r)
         {
             try
             {
@@ -638,14 +638,14 @@ namespace RavesOfQud
             catch { }
         }
 
-        private sealed class Ground
+        internal sealed class Ground
         {
             public string Tile, Color, Detail, Glyph;
             public string MemColor, MemDetail;   // the paint's colours when the cell is NOT visible
             public bool HFlip, VFlip;
         }
 
-        private static Ground ResolveGround(Cell c)
+        internal static Ground ResolveGround(Cell c)
         {
             try
             {
