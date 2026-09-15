@@ -583,3 +583,29 @@ walk to wherever that family happens to exist — and it may not exist in the sa
 worth reading before voxelizing anything: a wire half is EIGHT face-disconnected pieces,
 because the art is a dashed zigzag that only reads continuous in 2D, and that is what set
 wires to one block of depth instead of two.
+
+## `tools/capture/bake.py` — the world bake (for 2Caves2Qud's overland mode)
+
+Builds zones by id inside the running game and writes each as a compact chunk file, the
+ground of 2Caves2Qud's overland courses (its `docs/overland.md`). The mod side is
+`mod/BakeExporter.cs`: the `bake` bridge command calls `ZoneManager.GetZone` (the player
+does not move), writes `<RavesOfQud>/chunks/<gameId>/<zoneId>.json` — a palette of distinct
+objects (name, tile, colours, wall / solid / liquid / creature flags, light radius), the
+painted ground's palette index per cell (read off `Cell.PaintTile` and kin, so it is known
+under an occupied cell too), the standing objects as `[x, y, palette]` — and releases the
+zone with `SuspendZone`. 16-60 KB a zone against the snapshot's 800 KB.
+
+```bash
+python3 tools/capture/qud.py start && python3 tools/capture/qud.py load Tygashwuraq   # any save: the world is that game's
+python3 tools/capture/bake.py --center 11.22 --radius 2      # the 5x5 parasangs round Joppa, 225 zones
+python3 tools/capture/bake.py --zones JoppaWorld.11.22.1.1.10
+```
+
+Paced by confirmation (the files), never by timers — the stations.py lesson. Three things it
+handles that cost a round each: a freshly loaded save sits on the arrival popup, which
+parks the turn thread (the bridge refuses commands there), so message popups are answered
+first; commands are applied on the turn thread, and an unfocused Qud renders no frames, so a
+`wait` is sent as the turn kick after each request and every few seconds while polling;
+the socket tends to drop while zones build, so the next request reconnects. Writes
+`reports/bake-<stamp>.md` with the mod's own per-zone ms / bytes / objects (from Player.log).
+Measured 2026-09-15: 225 surface zones in 52 s, Joppa's own zone 17 ms.
